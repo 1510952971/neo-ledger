@@ -13,7 +13,9 @@ import {
 const exec = promisify(execFile);
 
 test("SQLite backup and restore retain schema and rows", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "neo-ledger-backup-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "neo ledger's backup-"),
+  );
   const databasePath = path.join(directory, "ledger.sqlite");
   const backupPath = path.join(directory, "ledger-backup.sqlite");
 

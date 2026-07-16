@@ -1,5 +1,7 @@
 export function sqliteQuote(value) {
-  return `'${String(value).replaceAll("'", "''")}'`;
+  return `"${String(value)
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')}"`;
 }
 
 export function sqliteBackupArgs(databasePath, backupPath) {
