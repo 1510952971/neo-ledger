@@ -13,6 +13,11 @@ import {
   parseStatementFiles,
   type ParsedStatementItem,
 } from "./bill-file-parser";
+import {
+  partitionStatementImports,
+  statementAccountKey,
+  suggestStatementAccount,
+} from "./bill-import-core.js";
 import { mergeSyncSnapshots } from "./sync-merge.js";
 
 type Mood = "悦己" | "刚需" | "冲动";
@@ -379,10 +384,12 @@ type BillImportSummary = {
   sourceName: string;
   detected: number;
   ready: number;
+  pending: number;
   skipped: number;
   duplicates: number;
   possibleDuplicates: number;
   unmapped: number;
+  autoImported: number;
   totalRows: number;
   filtered: number;
   unconfirmed: number;
@@ -785,6 +792,10 @@ export function LedgerApp({
   const [billImportStatus, setBillImportStatus] = useState("");
   const [billImportSummary, setBillImportSummary] =
     useState<BillImportSummary | null>(null);
+  const [billManualAccountKeys, setBillManualAccountKeys] = useState<string[]>(
+    [],
+  );
+  const [billAccountActionKey, setBillAccountActionKey] = useState("");
   const [stressEvents, setStressEvents] = useState({
     unemployment: false,
     crash: false,
@@ -2782,8 +2793,29 @@ export function LedgerApp({
       else
         alert(
           ((await response.json()) as { error?: string }).error ?? "恢复失败",
-        );
+      );
     });
+  }
+  async function submitBillRows(rows: ImportedBill[]) {
+    const response = await fetch("/api/bill-import", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ledgerId: currentLedgerId,
+        items: rows,
+      }),
+    });
+    const result = (await response.json()) as {
+      imported?: number;
+      duplicates?: number;
+      skipped?: number;
+      error?: string;
+    };
+    if (!response.ok) {
+      setBillImportError(result.error ?? "导入失败");
+      return null;
+    }
+    return result;
   }
   function parseBillFiles(fileList: FileList | File[] | undefined) {
     const files = fileList ? Array.from(fileList) : [];
@@ -2792,6 +2824,8 @@ export function LedgerApp({
     setBillImportStatus("正在读取账单文件…");
     setBillImportItems([]);
     setBillImportSummary(null);
+    setBillManualAccountKeys([]);
+    setBillAccountActionKey("");
     startTransition(async () => {
       try {
         const parsedBatch = await parseStatementFiles(files, setBillImportStatus);
@@ -2831,7 +2865,6 @@ export function LedgerApp({
         const sourceNames = [
           ...new Set(parsedBatch.statements.map(({ statement }) => statement.sourceName)),
         ];
-        setBillImportItems(items);
         const fileReconciliations = parsedBatch.statements.map(
           ({ fileName, statement }) => ({
             fileName,
@@ -2844,11 +2877,12 @@ export function LedgerApp({
             truncated: statement.truncated ?? 0,
           }),
         );
-        setBillImportSummary({
+        const summary: BillImportSummary = {
           fileName: files.length === 1 ? files[0].name : `${files.length} 个文件`,
           sourceName: sourceNames.length === 1 ? sourceNames[0] : `${sourceNames.length} 类账单`,
           detected: result.detected ?? parsedItems.length,
           ready: items.length,
+          pending: items.length,
           skipped: parsedBatch.statements.reduce(
             (sum, { statement }) => sum + statement.skipped,
             0,
@@ -2856,6 +2890,7 @@ export function LedgerApp({
           duplicates: result.duplicates ?? 0,
           possibleDuplicates: result.possibleDuplicates ?? 0,
           unmapped: result.unmapped ?? 0,
+          autoImported: 0,
           totalRows: fileReconciliations.reduce((sum, row) => sum + row.totalRows, 0),
           filtered:
             fileReconciliations.reduce((sum, row) => sum + row.filtered, 0) +
@@ -2867,7 +2902,38 @@ export function LedgerApp({
             fileReconciliations.reduce((sum, row) => sum + row.truncated, 0) +
             (result.truncated ?? 0),
           files: fileReconciliations,
-        });
+        };
+        const partitioned = partitionStatementImports(items) as {
+          automatic: ImportedBill[];
+          review: ImportedBill[];
+        };
+        const automaticRows = partitioned.automatic;
+        let reviewRows = partitioned.review;
+        if (automaticRows.length) {
+          setBillImportStatus(
+            `已识别账户，正在自动导入 ${automaticRows.length} 笔流水…`,
+          );
+          const automaticResult = await submitBillRows(automaticRows);
+          if (!automaticResult) {
+            setBillImportItems(items);
+            setBillImportSummary(summary);
+            return;
+          }
+          summary.autoImported = automaticResult.imported ?? automaticRows.length;
+          summary.pending = reviewRows.length;
+          summary.unmapped = reviewRows.filter(
+            (item) => item.accountId <= 0,
+          ).length;
+          await reloadAccounts();
+          setToast({
+            kind: "success",
+            message: reviewRows.length
+              ? `已自动识别账户并导入 ${summary.autoImported} 笔，另有 ${reviewRows.length} 笔需要处理。`
+              : `已自动识别账户并导入 ${summary.autoImported} 笔流水。`,
+          });
+        }
+        setBillImportItems(reviewRows);
+        setBillImportSummary(summary);
         setBillImportError(
           parsedBatch.failures.length
             ? `${parsedBatch.failures.length} 个文件未加入：${parsedBatch.failures
@@ -2875,6 +2941,8 @@ export function LedgerApp({
                 .join("；")}`
             : "",
         );
+        if (automaticRows.length && !reviewRows.length)
+          window.setTimeout(() => window.location.reload(), 600);
       } catch (error) {
         setBillImportError(
           error instanceof Error ? error.message : "无法读取这个账单文件",
@@ -2884,10 +2952,10 @@ export function LedgerApp({
       }
     });
   }
-  function assignBillAccount(paymentMethod: string, nextAccountId: number) {
+  function assignBillAccount(accountKey: string, nextAccountId: number) {
     const account = accountList.find((item) => item.id === nextAccountId);
     const nextRows = billImportItems.map((row) =>
-        row.paymentMethod === paymentMethod
+        statementAccountKey(row) === accountKey
           ? {
               ...row,
               accountId: account?.id ?? 0,
@@ -2905,6 +2973,105 @@ export function LedgerApp({
         : current,
     );
   }
+  async function createBillAccountAndImport(accountKey: string) {
+    const rows = billImportItems.filter(
+      (item) => statementAccountKey(item) === accountKey,
+    );
+    const representative = rows[0];
+    if (!representative) return;
+    const suggestion = suggestStatementAccount(
+      representative.paymentMethod,
+      representative.sourceName,
+      representative.currency,
+    ) as {
+      name: string;
+      type: "资产" | "负债";
+      currency: Currency;
+    };
+    setBillAccountActionKey(accountKey);
+    setBillImportError("");
+    try {
+      const existing = accountList.find(
+        (account) =>
+          account.name === suggestion.name &&
+          account.type === suggestion.type &&
+          account.currency === suggestion.currency,
+      );
+      let accountId = existing?.id ?? 0;
+      if (!accountId) {
+        const createResponse = await fetch("/api/accounts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ledgerId: currentLedgerId,
+            name: suggestion.name,
+            type: suggestion.type,
+            balance: 0,
+            billDay: null,
+            repaymentDay: null,
+            isInvestment: false,
+            currency: suggestion.currency,
+            assetClass: "现金流",
+          }),
+        });
+        const created = (await createResponse.json()) as {
+          id?: number;
+          error?: string;
+        };
+        if (!createResponse.ok || !created.id)
+          throw new Error(created.error || "新建账户失败");
+        accountId = Number(created.id);
+      }
+      const mappedRows = rows.map((item) => ({
+        ...item,
+        accountId,
+        accountName: suggestion.name,
+      }));
+      const imported = await submitBillRows(mappedRows);
+      if (!imported) {
+        setBillImportItems((current) =>
+          current.map((item) =>
+            statementAccountKey(item) === accountKey
+              ? { ...item, accountId, accountName: suggestion.name }
+              : item,
+          ),
+        );
+        setBillManualAccountKeys((current) =>
+          current.includes(accountKey) ? current : [...current, accountKey],
+        );
+        await reloadAccounts();
+        return;
+      }
+      const remaining = billImportItems.filter(
+        (item) => statementAccountKey(item) !== accountKey,
+      );
+      setBillImportItems(remaining);
+      setBillImportSummary((current) =>
+        current
+          ? {
+              ...current,
+              pending: remaining.length,
+              unmapped: remaining.filter((item) => item.accountId <= 0).length,
+              autoImported:
+                current.autoImported + (imported.imported ?? rows.length),
+            }
+          : current,
+      );
+      await reloadAccounts();
+      setToast({
+        kind: "success",
+        message: `已新建“${suggestion.name}”并导入 ${imported.imported ?? rows.length} 笔流水。`,
+      });
+      if (!remaining.length)
+        window.setTimeout(() => window.location.reload(), 600);
+    } catch (error) {
+      setBillImportError(
+        error instanceof Error ? error.message : "新建账户并导入失败",
+      );
+    } finally {
+      setBillAccountActionKey("");
+    }
+  }
   function confirmBillImport() {
     const unmapped = billImportItems.filter((item) => item.accountId <= 0);
     if (unmapped.length) {
@@ -2912,27 +3079,14 @@ export function LedgerApp({
       return;
     }
     startTransition(async () => {
-      const response = await fetch("/api/bill-import", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ledgerId: currentLedgerId,
-          items: billImportItems,
-        }),
-      });
-      const result = (await response.json()) as {
-        imported?: number;
-        duplicates?: number;
-        skipped?: number;
-        error?: string;
-      };
-      if (response.ok) {
+      const result = await submitBillRows(billImportItems);
+      if (result) {
         setToast({
           kind: "success",
           message: `已导入 ${result.imported ?? 0} 笔流水${result.duplicates ? `，跳过 ${result.duplicates} 笔重复项` : ""}。`,
         });
         window.setTimeout(() => window.location.reload(), 500);
-      } else setBillImportError(result.error ?? "导入失败");
+      }
     });
   }
   function cleanBadBillImports() {
@@ -5923,6 +6077,10 @@ export function LedgerApp({
                       {billImportSummary && (
                         <small>
                           共识别 {billImportSummary.detected} 笔
+                          {billImportSummary.autoImported > 0 &&
+                            ` · 已自动入账 ${billImportSummary.autoImported} 笔`}
+                          {billImportSummary.pending > 0 &&
+                            ` · 待处理 ${billImportSummary.pending} 笔`}
                           {billImportSummary.duplicates > 0 &&
                             ` · 已排除 ${billImportSummary.duplicates} 笔重复`}
                           {billImportSummary.skipped > 0 &&
@@ -5963,31 +6121,88 @@ export function LedgerApp({
                     </div>
                   )}
                   <div className="bill-account-mapping">
-                    <p>支付方式映射</p>
-                    {[...new Set(
-                      billImportItems.map((item) => item.paymentMethod),
-                    )].map((paymentMethod) => {
-                      const current = billImportItems.find(
-                        (item) => item.paymentMethod === paymentMethod,
-                      );
+                    <p>账户识别与导入</p>
+                    {[
+                      ...new Map(
+                        billImportItems.map((item) => [
+                          statementAccountKey(item),
+                          item,
+                        ]),
+                      ).entries(),
+                    ].map(([accountKey, current]) => {
+                      const needsChoice = current.accountId <= 0;
+                      const manual = billManualAccountKeys.includes(accountKey);
+                      if (needsChoice && !manual) {
+                        const suggestion = suggestStatementAccount(
+                          current.paymentMethod,
+                          current.sourceName,
+                          current.currency,
+                        ) as {
+                          name: string;
+                          type: "资产" | "负债";
+                          currency: Currency;
+                        };
+                        return (
+                          <div className="bill-account-decision" key={accountKey}>
+                            <div>
+                              <strong>{current.paymentMethod}</strong>
+                              <small>
+                                未找到对应账户，建议新建“{suggestion.name}” · {suggestion.type} · {suggestion.currency}
+                              </small>
+                            </div>
+                            <div>
+                              <button
+                                className="primary"
+                                disabled={Boolean(billAccountActionKey)}
+                                onClick={() =>
+                                  void createBillAccountAndImport(accountKey)
+                                }
+                              >
+                                {billAccountActionKey === accountKey
+                                  ? "正在新建并导入…"
+                                  : "新建账户并导入"}
+                              </button>
+                              <button
+                                disabled={Boolean(billAccountActionKey)}
+                                onClick={() =>
+                                  setBillManualAccountKeys((keys) =>
+                                    keys.includes(accountKey)
+                                      ? keys
+                                      : [...keys, accountKey],
+                                  )
+                                }
+                              >
+                                自主选择账户
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
                       return (
-                        <label key={paymentMethod}>
-                          <span>{paymentMethod}</span>
+                        <label key={accountKey}>
+                          <span>
+                            {current.paymentMethod} · {current.currency}
+                          </span>
                           <select
                             value={current?.accountId ?? 0}
                             onChange={(event) =>
                               assignBillAccount(
-                                paymentMethod,
+                                accountKey,
                                 Number(event.target.value),
                               )
                             }
                           >
                             <option value={0}>请选择账户</option>
-                            {accountList.map((account) => (
-                              <option value={account.id} key={account.id}>
-                                {account.name} · {account.type}
-                              </option>
-                            ))}
+                            {accountList
+                              .filter(
+                                (account) =>
+                                  account.currency === current.currency,
+                              )
+                              .map((account) => (
+                                <option value={account.id} key={account.id}>
+                                  {account.name} · {account.type}
+                                </option>
+                              ))}
                           </select>
                         </label>
                       );

@@ -517,29 +517,101 @@ export function parseImageStatementText(rawText, fileName = "", referenceDate = 
   };
 }
 
-export function matchStatementAccount(paymentMethod, source, accounts) {
-  const method = cleanCell(paymentMethod);
-  const assets = accounts.filter((account) => account.type === "资产");
-  const liabilities = accounts.filter((account) => account.type === "负债");
-  const all = [...accounts];
-  const lastFour = method.match(/\((\d{4})\)/)?.[1];
-  if (lastFour) {
-    const exactDigits = all.find((account) => account.name.includes(lastFour));
-    if (exactDigits) return exactDigits;
+export function statementAccountKey(item) {
+  return `${cleanCell(item?.paymentMethod)}\u0000${cleanCell(item?.currency || "CNY")}`;
+}
+
+export function partitionStatementImports(items) {
+  const automatic = [];
+  const review = [];
+  for (const item of items) {
+    if (Number(item?.accountId) > 0 && !item?.possibleDuplicate)
+      automatic.push(item);
+    else review.push(item);
   }
+  return { automatic, review };
+}
+
+export function suggestStatementAccount(
+  paymentMethod,
+  sourceName,
+  currency = "CNY",
+) {
+  const method = cleanCell(paymentMethod);
+  const source = cleanCell(sourceName);
+  const genericMethod =
+    !method || /待选择账户|通用账单|银行 PDF|图片账单/.test(method);
+  const baseName = genericMethod ? source || "账单导入账户" : method;
+  return {
+    name: baseName.slice(0, 30),
+    type: /信用卡|贷记卡|花呗|白条|月付/.test(`${method} ${source}`)
+      ? "负债"
+      : "资产",
+    currency: ["CNY", "USD", "JPY", "EUR"].includes(currency)
+      ? currency
+      : "CNY",
+  };
+}
+
+export function matchStatementAccount(
+  paymentMethod,
+  source,
+  accounts,
+  currency = "CNY",
+) {
+  const method = cleanCell(paymentMethod);
+  const all = accounts.filter(
+    (account) => !currency || account.currency === currency,
+  );
+  const assets = all.filter((account) => account.type === "资产");
+  const liabilities = all.filter((account) => account.type === "负债");
+  const unique = (rows) => (rows.length === 1 ? rows[0] : null);
   const keywordGroups = [
     [/花呗/, ["花呗"]],
     [/白条/, ["白条", "京东"]],
     [/美团月付|月付/, ["美团月付", "月付", "美团"]],
     [/微信|零钱|财付通/, ["微信", "零钱"]],
     [/支付宝|余额宝/, ["支付宝", "余额宝"]],
-    [/招商/, ["招商"]],
-    [/建设/, ["建设"]],
+    [/招商|招行/, ["招商", "招行"]],
+    [/建设|建行/, ["建设", "建行"]],
     [/中国银行/, ["中国银行", "中行"]],
     [/农业银行/, ["农业银行", "农行"]],
     [/工商银行/, ["工商银行", "工行"]],
     [/交通银行/, ["交通银行", "交行"]],
   ];
+  const accountDigits = method.match(/(?:\((\d{4})\)|(?:尾号|末四位|卡号)[^\d]{0,4}(\d{4}))/);
+  const lastFour = accountDigits?.[1] || accountDigits?.[2];
+  if (lastFour) {
+    const identity = keywordGroups.find(([pattern]) =>
+      pattern.test(`${method} ${source}`),
+    );
+    const exactDigits = unique(
+      all.filter(
+        (account) =>
+          account.name.includes(lastFour) &&
+          (!identity ||
+            identity[1].some((name) => account.name.includes(name))),
+      ),
+    );
+    if (exactDigits) return exactDigits;
+    return null;
+  }
+  const normalizedMethod = method.replace(/[\s()（）*·-]/g, "").toLowerCase();
+  if (normalizedMethod.length >= 2) {
+    const exactName = unique(
+      all.filter((account) => {
+        const normalizedName = cleanCell(account.name)
+          .replace(/[\s()（）*·-]/g, "")
+          .toLowerCase();
+        return (
+          normalizedName === normalizedMethod ||
+          normalizedName.includes(normalizedMethod) ||
+          normalizedMethod.includes(normalizedName)
+        );
+      }),
+    );
+    if (exactName) return exactName;
+  }
   const preferredPool = /信用卡|花呗|白条|月付/.test(method)
     ? liabilities
     : /储蓄卡|借记卡|余额|零钱/.test(method)
@@ -547,8 +619,10 @@ export function matchStatementAccount(paymentMethod, source, accounts) {
       : all;
   for (const [pattern, names] of keywordGroups) {
     if (!pattern.test(`${method} ${source}`)) continue;
-    const matched = preferredPool.find((account) =>
-      names.some((name) => account.name.includes(name)),
+    const matched = unique(
+      preferredPool.filter((account) =>
+        names.some((name) => account.name.includes(name)),
+      ),
     );
     if (matched) return matched;
   }

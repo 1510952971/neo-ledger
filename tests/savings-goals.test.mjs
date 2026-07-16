@@ -11,6 +11,9 @@ import {
   parseImageStatementText,
   parseCsvRows,
   parseTabularStatement,
+  partitionStatementImports,
+  statementAccountKey,
+  suggestStatementAccount,
 } from "../app/bill-import-core.js";
 
 test("converts user amounts to integer cents", () => {
@@ -173,6 +176,67 @@ test("maps platform payment methods to the matching ledger account", () => {
     matchStatementAccount("招商银行信用卡(7686)", "jd", accounts)?.id,
     3,
   );
+  assert.equal(
+    matchStatementAccount("零钱", "wechat", accounts, "USD"),
+    null,
+  );
+  assert.equal(
+    matchStatementAccount("招商银行信用卡", "jd", [
+      ...accounts,
+      { id: 4, name: "招商银行信用卡(1234)", type: "负债", currency: "CNY" },
+    ]),
+    null,
+  );
+  assert.equal(
+    matchStatementAccount("招商银行信用卡(4629)", "jd", accounts),
+    null,
+  );
+  assert.equal(
+    matchStatementAccount("中国银行储蓄卡(4629)", "中国银行", [
+      ...accounts,
+      { id: 5, name: "招商银行储蓄卡(4629)", type: "资产", currency: "CNY" },
+    ]),
+    null,
+  );
+  assert.equal(
+    matchStatementAccount("中国银行储蓄卡(4629)", "中国银行", [
+      ...accounts,
+      { id: 6, name: "中国银行储蓄卡(4629)", type: "资产", currency: "CNY" },
+    ])?.id,
+    6,
+  );
+});
+
+test("suggests a missing statement account without changing its currency", () => {
+  assert.deepEqual(
+    suggestStatementAccount("中国银行储蓄卡(0770)", "中国银行", "CNY"),
+    {
+      name: "中国银行储蓄卡(0770)",
+      type: "资产",
+      currency: "CNY",
+    },
+  );
+  assert.deepEqual(
+    suggestStatementAccount("花呗", "支付宝", "CNY"),
+    { name: "花呗", type: "负债", currency: "CNY" },
+  );
+  assert.equal(
+    statementAccountKey({ paymentMethod: "零钱", currency: "CNY" }),
+    "零钱\u0000CNY",
+  );
+});
+
+test("only auto-imports safely mapped non-duplicate statement rows", () => {
+  const mapped = { importKey: "mapped", accountId: 7 };
+  const duplicate = {
+    importKey: "duplicate",
+    accountId: 7,
+    possibleDuplicate: true,
+  };
+  const unmapped = { importKey: "unmapped", accountId: 0 };
+  const result = partitionStatementImports([mapped, duplicate, unmapped]);
+  assert.deepEqual(result.automatic, [mapped]);
+  assert.deepEqual(result.review, [duplicate, unmapped]);
 });
 
 test("parses WeChat wallet screenshots with month and balance rows", () => {

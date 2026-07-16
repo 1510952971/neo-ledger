@@ -212,7 +212,12 @@ export async function POST(request: Request) {
       );
       const account =
         requestedAccount ??
-        matchStatementAccount(item.paymentMethod, item.source, accounts);
+        matchStatementAccount(
+          item.paymentMethod,
+          item.source,
+          accounts,
+          item.currency,
+        );
       const possibleDuplicate = existingAmountMoments.has(amountMoment(item));
       if (possibleDuplicate) possibleDuplicates += 1;
       if (!account) unmapped += 1;

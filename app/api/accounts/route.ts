@@ -40,8 +40,12 @@ function validate(input: AccountInput) {
     name,
     type,
     currentBalance: type === "负债" ? -Math.abs(absoluteCents) : absoluteCents,
-    billDay: type === "负债" ? Number(input.billDay) : null,
-    repaymentDay: type === "负债" ? Number(input.repaymentDay) : null,
+    billDay:
+      type === "负债" && input.billDay != null ? Number(input.billDay) : null,
+    repaymentDay:
+      type === "负债" && input.repaymentDay != null
+        ? Number(input.repaymentDay)
+        : null,
     isInvestment: type === "资产" && Boolean(input.isInvestment),
     currency: (["CNY", "USD", "JPY", "EUR"] as const).includes(
       input.currency as never,
