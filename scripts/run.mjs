@@ -30,7 +30,11 @@ function localBinary(name) {
 }
 
 function startApp() {
-  appProcess = spawn(localBinary("vinext"), [mode], {
+  appProcess = spawn(localBinary("vinext"), [
+    mode,
+    "--hostname",
+    "127.0.0.1",
+  ], {
     cwd: root,
     env: childEnv,
     stdio: "inherit",
