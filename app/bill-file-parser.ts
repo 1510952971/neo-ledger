@@ -137,6 +137,28 @@ type PdfLine = {
 };
 type PdfTextItem = { str: string; transform: number[]; width?: number };
 
+type PdfTextStreamReader = {
+  read: () => Promise<{ done: boolean; value?: { items?: unknown[] } }>;
+  releaseLock?: () => void;
+};
+
+export async function readPdfTextItems(page: {
+  streamTextContent: () => { getReader: () => PdfTextStreamReader };
+}) {
+  const reader = page.streamTextContent().getReader();
+  const items: unknown[] = [];
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      if (chunk.value?.items) items.push(...chunk.value.items);
+    }
+  } finally {
+    reader.releaseLock?.();
+  }
+  return items;
+}
+
 async function extractPdfLines(bytes: Uint8Array) {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -149,9 +171,10 @@ async function extractPdfLines(bytes: Uint8Array) {
   const lines: PdfLine[] = [];
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
     const page = await document.getPage(pageNumber);
-    const content = await page.getTextContent();
+    const contentItems = await readPdfTextItems(page);
     const pageLines: { y: number; items: { x: number; text: string }[] }[] = [];
-    for (const candidate of content.items) {
+    for (const candidate of contentItems) {
+      if (!candidate || typeof candidate !== "object") continue;
       if (!("str" in candidate)) continue;
       const item = candidate as PdfTextItem;
       const text = item.str.trim();

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as xlsx from "@e965/xlsx";
-import { parseStatementFile } from "../app/bill-file-parser.ts";
+import {
+  parseStatementFile,
+  readPdfTextItems,
+} from "../app/bill-file-parser.ts";
 
 const rows = [
   ["微信支付账单明细"],
@@ -62,3 +65,31 @@ for (const [name, bookType] of [
     assert.equal(parsed.items[0].amount, 18.5);
   });
 }
+
+test("reads PDF text without ReadableStream async iteration support", async () => {
+  const chunks = [
+    { items: [{ str: "交易日期", transform: [1, 0, 0, 1, 20, 700] }] },
+    { items: [{ str: "2026-07-11", transform: [1, 0, 0, 1, 20, 680] }] },
+  ];
+  let cursor = 0;
+  let released = false;
+  const items = await readPdfTextItems({
+    streamTextContent: () => ({
+      getReader: () => ({
+        async read() {
+          if (cursor >= chunks.length) return { done: true };
+          return { done: false, value: chunks[cursor++] };
+        },
+        releaseLock() {
+          released = true;
+        },
+      }),
+    }),
+  });
+
+  assert.deepEqual(
+    items.map((item) => item.str),
+    ["交易日期", "2026-07-11"],
+  );
+  assert.equal(released, true);
+});
