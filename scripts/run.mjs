@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { sqliteRestoreArgs } from "./sqlite-commands.mjs";
 
 const exec = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "..");
@@ -108,25 +109,22 @@ async function command(binary, args, options = {}) {
   return String(result.stdout || "").trim();
 }
 
-function sqliteQuote(value) {
-  return `'${String(value).replaceAll("'", "''")}'`;
-}
-
 async function rollback(state, reason) {
   await stopChild(appProcess);
   await command("git", ["checkout", "--detach", state.previousCommit]);
   await command("npm", ["ci"], { timeout: 10 * 60_000 });
   await command("npm", ["run", "build"], { timeout: 10 * 60_000 });
   if (state.databasePath && state.backupPath) {
-    await command("sqlite3", [
+    await command(
+      "sqlite3",
+      sqliteRestoreArgs(state.databasePath, state.backupPath),
+    );
+    const validation = await command("sqlite3", [
       state.databasePath,
-      `.timeout 10000\n.restore ${sqliteQuote(state.backupPath)}\n`,
+      "PRAGMA integrity_check; SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('app_meta','ledgers','transactions');",
     ]);
-    const integrity = await command("sqlite3", [
-      state.databasePath,
-      "PRAGMA integrity_check;",
-    ]);
-    if (integrity !== "ok") throw new Error("回滚后的数据库完整性检查失败");
+    if (validation !== "ok\n3")
+      throw new Error("回滚后的数据库结构或完整性检查失败");
   }
   await writeFile(
     statePath,

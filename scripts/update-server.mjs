@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { sqliteBackupArgs } from "./sqlite-commands.mjs";
 
 const exec = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "..");
@@ -62,10 +63,6 @@ async function findFiles(directory, suffix) {
   return found;
 }
 
-function sqliteQuote(value) {
-  return `'${String(value).replaceAll("'", "''")}'`;
-}
-
 async function locateLedgerDatabase() {
   const files = await findFiles(path.join(root, ".wrangler", "state"), ".sqlite");
   for (const file of files) {
@@ -89,12 +86,13 @@ async function backupLedgerDatabase(version) {
     backupsDir,
     `neo-ledger-before-${version}-${stamp}.sqlite`,
   );
-  await command("sqlite3", [
-    databasePath,
-    `.timeout 10000\n.backup ${sqliteQuote(backupPath)}\n`,
+  await command("sqlite3", sqliteBackupArgs(databasePath, backupPath));
+  const validation = await command("sqlite3", [
+    backupPath,
+    "PRAGMA integrity_check; SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('app_meta','ledgers','transactions');",
   ]);
-  const integrity = await command("sqlite3", [backupPath, "PRAGMA integrity_check;"]);
-  if (integrity !== "ok") throw new Error("更新前数据库备份完整性检查失败");
+  if (validation !== "ok\n3")
+    throw new Error("更新前数据库备份结构或完整性检查失败");
   const backups = (await readdir(backupsDir, { withFileTypes: true }))
     .filter((entry) => entry.isFile() && entry.name.endsWith(".sqlite"))
     .map((entry) => entry.name)
