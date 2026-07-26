@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import Script from "next/script";
 import {
   useEffect,
@@ -961,6 +962,7 @@ export function LedgerApp({
   const incomeManagerRef = useRef<HTMLDialogElement>(null);
   const badgeRef = useRef<HTMLDialogElement>(null);
   const askRef = useRef<HTMLDialogElement>(null);
+  const router = useRouter();
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const signalCursorRef = useRef(0);
@@ -2168,6 +2170,17 @@ export function LedgerApp({
     setToast({ kind, message });
     window.setTimeout(() => setToast(null), 5200);
   }
+  // 局部刷新，替代 window.location.reload()：既刷新服务端渲染的数据
+  // （账单、统计等直接用 props 的部分），也重新拉取那些被 useState
+  // 从 props 复制出来、router.refresh() 覆盖不到的列表。
+  // 注意：整库被替换（恢复备份）、进程重启（升级）、以及没有 setter 的
+  // installmentList 相关流程仍需整页刷新，不要改用这个函数。
+  async function refreshLedger(
+    extra: Array<() => Promise<void>> = [],
+  ): Promise<void> {
+    router.refresh();
+    await Promise.all([reloadAccounts(), ...extra.map((run) => run())]);
+  }
   useEffect(() => {
     if (!ask) return;
     const node = askRef.current;
@@ -2353,7 +2366,7 @@ export function LedgerApp({
         kind: "success",
         message: "账单已修改，关联账户余额已同步修正。",
       });
-      window.setTimeout(() => window.location.reload(), 450);
+      await refreshLedger();
     });
   }
   function askNeoAi() {
@@ -3185,7 +3198,7 @@ export function LedgerApp({
       }
       liquidationRef.current?.close();
       setLiquidatingAsset(null);
-      window.location.reload();
+      await refreshLedger([reloadDigitalAssets]);
     });
   }
   function processPending(
@@ -3202,7 +3215,7 @@ export function LedgerApp({
       if (response.ok) {
         await reloadPendingFlows();
         await reloadAccounts();
-        if (action === "confirm") window.location.reload();
+        if (action === "confirm") router.refresh();
       }
     });
   }
@@ -3519,7 +3532,7 @@ export function LedgerApp({
             : "",
         );
         if (automaticRows.length && !reviewRows.length)
-          window.setTimeout(() => window.location.reload(), 600);
+          await refreshLedger();
       } catch (error) {
         setBillImportError(
           error instanceof Error ? error.message : "无法读取这个账单文件",
@@ -3639,8 +3652,7 @@ export function LedgerApp({
         kind: "success",
         message: `已新建“${suggestion.name}”并导入 ${imported.imported ?? rows.length} 笔流水。`,
       });
-      if (!remaining.length)
-        window.setTimeout(() => window.location.reload(), 600);
+      if (!remaining.length) await refreshLedger();
     } catch (error) {
       setBillImportError(
         error instanceof Error ? error.message : "新建账户并导入失败",
@@ -3662,7 +3674,7 @@ export function LedgerApp({
           kind: "success",
           message: `已导入 ${result.imported ?? 0} 笔流水${result.duplicates ? `，跳过 ${result.duplicates} 笔重复项` : ""}。`,
         });
-        window.setTimeout(() => window.location.reload(), 500);
+        await refreshLedger();
       }
     });
   }
@@ -3685,7 +3697,7 @@ export function LedgerApp({
       };
       if (response.ok) {
         notify(`已清理 ${result.deleted ?? 0} 笔声明账单，并修复账户余额。`, "success");
-        window.location.reload();
+        await refreshLedger();
       } else setBillImportError(result.error ?? "清理失败");
     });
   }
@@ -3957,7 +3969,8 @@ export function LedgerApp({
           direction: balance > 0 ? "owesMe" : "iOwe",
         }),
       });
-      if (response.ok) window.location.reload();
+      if (response.ok) await refreshLedger();
+      else notify("平账失败，请稍后重试。");
     });
   }
 

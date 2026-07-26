@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { env } from "cloudflare:workers";
+import { SESSION_COOKIE_NAME } from "./app/auth-core.js";
 
 type Bucket = { count: number; resetAt: number };
 const buckets = new Map<string, Bucket>();
+
+function dbBinding() {
+  return (env as unknown as { DB?: D1Database }).DB;
+}
 
 function isLocalHost(hostname: string) {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
@@ -17,7 +22,7 @@ function limitFor(pathname: string, method: string) {
 
 async function globalRequestCount(identity: string, scope: string, windowStart: number) {
   try {
-    const binding = (env as unknown as { DB?: D1Database }).DB;
+    const binding = dbBinding();
     if (!binding) return null;
     await binding
       .prepare(
@@ -42,12 +47,40 @@ async function globalRequestCount(identity: string, scope: string, windowStart: 
   }
 }
 
+// 登录后账本归属会从 "local" 变成 "user:<id>"，因此这里必须按会话解析身份，
+// 不能只看请求头和 hostname，否则本机登录用户会被自己的账本挡在门外。
+async function sessionOwnerId(request: NextRequest) {
+  const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
+  if (!token) return null;
+  try {
+    const binding = dbBinding();
+    if (!binding) return null;
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(token),
+    );
+    const tokenHash = [...new Uint8Array(digest)]
+      .map((value) => value.toString(16).padStart(2, "0"))
+      .join("");
+    const row = await binding
+      .prepare(
+        `SELECT user_id AS userId FROM app_sessions
+         WHERE token_hash=? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+      )
+      .bind(tokenHash)
+      .first<{ userId: string }>();
+    return row ? `user:${row.userId}` : null;
+  } catch {
+    return null;
+  }
+}
+
 async function ownsRequestedLedger(identity: string, ledgerValue: string | null) {
   if (!ledgerValue) return true;
   const ledgerId = Number(ledgerValue);
   if (!Number.isInteger(ledgerId) || ledgerId <= 0) return false;
   try {
-    const binding = (env as unknown as { DB?: D1Database }).DB;
+    const binding = dbBinding();
     if (!binding) return true;
     const row = await binding
       .prepare("SELECT owner_id AS ownerId FROM ledgers WHERE id=?")
@@ -83,9 +116,8 @@ export async function proxy(request: NextRequest) {
   const now = Date.now();
   const identity = email
     ? `email:${email}`
-    : isLocalHost(hostname)
-      ? "local"
-      : "external-token";
+    : ((await sessionOwnerId(request)) ??
+      (isLocalHost(hostname) ? "local" : "external-token"));
   if (
     !externalTokenRoute &&
     !(await ownsRequestedLedger(identity, request.nextUrl.searchParams.get("ledger")))

@@ -66,4 +66,35 @@ check("HTTP明文地址被拒", r.status === 400 && (r.json?.error||"").includes
 r = await call(webdav, "POST", "/api/webdav-sync", { cookie: cookie2, body: { action: "upload", url: "https://dav.example.com/x", username: "u", password: "p", payload: "" } });
 check("空备份上传被拒", r.status === 400 && (r.json?.error||"").includes("为空"), `${r.status} ${r.text?.slice(0,120)}`);
 
+describe("proxy 身份判定（回归：登录后不得被自己的账本挡住）");
+{
+  // 复现过的线上故障：proxy 在 localhost 上把身份写死成 "local"，
+  // 而注册账号后账本归属变成 "user:<id>"，导致所有带 ?ledger= 的接口 403。
+  const proxyMod = await import("../../proxy.ts");
+  const { SESSION_COOKIE_NAME } = await import("../../app/auth-core.js");
+  const authMod = await import("../../app/auth.ts");
+
+  const anyOwned = await q("SELECT id,owner_id AS ownerId FROM ledgers WHERE owner_id LIKE 'user:%' LIMIT 1");
+  const targetLedger = anyOwned[0]?.id ?? 1;
+  check("存在归属登录用户的账本", !!anyOwned.length, JSON.stringify(await q("SELECT id,owner_id FROM ledgers")));
+
+  const token = cookie2.split("=").slice(1).join("=");
+  const proxied = new Request(`http://localhost:3000/api/accounts?ledger=${targetLedger}`, {
+    headers: { cookie: `${SESSION_COOKIE_NAME}=${token}` },
+  });
+  // NextRequest 的 cookies API 在测试里用最小替身补齐
+  proxied.cookies = { get: (name) => (name === SESSION_COOKIE_NAME ? { value: decodeURIComponent(token) } : undefined) };
+  proxied.nextUrl = new URL(proxied.url);
+  let proxyStatus = 0;
+  try {
+    const out = await proxyMod.proxy(proxied);
+    proxyStatus = out?.status ?? 200;
+  } catch (error) {
+    proxyStatus = -1;
+    check("proxy 未抛异常", false, String(error).slice(0, 160));
+  }
+  check("带会话访问自己的账本不被 proxy 拦截", proxyStatus !== 403, `status=${proxyStatus}`);
+  void authMod;
+}
+
 process.exit(summary("套件3 · 恢复/账号/安全") ? 1 : 0);
