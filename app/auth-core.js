@@ -8,6 +8,12 @@ export function normalizeEmail(value) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+/**
+ * @param {unknown} value
+ * @param {{optional?: boolean}} [options]
+ * @returns {string|null} optional 为 true 且留空时返回 null（保持数据库里存 NULL，
+ *   否则空串会撞上 app_users 的 “email IS NOT NULL” 部分唯一索引）
+ */
 export function validateEmail(value, { optional = false } = {}) {
   const email = normalizeEmail(value);
   if (!email && optional) return null;

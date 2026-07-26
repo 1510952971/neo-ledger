@@ -18,6 +18,7 @@ import {
   validateEmail,
   validateRegistrationInput,
 } from "../../auth-core.js";
+import { consumeEmailCode } from "../../email-code";
 import { oauthProviderStatus } from "../../oauth";
 
 export const dynamic = "force-dynamic";
@@ -76,14 +77,22 @@ export async function POST(request: Request) {
 
     if (action === "register") {
       const value = validateRegistrationInput(body);
+      // 邮箱仍可留空（本地自用场景），但只要填了就必须先通过验证码验证，
+      // 否则填错邮箱的人以后既收不到重置邮件、也占用了别人的邮箱。
+      if (value.email)
+        await consumeEmailCode({
+          email: value.email,
+          purpose: "register",
+          code: String((body as { code?: string }).code ?? ""),
+        });
       const firstAccount = !(await hasLocalUsers());
       const password = await passwordRecord(value.password);
       const id = crypto.randomUUID();
       try {
         await db
           .prepare(
-            `INSERT INTO app_users(id,username,email,display_name,password_hash,password_salt,password_iterations)
-             VALUES(?,?,?,?,?,?,?)`,
+            `INSERT INTO app_users(id,username,email,display_name,password_hash,password_salt,password_iterations,email_verified)
+             VALUES(?,?,?,?,?,?,?,?)`,
           )
           .bind(
             id,
@@ -93,6 +102,7 @@ export async function POST(request: Request) {
             password.hash,
             password.salt,
             password.iterations,
+            value.email ? 1 : 0,
           )
           .run();
       } catch (error) {
@@ -171,10 +181,18 @@ export async function PATCH(request: Request) {
     if (!session) throw new ApiAccessError("请先登录后再绑定邮箱", 401);
     const body = (await request.json()) as {
       email?: string;
+      code?: string;
       currentPassword?: string;
       newPassword?: string;
     };
     const email = validateEmail(body.email);
+    if (!email) throw new ApiAccessError("请输入邮箱地址", 400);
+    // 绑定/更换邮箱同样要验证码，确认这个邮箱确实归本人所有。
+    await consumeEmailCode({
+      email,
+      purpose: "bind",
+      code: String(body.code ?? ""),
+    });
     const db = getDbBinding();
     const row = await db
       .prepare(
@@ -212,7 +230,8 @@ export async function PATCH(request: Request) {
         await db
           .prepare(
             `UPDATE app_users SET email=?,password_hash=?,password_salt=?,password_iterations=?,
-                    password_enabled=1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
+                    password_enabled=1,email_verified=1,
+                    updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
           )
           .bind(
             email,
@@ -225,7 +244,7 @@ export async function PATCH(request: Request) {
       else
         await db
           .prepare(
-            "UPDATE app_users SET email=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+            "UPDATE app_users SET email=?,email_verified=1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
           )
           .bind(email, session.id)
           .run();

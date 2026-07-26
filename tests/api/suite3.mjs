@@ -97,4 +97,48 @@ describe("proxy 身份判定（回归：登录后不得被自己的账本挡住�
   void authMod;
 }
 
+describe("邮箱验证码");
+{
+  const codeApi = await import("../../app/api/auth/email-code/route.ts");
+  const resetApi = await import("../../app/api/auth/reset-password/route.ts");
+  const { maskEmail } = await import("../../app/email-code-core.js");
+
+  // 未配置 RESEND_API_KEY 时应降级为终端输出，而不是报错
+  let r = await call(codeApi, "GET", "/api/auth/email-code");
+  check("GET 返回邮件服务状态", r.status === 200 && r.json?.configured === false, r.text);
+
+  r = await call(codeApi, "POST", "/api/auth/email-code", { body: { email: "reset-target@example.com", purpose: "reset" } });
+  check("未注册邮箱的 reset 也返回成功（防枚举）", r.status === 200, `${r.status} ${r.text?.slice(0,120)}`);
+
+  r = await call(codeApi, "POST", "/api/auth/email-code", { body: { email: "x@example.com", purpose: "删库跑路" } });
+  check("非法用途被拒", r.status === 400, `${r.status} ${r.text?.slice(0,100)}`);
+
+  r = await call(codeApi, "POST", "/api/auth/email-code", { body: { email: "不是邮箱", purpose: "register" } });
+  check("非法邮箱被拒", r.status >= 400, `${r.status}`);
+
+  // 真实链路：给已登录用户绑定新邮箱
+  const target = "bind-target@example.com";
+  r = await call(codeApi, "POST", "/api/auth/email-code", { cookie: cookie2, body: { email: target, purpose: "bind" } });
+  check("bind 发码成功且降级到终端", r.status === 200 && r.json?.fallback === true, `${r.status} ${r.text?.slice(0,140)}`);
+
+  const codeRow = await q("SELECT code_hash AS h, purpose, consumed_at AS c FROM email_codes WHERE email=? ORDER BY id DESC LIMIT 1", target);
+  check("验证码以哈希存储而非明文", !!codeRow[0]?.h && codeRow[0].h.length >= 32 && !/^\d{6}$/.test(codeRow[0].h), JSON.stringify(codeRow[0]));
+
+  r = await call(codeApi, "POST", "/api/auth/email-code", { cookie: cookie2, body: { email: target, purpose: "bind" } });
+  check("60 秒内重复发码被限流(429)", r.status === 429, `${r.status} ${r.text?.slice(0,100)}`);
+
+  r = await call(auth, "PATCH", "/api/auth", { cookie: cookie2, body: { email: target, code: "000000", currentPassword: "Secret#12345" } });
+  check("错误验证码绑定失败", r.status >= 400, `${r.status} ${r.text?.slice(0,120)}`);
+  const attempts = await q("SELECT attempts FROM email_codes WHERE email=? ORDER BY id DESC LIMIT 1", target);
+  check("错误尝试被计数", Number(attempts[0]?.attempts) >= 1, JSON.stringify(attempts[0]));
+
+  r = await call(codeApi, "POST", "/api/auth/email-code", { body: { email: "nobody@example.com", purpose: "bind" } });
+  check("未登录不能给自己发绑定码", r.status === 401, `${r.status}`);
+
+  r = await call(resetApi, "POST", "/api/auth/reset-password", { body: { email: "pengtest-mail@example.com", code: "123456", newPassword: "Whatever#123" } });
+  check("无有效验证码时重置被拒", r.status >= 400, `${r.status} ${r.text?.slice(0,120)}`);
+
+  check("邮箱脱敏可用", maskEmail(target) === "b*********t@example.com", maskEmail(target));
+}
+
 process.exit(summary("套件3 · 恢复/账号/安全") ? 1 : 0);

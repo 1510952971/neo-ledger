@@ -12,7 +12,7 @@ import {
   SCHEDULED_OCCURRENCES_TABLE_SQL,
 } from "./transfer-schema.js";
 
-const SCHEMA_VERSION = "24";
+const SCHEMA_VERSION = "25";
 
 export const FX_TO_CNY = { CNY: 1, USD: 7.2, JPY: 0.0462, EUR: 7.85 } as const;
 
@@ -59,6 +59,27 @@ export async function ensureDb() {
     .prepare("SELECT value FROM app_meta WHERE key = 'schema_version'")
     .first<{ value: string }>();
   if (version?.value === SCHEMA_VERSION) return;
+  if (version?.value === "24") {
+    await binding.batch([
+      binding.prepare(
+        "ALTER TABLE app_users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0",
+      ),
+      // 已经绑过邮箱的老用户视为已验证，避免升级后被迫重新验证。
+      binding.prepare(
+        "UPDATE app_users SET email_verified=1 WHERE email IS NOT NULL",
+      ),
+      binding.prepare(
+        "CREATE TABLE email_codes(id INTEGER PRIMARY KEY AUTOINCREMENT,email TEXT NOT NULL COLLATE NOCASE,purpose TEXT NOT NULL CHECK(purpose IN ('register','bind','reset')),code_hash TEXT NOT NULL,user_id TEXT,expires_at TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,consumed_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+      ),
+      binding.prepare(
+        "CREATE INDEX email_codes_lookup_idx ON email_codes(email,purpose,created_at)",
+      ),
+      binding.prepare(
+        "UPDATE app_meta SET value='25' WHERE key='schema_version'",
+      ),
+    ]);
+    return ensureDb();
+  }
   if (version?.value === "23") {
     await binding.batch([
       binding.prepare(
