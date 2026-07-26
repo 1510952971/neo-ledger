@@ -19,7 +19,7 @@ test("release metadata and local updater endpoint stay aligned", async () => {
   );
   assert.match(
     runnerSource,
-    /mode,\s*["']--hostname["'],\s*["']127\.0\.0\.1["']/,
+    /mode,\s*["']--hostname["'],\s*["']0\.0\.0\.0["']/,
   );
   assert.match(
     runnerSource,

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { ensureDb, getDbBinding } from "../../../db";
-import { createAccountTransfer, TransferKind } from "../../../db/transfers";
+import { createAccountTransfer, type TransferKind } from "../../../db/transfers";
 import { accessErrorResponse, claimAndRequireLedger } from "../../api-security";
 
 const allowedKinds = new Set<TransferKind>(["账户转账", "信用卡还款"]);

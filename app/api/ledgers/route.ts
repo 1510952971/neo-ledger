@@ -2,22 +2,26 @@ import { NextResponse } from "next/server";
 import { ensureDb, getDbBinding } from "../../../db";
 import { accessErrorResponse, requestOwnerId } from "../../api-security";
 export async function GET(request: Request) {
-  await ensureDb();
-  const ownerId = requestOwnerId(request);
-  const db = getDbBinding();
-  await db.prepare("UPDATE ledgers SET owner_id=? WHERE owner_id IS NULL").bind(ownerId).run();
-  const rows = await db
-    .prepare(
-      "SELECT id,name,icon,uuid,updated_at AS updatedAt,created_at AS createdAt FROM ledgers WHERE owner_id=? ORDER BY id",
-    )
-    .bind(ownerId)
-    .all();
-  return NextResponse.json(rows.results);
+  try {
+    await ensureDb();
+    const ownerId = await requestOwnerId(request);
+    const db = getDbBinding();
+    await db.prepare("UPDATE ledgers SET owner_id=? WHERE owner_id IS NULL").bind(ownerId).run();
+    const rows = await db
+      .prepare(
+        "SELECT id,name,icon,uuid,updated_at AS updatedAt,created_at AS createdAt FROM ledgers WHERE owner_id=? ORDER BY id",
+      )
+      .bind(ownerId)
+      .all();
+    return NextResponse.json(rows.results);
+  } catch (error) {
+    return accessErrorResponse(error, "读取账本失败");
+  }
 }
 export async function POST(request: Request) {
   try {
     await ensureDb();
-    const ownerId = requestOwnerId(request);
+    const ownerId = await requestOwnerId(request);
     const body = (await request.json()) as { name?: string; icon?: string };
     const name = String(body.name ?? "")
       .trim()
@@ -66,7 +70,7 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
   try {
     await ensureDb();
-    const ownerId = requestOwnerId(request);
+    const ownerId = await requestOwnerId(request);
     const id = Number(new URL(request.url).searchParams.get("id"));
     if (!Number.isInteger(id) || id <= 0) throw new Error("账本参数无效");
 

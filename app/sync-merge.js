@@ -25,6 +25,19 @@ const timestampOf = (row, snapshot) =>
   String(row.updatedAt || row.deletedAt || row.createdAt || snapshot.exportedAt || "1970-01-01T00:00:00.000Z");
 
 function syncKey(table, row, source) {
+  const ledger = row.ledgerSyncId;
+  if (ledger) {
+    if (table === "budgetSettings" || table === "fireSettings" || table === "economicSettings")
+      return `${ledger}:${table}`;
+    if (table === "categoryBudgets")
+      return `${ledger}:${table}:${String(row.category ?? "")}`;
+    if (table === "expenseCategories" || table === "incomeCategories")
+      return `${ledger}:${table}:${String(row.builtinKey ?? row.name ?? "")}`;
+    if (table === "members")
+      return `${ledger}:${table}:${row.isMe ? "self" : String(row.name ?? row.id ?? "")}`;
+    if (table === "achievements")
+      return `${ledger}:${table}:${String(row.code ?? "")}`;
+  }
   return String(
     row.syncId || row.uuid || row.crdtId ||
       `legacy:${source}:${table}:${row.id ?? `${row.ledgerId ?? ""}:${row.code ?? row.category ?? row.name ?? JSON.stringify(row)}`}`,
@@ -34,7 +47,7 @@ function syncKey(table, row, source) {
 export function mergeSyncSnapshots(local, remote) {
   const merged = {
     ...local,
-    version: Math.max(Number(local.version || 0), Number(remote.version || 0), 21),
+    version: Math.max(Number(local.version || 0), Number(remote.version || 0), 22),
     exportedAt: new Date().toISOString(),
   };
   const tombstones = new Map();

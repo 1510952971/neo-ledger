@@ -3,6 +3,34 @@ import { ensureDb, getDbBinding } from "../../../../db";
 import { accessErrorResponse, requestOwnerId } from "../../../api-security";
 type Row = Record<string, unknown>;
 
+function dedupeNaturalRows(rows: Row[] | undefined, fields: string[]) {
+  if (!rows) return rows;
+  const winners = new Map<string, Row>();
+  for (const row of rows) {
+    const key = [row.ledgerSyncId ?? row.ledgerId, ...fields.map((field) => row[field])]
+      .map((value) => String(value ?? ""))
+      .join(":");
+    const current = winners.get(key);
+    const timestamp = String(row.updatedAt ?? row.createdAt ?? "");
+    const currentTimestamp = String(current?.updatedAt ?? current?.createdAt ?? "");
+    if (!current || timestamp > currentTimestamp) winners.set(key, row);
+  }
+  return [...winners.values()];
+}
+
+function dedupeCategoryRows(rows: Row[] | undefined) {
+  if (!rows) return rows;
+  const winners = new Map<string, Row>();
+  for (const row of rows) {
+    const key = `${String(row.ledgerSyncId ?? row.ledgerId ?? "")}:${String(row.builtinKey ?? row.name ?? "")}`;
+    const current = winners.get(key);
+    const timestamp = String(row.updatedAt ?? row.createdAt ?? "");
+    const currentTimestamp = String(current?.updatedAt ?? current?.createdAt ?? "");
+    if (!current || timestamp > currentTimestamp) winners.set(key, row);
+  }
+  return [...winners.values()];
+}
+
 async function remapLocalIds(db: ReturnType<typeof getDbBinding>, rows: Record<string, Row[] | undefined>) {
   const definitions = [
     ["ledgers", "ledgers"], ["accounts", "accounts"], ["members", "members"],
@@ -58,14 +86,14 @@ export async function POST(request: Request) {
     await ensureDb();
     const data = (await request.json()) as Record<string, unknown>;
     if (
-      ![7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21].includes(Number(data.version)) ||
+      ![7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22].includes(Number(data.version)) ||
       !Array.isArray(data.ledgers) ||
       !Array.isArray(data.accounts) ||
       !Array.isArray(data.transactions)
     )
       throw new Error("不是有效的 NeoLedger 备份");
     const db = getDbBinding(),
-      ownerId = requestOwnerId(request),
+      ownerId = await requestOwnerId(request),
       rows = data as unknown as {
         ledgers: Row[];
         accounts: Row[];
@@ -89,9 +117,15 @@ export async function POST(request: Request) {
         accountTransfers?: Row[];
         syncTombstones?: Row[];
       };
+    rows.expenseCategories = dedupeCategoryRows(rows.expenseCategories);
+    rows.incomeCategories = dedupeCategoryRows(rows.incomeCategories);
+    rows.categoryBudgets = dedupeNaturalRows(rows.categoryBudgets, [
+      "category",
+    ]);
     await remapLocalIds(db, rows as unknown as Record<string, Row[] | undefined>);
     const q = [
       db.prepare("INSERT OR REPLACE INTO app_meta(key,value) VALUES('restore_mode','1')"),
+      db.prepare("UPDATE ledgers SET owner_id=? WHERE owner_id IS NULL").bind(ownerId),
       db.prepare("DELETE FROM side_hustle_deductions WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
       db.prepare("DELETE FROM pending_transactions WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
       db.prepare("DELETE FROM system_notifications WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
@@ -152,13 +186,16 @@ export async function POST(request: Request) {
       q.push(
         db
           .prepare(
-            "INSERT INTO digital_assets(id,ledger_id,name,asset_type,purchase_price,purchase_date,lifespan_months,residual_rate_bps,heat_level,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO digital_assets(id,ledger_id,name,asset_type,currency,valuation_mode,manual_value,purchase_price,purchase_date,lifespan_months,residual_rate_bps,heat_level,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
           )
           .bind(
             x.id,
             x.ledgerId,
             x.name,
             x.assetType,
+            x.currency ?? "CNY",
+            x.valuationMode ?? "自动折旧",
+            x.manualValue ?? null,
             x.purchasePrice,
             x.purchaseDate,
             x.lifespanMonths,

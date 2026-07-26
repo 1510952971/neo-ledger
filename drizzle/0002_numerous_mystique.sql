@@ -1,1 +1,0 @@
-ALTER TABLE `expenses` ADD `category` text DEFAULT '餐饮' NOT NULL;

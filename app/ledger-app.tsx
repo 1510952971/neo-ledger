@@ -18,7 +18,26 @@ import {
   statementAccountKey,
   suggestStatementAccount,
 } from "./bill-import-core.js";
+import {
+  billPeriodLabel,
+  billWeekValue,
+  dateKeyFromBillWeek,
+  normalizeBillAnchor,
+  setBillAnchorMonth,
+  setBillAnchorYear,
+  shiftBillAnchor,
+} from "./bill-period.js";
+import {
+  ASSET_PAGE_SIZE,
+  COLLECTION_PAGE_SIZE,
+  paginateBills,
+} from "./bill-pagination.js";
+import { restoreBrowserState } from "./browser-state.js";
 import { mergeSyncSnapshots } from "./sync-merge.js";
+import { decryptSyncPayload, encryptSyncPayload } from "./sync-crypto.js";
+import { ASSET_TYPE_OPTIONS, assetTypeIcon } from "./asset-core.js";
+import { splitBalanceDelta } from "./split-core.js";
+import { AuthPanel, type ClientAuthUser } from "./auth-panel.tsx";
 
 type Mood = "悦己" | "刚需" | "冲动";
 type Category = string;
@@ -31,7 +50,6 @@ type BillRange =
   | "week"
   | "month"
   | "year"
-  | "other-year"
   | "custom";
 type Transaction = {
   id: number;
@@ -53,7 +71,16 @@ type Transaction = {
   installmentNumber: number | null;
   isSideHustle: boolean;
   occurredAt: string;
+  updatedAt: string;
   createdAt: string;
+};
+type TransactionEditDraft = {
+  transaction: Transaction;
+  type: TransactionType;
+  accountId: number;
+  mood: Mood;
+  category: Category;
+  incomeCategory: IncomeCategory;
 };
 type Account = {
   id: number;
@@ -138,7 +165,10 @@ type DigitalAsset = {
   id: number;
   ledgerId: number;
   name: string;
-  assetType: "数码设备" | "游戏账号" | "潮流玩具";
+  assetType: string;
+  currency: Currency;
+  valuationMode: "自动折旧" | "手动估值";
+  manualValue: number | null;
   purchasePrice: number;
   purchaseDate: string;
   lifespanMonths: number;
@@ -148,7 +178,9 @@ type DigitalAsset = {
   elapsedMonths: number;
   currentValue: number;
   residualValue: number;
+  valueChange: number;
   valueLost: number;
+  changePercent: number;
   lossPercent: number;
   dailyDepreciation: number;
   heatLambda: number;
@@ -282,9 +314,9 @@ const badgeDefinitions: BadgeDefinition[] = [
   },
   {
     code: "digital_curator",
-    icon: "💻",
-    name: "数字资产馆长",
-    desc: "管理至少 3 件数码或虚拟资产",
+    icon: "🏛️",
+    name: "资产典藏家",
+    desc: "统一管理至少 3 件实物或虚拟资产",
     tier: "稀有",
   },
   {
@@ -414,6 +446,12 @@ type AppUpdateInfo = {
   releaseUrl: string;
   canApply: boolean;
 };
+type QuickSyncStatus = {
+  active: boolean;
+  tokenPrefix?: string;
+  createdAt?: string;
+  lastUsedAt?: string | null;
+};
 type PendingFlow = {
   id: number;
   rawText: string;
@@ -529,6 +567,23 @@ const toDate = (value: string) =>
   new Date(value.replace(" ", "T") + (value.includes("Z") ? "" : "Z"));
 const toLocalDateKey = (date: Date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+const toLocalDateTimeInput = (value: string) => {
+  const date = toDate(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${toLocalDateKey(date)}T${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+};
+const formatTimestamp = (value: string) => {
+  const date = toDate(value);
+  return Number.isNaN(date.getTime())
+    ? value
+    : new Intl.DateTimeFormat("zh-CN", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(date);
+};
 const offlineDb = () =>
   new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open("neo-ledger-offline", 1);
@@ -546,6 +601,67 @@ async function offlinePut(value: Record<string, unknown>) {
     tx.onerror = () => reject(tx.error);
   });
   db.close();
+}
+
+function CollectionPagination({
+  page,
+  totalPages,
+  totalRows,
+  label,
+  unit,
+  onChange,
+}: {
+  page: number;
+  totalPages: number;
+  totalRows: number;
+  label: string;
+  unit: string;
+  onChange: (page: number) => void;
+}) {
+  if (totalPages <= 1) return null;
+  return (
+    <nav className="bill-pagination collection-pagination" aria-label={label}>
+      <button
+        type="button"
+        className="bill-page-arrow"
+        aria-label={`${label}上一页`}
+        title="上一页"
+        disabled={page <= 1}
+        onClick={() => onChange(page - 1)}
+      >
+        ‹
+      </button>
+      <label>
+        <span>第</span>
+        <select
+          value={page}
+          aria-label={`${label}页码`}
+          onChange={(event) => onChange(Number(event.target.value))}
+        >
+          {Array.from({ length: totalPages }, (_, index) => index + 1).map(
+            (item) => (
+              <option value={item} key={item}>
+                {item}
+              </option>
+            ),
+          )}
+        </select>
+        <span>
+          / {totalPages} 页 · 共 {totalRows} {unit}
+        </span>
+      </label>
+      <button
+        type="button"
+        className="bill-page-arrow"
+        aria-label={`${label}下一页`}
+        title="下一页"
+        disabled={page >= totalPages}
+        onClick={() => onChange(page + 1)}
+      >
+        ›
+      </button>
+    </nav>
+  );
 }
 async function offlineList() {
   const db = await offlineDb();
@@ -569,63 +685,6 @@ async function offlineDelete(ids: string[]) {
   });
   db.close();
 }
-const bytesToBase64 = (bytes: Uint8Array) => {
-  let value = "";
-  for (let i = 0; i < bytes.length; i += 8192)
-    value += String.fromCharCode(...bytes.subarray(i, i + 8192));
-  return btoa(value);
-};
-const base64ToBytes = (value: string) =>
-  Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
-async function deriveSyncKey(secret: string, salt: Uint8Array) {
-  const material = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    "PBKDF2",
-    false,
-    ["deriveKey"],
-  );
-  return crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt, iterations: 250000, hash: "SHA-256" },
-    material,
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"],
-  );
-}
-async function encryptSyncPayload(value: unknown, secret: string) {
-  const salt = crypto.getRandomValues(new Uint8Array(16)),
-    iv = crypto.getRandomValues(new Uint8Array(12)),
-    key = await deriveSyncKey(secret, salt),
-    cipher = await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv },
-      key,
-      new TextEncoder().encode(JSON.stringify(value)),
-    );
-  return JSON.stringify({
-    version: 1,
-    algorithm: "AES-256-GCM",
-    kdf: "PBKDF2-SHA256-250000",
-    salt: bytesToBase64(salt),
-    iv: bytesToBase64(iv),
-    ciphertext: bytesToBase64(new Uint8Array(cipher)),
-  });
-}
-async function decryptSyncPayload(payload: string, secret: string) {
-  const box = JSON.parse(payload) as {
-      salt: string;
-      iv: string;
-      ciphertext: string;
-    },
-    key = await deriveSyncKey(secret, base64ToBytes(box.salt)),
-    plain = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: base64ToBytes(box.iv) },
-      key,
-      base64ToBytes(box.ciphertext),
-    );
-  return JSON.parse(new TextDecoder().decode(plain)) as Record<string, unknown>;
-}
-
 export function LedgerApp({
   transactions,
   accounts,
@@ -647,6 +706,8 @@ export function LedgerApp({
   incomeCategories,
   initialTheme,
   lockEnabled,
+  authUser,
+  authHasUsers,
   addTransaction,
   deleteTransaction,
   updateBudget,
@@ -672,6 +733,8 @@ export function LedgerApp({
   incomeCategories: ExpenseCategory[];
   initialTheme: ThemeName;
   lockEnabled: boolean;
+  authUser: ClientAuthUser | null;
+  authHasUsers: boolean;
   addTransaction: (formData: FormData) => Promise<void>;
   deleteTransaction: (id: number) => Promise<{ ok: boolean; error?: string }>;
   updateBudget: (formData: FormData) => Promise<void>;
@@ -684,9 +747,10 @@ export function LedgerApp({
   const [clockTick, setClockTick] = useState(0);
   const [billQuery, setBillQuery] = useState("");
   const [billRange, setBillRange] = useState<BillRange>("all");
-  const [billYear, setBillYear] = useState("");
+  const [billAnchorDate, setBillAnchorDate] = useState("");
   const [billStartDate, setBillStartDate] = useState("");
   const [billEndDate, setBillEndDate] = useState("");
+  const [billPageState, setBillPageState] = useState({ key: "", page: 1 });
   const [dimension, setDimension] = useState<Dimension>("月");
   const [todayKey, setTodayKey] = useState("");
   const [dateLabels, setDateLabels] = useState<Record<number, string>>({});
@@ -695,6 +759,7 @@ export function LedgerApp({
         transactions.map((item) => [
           item.id,
           new Intl.DateTimeFormat("zh-CN", {
+            year: "numeric",
             month: "numeric",
             day: "numeric",
             hour: "2-digit",
@@ -714,6 +779,18 @@ export function LedgerApp({
     kind: "warning" | "success";
     message: string;
   } | null>(null);
+  // 应用内替代 window.alert / confirm / prompt。原生对话框会阻塞页面线程，
+  // 且 Chrome 允许用户勾选“阻止此页面创建更多对话框”，一旦勾选，删除账本、
+  // 恢复备份等流程会静默失效。
+  const [ask, setAsk] = useState<{
+    title: string;
+    message: string;
+    tone: "danger" | "normal";
+    confirmText: string;
+    input?: { label: string; defaultValue: string; placeholder?: string };
+    resolve: (value: string | null) => void;
+  } | null>(null);
+  const [askValue, setAskValue] = useState("");
   const [subscriptionOpen, setSubscriptionOpen] = useState(false);
   const [editingSubscription, setEditingSubscription] =
     useState<Subscription | null>(null);
@@ -729,6 +806,7 @@ export function LedgerApp({
     color: "#8f91b8",
   });
   const [dataOpen, setDataOpen] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateApplying, setUpdateApplying] = useState(false);
@@ -736,7 +814,9 @@ export function LedgerApp({
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [ledgerMenuOpen, setLedgerMenuOpen] = useState(false);
   const [subscriptionList, setSubscriptionList] = useState(subscriptions);
+  const [subscriptionPage, setSubscriptionPage] = useState(1);
   const [categoryBudgetList, setCategoryBudgetList] = useState(categoryBudgets);
+  const [categoryBudgetPage, setCategoryBudgetPage] = useState(1);
   const [categoryList, setCategoryList] = useState(expenseCategories);
   const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
   const [editingCategory, setEditingCategory] =
@@ -748,6 +828,10 @@ export function LedgerApp({
     useState<ExpenseCategory | null>(null);
   const [incomeCategoryError, setIncomeCategoryError] = useState("");
   const [entryType, setEntryType] = useState<TransactionType>("支出");
+  const [transactionEditOpen, setTransactionEditOpen] = useState(false);
+  const [transactionEdit, setTransactionEdit] =
+    useState<TransactionEditDraft | null>(null);
+  const [transactionEditError, setTransactionEditError] = useState("");
   const [reflection, setReflection] = useState("");
   const [mood, setMood] = useState<Mood>("刚需");
   const [category, setCategory] = useState<Category>(
@@ -763,6 +847,7 @@ export function LedgerApp({
   const [parsedTitle, setParsedTitle] = useState("");
   const [parsedPreview, setParsedPreview] = useState<ParsedEntry | null>(null);
   const [goalList, setGoalList] = useState(savingsGoals);
+  const [goalPage, setGoalPage] = useState(1);
   const [goalOpen, setGoalOpen] = useState(false);
   const [savingGoal, setSavingGoal] = useState<SavingsGoal | null>(null);
   const [goalError, setGoalError] = useState("");
@@ -775,13 +860,18 @@ export function LedgerApp({
   const [receiptUrl, setReceiptUrl] = useState("");
   const [scanning, setScanning] = useState(false);
   const [memberList, setMemberList] = useState(members);
+  const [settlementPage, setSettlementPage] = useState(1);
   const [installmentList] = useState(installments);
+  const [installmentPage, setInstallmentPage] = useState(1);
   const [installmentOpen, setInstallmentOpen] = useState(false);
   const [digitalAssetList, setDigitalAssetList] = useState(digitalAssets);
+  const [digitalAssetPage, setDigitalAssetPage] = useState(1);
   const [assetOpen, setAssetOpen] = useState(false);
-  const [assetType, setAssetType] = useState<DigitalAsset["assetType"]>(
-    "数码设备",
-  );
+  const [editingAsset, setEditingAsset] = useState<DigitalAsset | null>(null);
+  const [assetType, setAssetType] = useState("数码设备");
+  const [assetValuationMode, setAssetValuationMode] = useState<
+    DigitalAsset["valuationMode"]
+  >("自动折旧");
   const [assetError, setAssetError] = useState("");
   const [liquidatingAsset, setLiquidatingAsset] =
     useState<DigitalAsset | null>(null);
@@ -806,9 +896,7 @@ export function LedgerApp({
     null,
   );
   const [offlineCount, setOfflineCount] = useState(0);
-  const [isOnline, setIsOnline] = useState(() =>
-    typeof navigator === "undefined" ? true : navigator.onLine,
-  );
+  const [isOnline, setIsOnline] = useState(true);
   const [systemNotices, setSystemNotices] = useState<SystemNotice[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
@@ -821,45 +909,47 @@ export function LedgerApp({
   const [fireConfig, setFireConfig] = useState(fireSetting);
   const [syncStatus, setSyncStatus] = useState("尚未同步");
   const [syncing, setSyncing] = useState(false);
-  const [webdavConfig] = useState(() => {
-    if (typeof window === "undefined") return { url: "", username: "" };
-    try {
-      const saved = JSON.parse(
-        localStorage.getItem("neo-webdav-config") || "{}",
-      ) as { url?: string; username?: string };
-      return { url: saved.url || "", username: saved.username || "" };
-    } catch {
-      return { url: "", username: "" };
-    }
+  const [webdavConfig, setWebdavConfig] = useState({ url: "", username: "" });
+  const [webdavSession, setWebdavSession] = useState({
+    password: "",
+    secret: "",
   });
+  const [nearbyPairingCode, setNearbyPairingCode] = useState("");
+  const [nearbyReceiveCode, setNearbyReceiveCode] = useState("");
+  const [nearbyFile, setNearbyFile] = useState<File | null>(null);
+  const [nearbyStatus, setNearbyStatus] = useState("等待生成或接收同步包");
+  const [quickSyncStatus, setQuickSyncStatus] =
+    useState<QuickSyncStatus | null>(null);
+  const [quickSyncToken, setQuickSyncToken] = useState("");
+  const [quickSyncMessage, setQuickSyncMessage] = useState("");
   const [inflationConfig, setInflationConfig] = useState(economicSetting);
   const [p2pRoom, setP2pRoom] = useState("neo-home");
-  const [p2pNode] = useState(() => {
-    if (typeof window === "undefined") return "";
-    const saved =
-      localStorage.getItem("neo-p2p-node") ||
-      `node-${crypto.randomUUID().slice(0, 8)}`;
-    localStorage.setItem("neo-p2p-node", saved);
-    return saved;
-  });
+  const [p2pNode, setP2pNode] = useState("");
   const [p2pTarget, setP2pTarget] = useState("");
   const [p2pStatus, setP2pStatus] = useState("等待局域网节点");
   const [splitMode, setSplitMode] = useState<
     "全额由我支付" | "全额由对方支付" | "按比例平摊"
   >("全额由我支付");
-  const [splitMemberId, setSplitMemberId] = useState(
-    members.find((item) => !item.isMe)?.id ?? 0,
-  );
+  const [splitMemberId, setSplitMemberId] = useState(0);
   const [mySharePercent, setMySharePercent] = useState(50);
   const [forecast, setForecast] = useState<Forecast | null>(null);
   const [chartReady, setChartReady] = useState(false);
   const [pending, startTransition] = useTransition();
   const entryRef = useRef<HTMLDialogElement>(null);
+  const transactionEditRef = useRef<HTMLDialogElement>(null);
+  const billListRef = useRef<HTMLElement>(null);
+  const digitalAssetListRef = useRef<HTMLElement>(null);
+  const subscriptionListRef = useRef<HTMLElement>(null);
+  const settlementListRef = useRef<HTMLElement>(null);
+  const goalListRef = useRef<HTMLElement>(null);
+  const installmentListRef = useRef<HTMLElement>(null);
+  const categoryBudgetListRef = useRef<HTMLElement>(null);
   const budgetRef = useRef<HTMLDialogElement>(null);
   const accountRef = useRef<HTMLDialogElement>(null);
   const transferRef = useRef<HTMLDialogElement>(null);
   const subscriptionRef = useRef<HTMLDialogElement>(null);
   const dataRef = useRef<HTMLDialogElement>(null);
+  const authRef = useRef<HTMLDialogElement>(null);
   const noticeRef = useRef<HTMLDialogElement>(null);
   const ledgerMenuRef = useRef<HTMLDialogElement>(null);
   const goalRef = useRef<HTMLDialogElement>(null);
@@ -870,6 +960,7 @@ export function LedgerApp({
   const categoryManagerRef = useRef<HTMLDialogElement>(null);
   const incomeManagerRef = useRef<HTMLDialogElement>(null);
   const badgeRef = useRef<HTMLDialogElement>(null);
+  const askRef = useRef<HTMLDialogElement>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const signalCursorRef = useRef(0);
@@ -935,11 +1026,43 @@ export function LedgerApp({
   const syncOfflineEntriesEffect = useEffectEvent(syncOfflineEntries);
   const handlePeerSignalEffect = useEffectEvent(handlePeerSignal);
   const checkAppUpdateEffect = useEffectEvent(checkAppUpdate);
+  const loadQuickSyncStatusEffect = useEffectEvent(loadQuickSyncStatus);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(refreshTransactionView);
     return () => window.cancelAnimationFrame(frame);
   }, [transactions]);
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    if (!query.has("auth_notice") && !query.has("auth_error")) return;
+    const frame = window.requestAnimationFrame(() =>
+      openDialog(authRef, setAuthOpen),
+    );
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const browserState = restoreBrowserState({
+        storage: localStorage,
+        online: navigator.onLine,
+        createNodeId: () => crypto.randomUUID(),
+      }) as {
+        isOnline: boolean;
+        webdavConfig: { url: string; username: string };
+        p2pNode: string;
+      };
+      setIsOnline(browserState.isOnline);
+      setWebdavConfig(browserState.webdavConfig);
+      setP2pNode(browserState.p2pNode);
+      try {
+        setWebdavSession({
+          password: sessionStorage.getItem("neo-webdav-password") || "",
+          secret: sessionStorage.getItem("neo-webdav-secret") || "",
+        });
+      } catch {}
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
   useEffect(() => {
     const updateClock = () => {
       const now = Date.now();
@@ -1025,7 +1148,9 @@ export function LedgerApp({
     };
   }, [noticeOpen, currentLedgerId]);
   useEffect(() => {
-    if (dataOpen && !updateInfo) void checkAppUpdateEffect();
+    if (!dataOpen) return;
+    if (!updateInfo) void checkAppUpdateEffect();
+    void loadQuickSyncStatusEffect();
   }, [dataOpen, updateInfo]);
   useEffect(() => {
     if (!dataOpen || !p2pNode || !p2pRoom) return;
@@ -1413,18 +1538,26 @@ export function LedgerApp({
         .sort((a, b) => b - a),
     [transactions],
   );
+  const billAnchorKey = normalizeBillAnchor(billAnchorDate, todayKey);
+  const billPeriodYears = useMemo(() => {
+    const anchorYear = Number(billAnchorKey.slice(0, 4));
+    const currentYear = Number(todayKey.slice(0, 4));
+    return [
+      ...new Set(
+        [...availableBillYears, anchorYear, currentYear].filter(
+          (year) => Number.isInteger(year) && year > 0,
+        ),
+      ),
+    ].sort((a, b) => b - a);
+  }, [availableBillYears, billAnchorKey, todayKey]);
   const billResults = useMemo(() => {
-    const anchor = todayKey ? new Date(`${todayKey}T12:00:00`) : null;
+    const anchor = billAnchorKey
+      ? new Date(`${billAnchorKey}T12:00:00`)
+      : null;
     const accountNames = new Map(
       accountList.map((account) => [account.id, account.name]),
     );
     const keyword = billQuery.trim().toLocaleLowerCase("zh-CN");
-    const fallbackYear =
-      availableBillYears.find((year) => year !== anchor?.getFullYear()) ??
-      availableBillYears[0] ??
-      anchor?.getFullYear() ??
-      new Date().getFullYear();
-    const selectedYear = Number(billYear || fallbackYear);
     let weekStart: Date | null = null,
       weekEnd: Date | null = null;
     if (anchor && billRange === "week") {
@@ -1438,7 +1571,7 @@ export function LedgerApp({
       const date = toDate(item.occurredAt);
       const dateKey = toLocalDateKey(date);
       let inRange = true;
-      if (anchor && billRange === "day") inRange = dateKey === todayKey;
+      if (anchor && billRange === "day") inRange = dateKey === billAnchorKey;
       else if (anchor && billRange === "week")
         inRange = Boolean(weekStart && weekEnd && date >= weekStart && date < weekEnd);
       else if (anchor && billRange === "month")
@@ -1447,8 +1580,6 @@ export function LedgerApp({
           date.getMonth() === anchor.getMonth();
       else if (anchor && billRange === "year")
         inRange = date.getFullYear() === anchor.getFullYear();
-      else if (billRange === "other-year")
-        inRange = date.getFullYear() === selectedYear;
       else if (billRange === "custom")
         inRange =
           (!billStartDate || dateKey >= billStartDate) &&
@@ -1486,15 +1617,30 @@ export function LedgerApp({
   }, [
     transactions,
     accountList,
-    todayKey,
+    billAnchorKey,
     billQuery,
     billRange,
-    billYear,
     billStartDate,
     billEndDate,
-    availableBillYears,
     exchangeRates,
   ]);
+  const billPageKey = JSON.stringify([
+    billQuery,
+    billRange,
+    billAnchorKey,
+    billStartDate,
+    billEndDate,
+  ]);
+  const billPage = paginateBills(
+    billResults.rows,
+    billPageState.key === billPageKey ? billPageState.page : 1,
+  ) as {
+    rows: Transaction[];
+    page: number;
+    pageSize: number;
+    totalPages: number;
+    totalRows: number;
+  };
 
   const settlements = useMemo(
     () =>
@@ -1505,17 +1651,72 @@ export function LedgerApp({
           for (const item of transactions) {
             if (item.splitWithMemberId !== member.id) continue;
             const cny = item.amount * exchangeRates[item.currency];
-            if (item.splitMode === "全额由我支付") balance += cny;
-            else if (item.splitMode === "全额由对方支付") balance -= cny;
-            else if (item.splitMode === "按比例平摊")
-              balance += Math.round((cny * (100 - item.mySharePercent)) / 100);
-            else if (item.splitMode === "人情平账")
-              balance += item.mySharePercent === 0 ? -cny : cny;
+            balance += splitBalanceDelta(
+              cny,
+              item.splitMode,
+              item.mySharePercent,
+            );
           }
           return { member, balance };
         })
         .filter((item) => item.balance !== 0),
     [memberList, transactions, exchangeRates],
+  );
+  const subscriptionPageData = paginateBills(
+    subscriptionList,
+    subscriptionPage,
+    COLLECTION_PAGE_SIZE,
+  ) as {
+    rows: Subscription[];
+    page: number;
+    totalPages: number;
+    totalRows: number;
+  };
+  const goalPageData = paginateBills(
+    goalList,
+    goalPage,
+    COLLECTION_PAGE_SIZE,
+  ) as {
+    rows: SavingsGoal[];
+    page: number;
+    totalPages: number;
+    totalRows: number;
+  };
+  const installmentPageData = paginateBills(
+    installmentList,
+    installmentPage,
+    COLLECTION_PAGE_SIZE,
+  ) as {
+    rows: Installment[];
+    page: number;
+    totalPages: number;
+    totalRows: number;
+  };
+  const categoryBudgetPageData = paginateBills(
+    categories,
+    categoryBudgetPage,
+    COLLECTION_PAGE_SIZE,
+  ) as {
+    rows: Category[];
+    page: number;
+    totalPages: number;
+    totalRows: number;
+  };
+  const settlementPageData = paginateBills(
+    memberList.filter((member) => !member.isMe),
+    settlementPage,
+    COLLECTION_PAGE_SIZE,
+  ) as {
+    rows: Member[];
+    page: number;
+    totalPages: number;
+    totalRows: number;
+  };
+  const settlementPageMemberIds = new Set(
+    settlementPageData.rows.map((member) => member.id),
+  );
+  const visibleSettlements = settlements.filter(({ member }) =>
+    settlementPageMemberIds.has(member.id),
   );
 
   useEffect(() => {
@@ -1774,9 +1975,20 @@ export function LedgerApp({
         0,
       ) + savingsAssetTotal;
   const digitalAssetTotal = digitalAssetList.reduce(
-    (sum, item) => sum + item.currentValue,
+    (sum, item) => sum + item.currentValue * exchangeRates[item.currency],
     0,
   );
+  const digitalAssetPageData = paginateBills(
+    digitalAssetList,
+    digitalAssetPage,
+    ASSET_PAGE_SIZE,
+  ) as {
+    rows: DigitalAsset[];
+    page: number;
+    pageSize: number;
+    totalPages: number;
+    totalRows: number;
+  };
   const assetTotal = financialAssetTotal + digitalAssetTotal;
   const liabilityTotal = accountList
     .filter((item) => item.type === "负债")
@@ -1952,6 +2164,40 @@ export function LedgerApp({
     ref.current?.close();
     setter(false);
   }
+  function notify(message: string, kind: "warning" | "success" = "warning") {
+    setToast({ kind, message });
+    window.setTimeout(() => setToast(null), 5200);
+  }
+  useEffect(() => {
+    if (!ask) return;
+    const node = askRef.current;
+    if (node && !node.open) node.showModal();
+  }, [ask]);
+  function confirmAsk(options: {
+    title: string;
+    message: string;
+    tone?: "danger" | "normal";
+    confirmText?: string;
+    input?: { label: string; defaultValue: string; placeholder?: string };
+  }) {
+    setAskValue(options.input?.defaultValue ?? "");
+    return new Promise<string | null>((resolve) => {
+      setAsk({
+        title: options.title,
+        message: options.message,
+        tone: options.tone ?? "normal",
+        confirmText: options.confirmText ?? "确定",
+        input: options.input,
+        resolve,
+      });
+    });
+  }
+  function settleAsk(value: string | null) {
+    askRef.current?.close();
+    ask?.resolve(value);
+    setAsk(null);
+    setAskValue("");
+  }
   function requestDeleteTransaction(id: number) {
     startTransition(async () => {
       const result = await deleteTransaction(id);
@@ -1966,6 +2212,148 @@ export function LedgerApp({
           };
       setToast(next);
       window.setTimeout(() => setToast(null), 5200);
+    });
+  }
+  function changeBillPage(page: number) {
+    setBillPageState({ key: billPageKey, page });
+    window.requestAnimationFrame(() => {
+      billListRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }
+  function changeDigitalAssetPage(page: number) {
+    setDigitalAssetPage(page);
+    window.requestAnimationFrame(() => {
+      digitalAssetListRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }
+  function changeSubscriptionPage(page: number) {
+    setSubscriptionPage(page);
+    window.requestAnimationFrame(() =>
+      subscriptionListRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      }),
+    );
+  }
+  function changeSettlementPage(page: number) {
+    setSettlementPage(page);
+    window.requestAnimationFrame(() =>
+      settlementListRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      }),
+    );
+  }
+  function changeGoalPage(page: number) {
+    setGoalPage(page);
+    window.requestAnimationFrame(() =>
+      goalListRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      }),
+    );
+  }
+  function changeInstallmentPage(page: number) {
+    setInstallmentPage(page);
+    window.requestAnimationFrame(() =>
+      installmentListRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      }),
+    );
+  }
+  function changeCategoryBudgetPage(page: number) {
+    setCategoryBudgetPage(page);
+    window.requestAnimationFrame(() =>
+      categoryBudgetListRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      }),
+    );
+  }
+  function showAssetEditor(asset: DigitalAsset | null = null) {
+    setEditingAsset(asset);
+    const knownType = asset
+      ? ASSET_TYPE_OPTIONS.some((option) => option.name === asset.assetType)
+      : true;
+    setAssetType(asset ? (knownType ? asset.assetType : "其他资产") : "数码设备");
+    setAssetValuationMode(asset?.valuationMode ?? "自动折旧");
+    setAssetError("");
+    openDialog(assetRef, setAssetOpen);
+  }
+  function closeAssetEditor() {
+    closeDialog(assetRef, setAssetOpen);
+    setEditingAsset(null);
+    setAssetError("");
+  }
+  function chooseAssetType(name: string) {
+    setAssetType(name);
+    const option = ASSET_TYPE_OPTIONS.find((item) => item.name === name);
+    if (option)
+      setAssetValuationMode(
+        option.mode as DigitalAsset["valuationMode"],
+      );
+  }
+  function showTransactionEditor(transaction: Transaction) {
+    setTransactionEdit({
+      transaction,
+      type: transaction.type,
+      accountId: transaction.accountId,
+      mood: transaction.mood ?? "刚需",
+      category: transaction.category ?? categories[0] ?? "餐饮",
+      incomeCategory:
+        transaction.incomeCategory ??
+        activeIncomeCategories[0] ??
+        "其它收入",
+    });
+    setTransactionEditError("");
+    openDialog(transactionEditRef, setTransactionEditOpen);
+  }
+  function closeTransactionEditor() {
+    closeDialog(transactionEditRef, setTransactionEditOpen);
+    setTransactionEdit(null);
+    setTransactionEditError("");
+  }
+  function submitTransactionEdit(formData: FormData) {
+    if (!transactionEdit) return;
+    setTransactionEditError("");
+    startTransition(async () => {
+      const response = await fetch("/api/transactions", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: transactionEdit.transaction.id,
+          ledgerId: currentLedgerId,
+          expectedUpdatedAt: transactionEdit.transaction.updatedAt,
+          title: String(formData.get("title") || ""),
+          amount: Number(formData.get("amount")),
+          occurredAt: String(formData.get("occurredAt") || ""),
+          originalTimezone:
+            Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai",
+          type: transactionEdit.type,
+          accountId: transactionEdit.accountId,
+          mood: transactionEdit.mood,
+          category: transactionEdit.category,
+          incomeCategory: transactionEdit.incomeCategory,
+        }),
+      });
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        setTransactionEditError(result.error || "修改失败");
+        return;
+      }
+      closeTransactionEditor();
+      setToast({
+        kind: "success",
+        message: "账单已修改，关联账户余额已同步修正。",
+      });
+      window.setTimeout(() => window.location.reload(), 450);
     });
   }
   function askNeoAi() {
@@ -2063,7 +2451,7 @@ export function LedgerApp({
   }
   async function hostPeer() {
     if (!p2pTarget) {
-      alert("请填写对端节点 ID");
+      notify("请填写对端节点 ID");
       return;
     }
     peerRef.current?.close();
@@ -2175,14 +2563,14 @@ export function LedgerApp({
     setUpdateApplying(false);
     setUpdateError("程序重启超时；原版本会自动回滚，请查看终端状态");
   }
-  function applyAppUpdate() {
+  async function applyAppUpdate() {
     if (!updateInfo?.available || !updateInfo.tag) return;
-    if (
-      !window.confirm(
-        `升级到 v${updateInfo.latestVersion}？程序会先备份账本数据库，升级期间将自动重启。`,
-      )
-    )
-      return;
+    const agreed = await confirmAsk({
+      title: `升级到 v${updateInfo.latestVersion}`,
+      message: "程序会先备份账本数据库，升级期间将自动重启。",
+      confirmText: "开始升级",
+    });
+    if (!agreed) return;
     setUpdateApplying(true);
     setUpdateError("");
     startTransition(async () => {
@@ -2201,6 +2589,143 @@ export function LedgerApp({
       }
     });
   }
+  async function loadQuickSyncStatus() {
+    try {
+      const response = await fetch("/api/integrations/quick-sync", {
+        cache: "no-store",
+      });
+      if (response.ok)
+        setQuickSyncStatus((await response.json()) as QuickSyncStatus);
+    } catch {
+      setQuickSyncMessage("暂时无法读取自动记账密钥状态");
+    }
+  }
+  function createQuickSyncToken() {
+    setQuickSyncMessage("");
+    startTransition(async () => {
+      const response = await fetch("/api/integrations/quick-sync", {
+        method: "POST",
+      });
+      const result = (await response.json()) as QuickSyncStatus & {
+        token?: string;
+        error?: string;
+      };
+      if (!response.ok || !result.token) {
+        setQuickSyncMessage(result.error || "生成密钥失败");
+        return;
+      }
+      setQuickSyncToken(result.token);
+      setQuickSyncStatus({
+        active: true,
+        tokenPrefix: result.tokenPrefix,
+      });
+      setQuickSyncMessage("新密钥只显示这一次，请立即复制保存。");
+    });
+  }
+  async function revokeQuickSyncToken() {
+    const agreed = await confirmAsk({
+      title: "撤销自动记账密钥",
+      message: "撤销后，所有使用旧密钥的自动记账都会立即失效。",
+      tone: "danger",
+      confirmText: "撤销",
+    });
+    if (!agreed) return;
+    startTransition(async () => {
+      const response = await fetch("/api/integrations/quick-sync", {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        setQuickSyncMessage("撤销失败，请稍后重试");
+        return;
+      }
+      setQuickSyncToken("");
+      setQuickSyncStatus({ active: false });
+      setQuickSyncMessage("自动记账密钥已撤销。");
+    });
+  }
+  async function copyQuickSyncExample() {
+    if (!quickSyncToken) return;
+    const endpoint = `${window.location.origin}/api/external/quick-sync`;
+    const command = `curl -X POST '${endpoint}' -H 'Authorization: Bearer ${quickSyncToken}' -H 'Content-Type: application/json' -d '{"amount":35.5,"merchant":"午餐","ledgerId":${currentLedgerId},"category":"餐饮"}'`;
+    await navigator.clipboard.writeText(command);
+    setQuickSyncMessage("请求示例已复制，可粘贴到终端、快捷指令或 NAS 自动化中。");
+  }
+  function makeNearbyCode() {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const bytes = crypto.getRandomValues(new Uint8Array(8));
+    return [...bytes].map((value) => alphabet[value % alphabet.length]).join("");
+  }
+  async function createNearbyPackage() {
+    setNearbyStatus("正在整理并加密全部账本…");
+    try {
+      const snapshot = (await fetch("/api/data/export?format=json", {
+        cache: "no-store",
+      }).then((response) => response.json())) as Record<string, unknown>;
+      const code = makeNearbyCode();
+      const payload = await encryptSyncPayload(snapshot, `nearby:${code}`);
+      const file = new File(
+        [payload],
+        `neo-ledger-nearby-${new Date().toISOString().slice(0, 10)}.e2ee.json`,
+        { type: "application/octet-stream" },
+      );
+      setNearbyPairingCode(code);
+      if (navigator.share && navigator.canShare?.({ files: [file] })) {
+        await navigator.share({
+          title: "NeoLedger 附近同步包",
+          text: `配对码：${code}`,
+          files: [file],
+        });
+        setNearbyStatus("同步包已交给系统分享，请把配对码一并告诉另一台设备。");
+      } else {
+        const url = URL.createObjectURL(file);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = file.name;
+        link.click();
+        URL.revokeObjectURL(url);
+        setNearbyStatus("同步包已下载，请通过 AirDrop、微信或局域网发送给另一台设备。");
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setNearbyStatus("已取消分享，同步包没有发送。");
+        return;
+      }
+      setNearbyStatus(error instanceof Error ? error.message : "生成同步包失败");
+    }
+  }
+  function receiveNearbyPackage() {
+    const code = nearbyReceiveCode.trim().toUpperCase();
+    if (!nearbyFile || !/^[A-Z2-9]{8}$/.test(code)) {
+      setNearbyStatus("请选择同步包并输入发送设备显示的 8 位配对码。");
+      return;
+    }
+    setNearbyStatus("正在解密并合并两台设备的数据…");
+    startTransition(async () => {
+      try {
+        const remote = await decryptSyncPayload(
+          await nearbyFile.text(),
+          `nearby:${code}`,
+        );
+        const local = (await fetch("/api/data/export?format=json", {
+          cache: "no-store",
+        }).then((response) => response.json())) as Record<string, unknown>;
+        const merged = mergeSyncSnapshots(local, remote);
+        const response = await fetch("/api/data/restore", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(merged),
+        });
+        if (!response.ok)
+          throw new Error(
+            ((await response.json()) as { error?: string }).error || "合并失败",
+          );
+        setNearbyStatus("附近同步完成，正在刷新账本…");
+        window.setTimeout(() => window.location.reload(), 500);
+      } catch {
+        setNearbyStatus("无法解密同步包，请检查文件和配对码是否来自同一次分享。");
+      }
+    });
+  }
   function syncWebDav(formData: FormData) {
     const mode = String(formData.get("mode")),
       url = String(formData.get("url") || ""),
@@ -2208,13 +2733,18 @@ export function LedgerApp({
       password = String(formData.get("password") || ""),
       secret = String(formData.get("secret") || "");
     if (!url || !secret || secret.length < 8) {
-      alert("请填写 WebDAV 地址和至少 8 位本地同步密钥");
+      notify("请填写 WebDAV 地址和至少 8 位本地同步密钥");
       return;
     }
     localStorage.setItem(
       "neo-webdav-config",
       JSON.stringify({ url, username }),
     );
+    try {
+      sessionStorage.setItem("neo-webdav-password", password);
+      sessionStorage.setItem("neo-webdav-secret", secret);
+      setWebdavSession({ password, secret });
+    } catch {}
     setSyncing(true);
     startTransition(async () => {
       try {
@@ -2222,17 +2752,25 @@ export function LedgerApp({
         const local = (await fetch("/api/data/export?format=json", {
           cache: "no-store",
         }).then((r) => r.json())) as Record<string, unknown>;
-        if (mode === "upload") {
-          const payload = await encryptSyncPayload(local, secret);
+        const upload = async (snapshot: Record<string, unknown>) => {
+          const payload = await encryptSyncPayload(snapshot, secret);
           const response = await fetch("/api/webdav-sync", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ...credentials, action: "upload", payload }),
+            body: JSON.stringify({
+              ...credentials,
+              action: "upload",
+              payload,
+            }),
           });
           if (!response.ok)
             throw new Error(
-              ((await response.json()) as { error?: string }).error,
+              ((await response.json()) as { error?: string }).error ||
+                "加密上传失败",
             );
+        };
+        if (mode === "upload") {
+          await upload(local);
           setSyncStatus("刚刚完成加密上传");
         } else {
           const response = await fetch("/api/webdav-sync", {
@@ -2244,22 +2782,19 @@ export function LedgerApp({
             payload?: string;
             error?: string;
           };
-          if (!response.ok || !result.payload)
+          if (!response.ok || !result.payload) {
+            if (mode === "smart" && /404|没有备份/.test(result.error || "")) {
+              await upload(local);
+              setSyncStatus("首次安全同步完成，已创建云端加密备份");
+              return;
+            }
             throw new Error(result.error || "云端没有备份");
+          }
           const remote = await decryptSyncPayload(result.payload, secret);
           let next = remote;
-          if (mode === "merge") {
+          if (mode === "merge" || mode === "smart") {
             next = mergeSyncSnapshots(local, remote);
-            const encrypted = await encryptSyncPayload(next, secret);
-            await fetch("/api/webdav-sync", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                ...credentials,
-                action: "upload",
-                payload: encrypted,
-              }),
-            });
+            await upload(next);
           }
           const restore = await fetch("/api/data/restore", {
             method: "POST",
@@ -2271,12 +2806,14 @@ export function LedgerApp({
               ((await restore.json()) as { error?: string }).error,
             );
           setSyncStatus(
-            mode === "merge" ? "刚刚完成双向冲突合并" : "刚刚从云端解密恢复",
+            mode === "merge" || mode === "smart"
+              ? "刚刚完成安全双向同步"
+              : "刚刚从云端解密恢复",
           );
           window.location.reload();
         }
       } catch (error) {
-        alert(error instanceof Error ? error.message : "同步失败");
+        notify(error instanceof Error ? error.message : "同步失败");
       } finally {
         setSyncing(false);
       }
@@ -2284,7 +2821,7 @@ export function LedgerApp({
   }
   function submitEntry(formData: FormData) {
     if (nudgeActive && reflection.trim() !== reflectionPhrase) {
-      alert("阻尼模式已启动，请完整输入冷静期反思句后再提交。");
+      notify("阻尼模式已启动，请完整输入冷静期反思句后再提交。");
       return;
     }
     formData.set("ledgerId", String(currentLedgerId));
@@ -2326,6 +2863,9 @@ export function LedgerApp({
         const rows = await offlineList();
         setOfflineCount(rows.length);
         closeDialog(entryRef, setEntryOpen);
+        setSplitMemberId(0);
+        setSplitMode("全额由我支付");
+        setMySharePercent(50);
       });
       return;
     }
@@ -2335,7 +2875,16 @@ export function LedgerApp({
       setImportText("");
       setParsedAmount("");
       setParsedTitle("");
+      setSplitMemberId(0);
+      setSplitMode("全额由我支付");
+      setMySharePercent(50);
     });
+  }
+  function openEntryDialog() {
+    setSplitMemberId(0);
+    setSplitMode("全额由我支付");
+    setMySharePercent(50);
+    openDialog(entryRef, setEntryOpen);
   }
   function runParser() {
     startTransition(async () => {
@@ -2448,36 +2997,50 @@ export function LedgerApp({
   function submitDigitalAsset(formData: FormData) {
     startTransition(async () => {
       setAssetError("");
+      const resolvedAssetType =
+        assetType === "其他资产"
+          ? String(formData.get("customAssetType") || "").trim()
+          : assetType;
       const response = await fetch("/api/assets", {
-        method: "POST",
+        method: editingAsset ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          id: editingAsset?.id,
           ledgerId: currentLedgerId,
           name: String(formData.get("name") || ""),
-          assetType,
+          assetType: resolvedAssetType,
+          currency: String(formData.get("currency") || "CNY"),
+          valuationMode: assetValuationMode,
+          manualValue: Number(formData.get("manualValue")),
           purchasePrice: Number(formData.get("purchasePrice")),
           purchaseDate: String(formData.get("purchaseDate") || ""),
           lifespanMonths: Number(formData.get("lifespanMonths")),
           residualRate: Number(formData.get("residualRate")),
           heatLevel:
-            assetType === "游戏账号"
+            resolvedAssetType === "游戏账号"
               ? String(formData.get("heatLevel") || "中")
               : null,
         }),
       });
       const result = (await response.json()) as { error?: string };
       if (!response.ok) {
-        setAssetError(result.error ?? "添置失败");
+        setAssetError(result.error ?? (editingAsset ? "修改失败" : "新增失败"));
         return;
       }
       await reloadDigitalAssets();
-      closeDialog(assetRef, setAssetOpen);
-      setToast({ kind: "success", message: "新装备已放入资产货架。" });
+      setDigitalAssetPage(1);
+      const wasEditing = Boolean(editingAsset);
+      closeAssetEditor();
+      setToast({
+        kind: "success",
+        message: wasEditing ? "资产资料与估值已更新。" : "新资产已加入资产库。",
+      });
     });
   }
   function saveExpenseCategory(formData: FormData) {
     startTransition(async () => {
       setCategoryError("");
+      const wasEditing = Boolean(editingCategory);
       const response = await fetch("/api/categories", {
         method: editingCategory ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
@@ -2496,6 +3059,10 @@ export function LedgerApp({
         return;
       }
       await reloadCategories();
+      if (!wasEditing)
+        setCategoryBudgetPage(
+          Math.max(1, Math.ceil((categories.length + 1) / COLLECTION_PAGE_SIZE)),
+        );
       setEditingCategory(null);
       setCategoryError("");
     });
@@ -2678,7 +3245,9 @@ export function LedgerApp({
       });
       const result = (await response.json()) as { error?: string };
       if (response.ok) {
+        const wasEditing = Boolean(editingSubscription);
         await reloadSubscriptions();
+        if (!wasEditing) setSubscriptionPage(1);
         closeDialog(subscriptionRef, setSubscriptionOpen);
         setEditingSubscription(null);
         setToast({
@@ -2734,8 +3303,14 @@ export function LedgerApp({
       });
     });
   }
-  function removeSubscriptionCategory(item: ExpenseCategory) {
-    if (!window.confirm(`删除分类「${item.name}」？历史记录会保留。`)) return;
+  async function removeSubscriptionCategory(item: ExpenseCategory) {
+    const agreed = await confirmAsk({
+      title: `删除分类「${item.name}」`,
+      message: "已经记过的历史账单会保留，只是不再出现在选项里。",
+      tone: "danger",
+      confirmText: "删除",
+    });
+    if (!agreed) return;
     startTransition(async () => {
       setSubscriptionCategoryError("");
       const response = await fetch(
@@ -2775,14 +3350,18 @@ export function LedgerApp({
       });
       if (response.ok) window.location.reload();
       else
-        alert(
-          ((await response.json()) as { error?: string }).error ?? "创建失败",
-        );
+        notify(((await response.json()) as { error?: string }).error ?? "创建失败");
     });
   }
-  function restoreBackup(file: File | undefined) {
-    if (!file || !window.confirm("恢复备份会覆盖当前全部数据，确定继续吗？"))
-      return;
+  async function restoreBackup(file: File | undefined) {
+    if (!file) return;
+    const agreed = await confirmAsk({
+      title: "恢复备份",
+      message: "恢复会覆盖当前全部数据，且无法撤销。请确认这份备份文件是你要的版本。",
+      tone: "danger",
+      confirmText: "覆盖并恢复",
+    });
+    if (!agreed) return;
     startTransition(async () => {
       const response = await fetch("/api/data/restore", {
         method: "POST",
@@ -2791,9 +3370,7 @@ export function LedgerApp({
       });
       if (response.ok) window.location.reload();
       else
-        alert(
-          ((await response.json()) as { error?: string }).error ?? "恢复失败",
-      );
+        notify(((await response.json()) as { error?: string }).error ?? "恢复失败");
     });
   }
   async function submitBillRows(rows: ImportedBill[]) {
@@ -2908,7 +3485,7 @@ export function LedgerApp({
           review: ImportedBill[];
         };
         const automaticRows = partitioned.automatic;
-        let reviewRows = partitioned.review;
+        const reviewRows = partitioned.review;
         if (automaticRows.length) {
           setBillImportStatus(
             `已识别账户，正在自动导入 ${automaticRows.length} 笔流水…`,
@@ -3089,13 +3666,14 @@ export function LedgerApp({
       }
     });
   }
-  function cleanBadBillImports() {
-    if (
-      !window.confirm(
-        "将删除命中声明/法律条款黑名单的错误账单，并自动恢复受影响账户余额。确定继续吗？",
-      )
-    )
-      return;
+  async function cleanBadBillImports() {
+    const agreed = await confirmAsk({
+      title: "清理错误账单",
+      message: "将删除命中声明/法律条款黑名单的错误账单，并自动恢复受影响账户余额。",
+      tone: "danger",
+      confirmText: "清理",
+    });
+    if (!agreed) return;
     startTransition(async () => {
       const response = await fetch(
         `/api/bill-import?ledger=${currentLedgerId}`,
@@ -3106,16 +3684,22 @@ export function LedgerApp({
         error?: string;
       };
       if (response.ok) {
-        alert(`已清理 ${result.deleted ?? 0} 笔声明账单，并修复账户余额。`);
+        notify(`已清理 ${result.deleted ?? 0} 笔声明账单，并修复账户余额。`, "success");
         window.location.reload();
       } else setBillImportError(result.error ?? "清理失败");
     });
   }
-  function createLedger() {
-    const choice = window.prompt(
-      "新账本名称：旅游专项账本 / 差旅报销账本 / 追星二次元账本",
-      "旅游专项账本",
-    );
+  async function createLedger() {
+    const choice = await confirmAsk({
+      title: "新建账本",
+      message: "例如：旅游专项账本 / 差旅报销账本 / 追星二次元账本",
+      confirmText: "创建",
+      input: {
+        label: "账本名称",
+        defaultValue: "旅游专项账本",
+        placeholder: "旅游专项账本",
+      },
+    });
     if (!choice) return;
     const icon = choice.includes("旅游")
       ? "✈️"
@@ -3131,22 +3715,24 @@ export function LedgerApp({
       if (response.ok) {
         const row = (await response.json()) as { id: number };
         window.location.href = `/?ledger=${row.id}`;
-      }
+      } else notify("新建账本失败，请稍后重试。");
     });
   }
-  function deleteLedger() {
+  async function deleteLedger() {
     const ledger = ledgers.find((item) => item.id === currentLedgerId);
     if (!ledger) return;
     if (ledgers.length <= 1) {
-      alert("至少需要保留一个账本。");
+      notify("至少需要保留一个账本。");
       return;
     }
-    if (
-      !window.confirm(
-        `确定删除“${ledger.name}”吗？\n\n其中的账单、账户、预算和分类等数据都会永久删除，此操作无法撤销。`,
-      )
-    )
-      return;
+    const agreed = await confirmAsk({
+      title: `删除账本“${ledger.name}”`,
+      message:
+        "其中的账单、账户、预算和分类等数据都会永久删除，此操作无法撤销。",
+      tone: "danger",
+      confirmText: "永久删除",
+    });
+    if (!agreed) return;
     startTransition(async () => {
       const response = await fetch(`/api/ledgers?id=${currentLedgerId}`, {
         method: "DELETE",
@@ -3156,7 +3742,7 @@ export function LedgerApp({
         const next = ledgers.find((item) => item.id !== currentLedgerId);
         window.location.href = next ? `/?ledger=${next.id}` : "/";
       } else {
-        alert(result.error ?? "删除账本失败，请稍后重试。");
+        notify(result.error ?? "删除账本失败，请稍后重试。");
       }
     });
   }
@@ -3177,6 +3763,9 @@ export function LedgerApp({
       const result = (await response.json()) as { error?: string };
       if (response.ok) {
         await reloadGoals();
+        setGoalPage(
+          Math.max(1, Math.ceil((goalList.length + 1) / COLLECTION_PAGE_SIZE)),
+        );
         closeDialog(goalRef, setGoalOpen);
         setToast({ kind: "success", message: "新心愿已经放进储蓄罐。" });
       } else {
@@ -3217,13 +3806,18 @@ export function LedgerApp({
       }
     });
   }
-  function deleteGoal(formData: FormData) {
+  async function deleteGoal(formData: FormData) {
     if (!savingGoal) return;
     const hasSavings = savingGoal.savedAmount > 0;
-    const message = hasSavings
-      ? `删除「${savingGoal.name}」并将 ${money.format(savingGoal.savedAmount / 100)} 退回所选账户？`
-      : `删除「${savingGoal.name}」？`;
-    if (!window.confirm(message)) return;
+    const agreed = await confirmAsk({
+      title: `删除「${savingGoal.name}」`,
+      message: hasSavings
+        ? `已存入的 ${money.format(savingGoal.savedAmount / 100)} 会退回所选账户。`
+        : "这个储蓄目标会被删除。",
+      tone: "danger",
+      confirmText: "删除",
+    });
+    if (!agreed) return;
     setGoalError("");
     startTransition(async () => {
       const response = await fetch("/api/savings-goals", {
@@ -3275,11 +3869,9 @@ export function LedgerApp({
       if (response.ok) {
         setSecurityEnabled(enabled);
         setLocked(enabled);
-        closeDialog(aestheticRef, setAestheticOpen);
+        closeDialog(dataRef, setDataOpen);
       } else
-        alert(
-          ((await response.json()) as { error?: string }).error ?? "设置失败",
-        );
+        notify(((await response.json()) as { error?: string }).error ?? "设置失败");
     });
   }
   function unlock() {
@@ -3315,11 +3907,16 @@ export function LedgerApp({
       });
     }, 1700);
   }
-  function addMember() {
-    const name = window.prompt(
-      "分账搭子的名字",
-      memberList.length === 1 ? "对象" : "室友",
-    );
+  async function addMember() {
+    const name = await confirmAsk({
+      title: "添加分账搭子",
+      message: "添加后可以在记账时选择由谁付款、与谁分摊。",
+      confirmText: "添加",
+      input: {
+        label: "搭子名字",
+        defaultValue: memberList.length === 1 ? "对象" : "室友",
+      },
+    });
     if (!name) return;
     startTransition(async () => {
       const response = await fetch("/api/members", {
@@ -3334,12 +3931,21 @@ export function LedgerApp({
       if (response.ok) {
         const row = (await response.json()) as Member;
         setMemberList((items) => [...items, row]);
+        const partnerCount = memberList.filter((item) => !item.isMe).length + 1;
+        setSettlementPage(
+          Math.max(1, Math.ceil(partnerCount / COLLECTION_PAGE_SIZE)),
+        );
         setSplitMemberId(row.id);
       }
     });
   }
-  function settle(memberId: number, balance: number) {
-    if (!window.confirm("确认生成一笔人情平账流水并清空当前债务？")) return;
+  async function settle(memberId: number, balance: number) {
+    const agreed = await confirmAsk({
+      title: "人情平账",
+      message: "会生成一笔平账流水，并把当前债务清零。",
+      confirmText: "平账",
+    });
+    if (!agreed) return;
     startTransition(async () => {
       const response = await fetch("/api/settlements", {
         method: "POST",
@@ -3405,6 +4011,13 @@ export function LedgerApp({
     (item) => item.name === incomeCategory,
   );
 
+  function selectModule(nextTab: typeof tab) {
+    setTab(nextTab);
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    });
+  }
+
   return (
     <main className="shell finance-shell" data-theme={theme}>
       <Script
@@ -3423,6 +4036,59 @@ export function LedgerApp({
           </div>
           <button onClick={() => setToast(null)}>×</button>
         </div>
+      )}
+      {ask && (
+        // 必须用 <dialog>：其他弹窗用 showModal() 渲染在浏览器顶层，
+        // 普通 div 无论 z-index 多大都会被压在下面。
+        <dialog
+          className="ask-dialog"
+          ref={askRef}
+          onCancel={(event) => {
+            event.preventDefault();
+            settleAsk(null);
+          }}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) settleAsk(null);
+          }}
+        >
+          <div
+            className={`ask-panel ${ask.tone}`}
+            role="alertdialog"
+            aria-label={ask.title}
+          >
+            <strong>{ask.title}</strong>
+            <p>{ask.message}</p>
+            {ask.input && (
+              <label className="ask-field">
+                <span>{ask.input.label}</span>
+                <input
+                  autoFocus
+                  value={askValue}
+                  placeholder={ask.input.placeholder}
+                  onChange={(event) => setAskValue(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && askValue.trim())
+                      settleAsk(askValue.trim());
+                  }}
+                />
+              </label>
+            )}
+            <div className="ask-actions">
+              <button type="button" onClick={() => settleAsk(null)}>
+                取消
+              </button>
+              <button
+                type="button"
+                className="ask-primary"
+                autoFocus={!ask.input}
+                disabled={Boolean(ask.input) && !askValue.trim()}
+                onClick={() => settleAsk(ask.input ? askValue.trim() : "ok")}
+              >
+                {ask.confirmText}
+              </button>
+            </div>
+          </div>
+        </dialog>
       )}
       {locked && (
         <div className="privacy-wall">
@@ -3512,47 +4178,66 @@ export function LedgerApp({
           <nav className="module-nav" aria-label="财务模块">
             <button
               className={tab === "dashboard" ? "active" : ""}
-              onClick={() => setTab("dashboard")}
+              onClick={() => selectModule("dashboard")}
               title="主界面"
             >
-              <span>⌂</span><b>主界面</b>
+              <span aria-hidden="true">🏠</span><b>主界面</b>
             </button>
             <button
               className={tab === "assets" ? "active" : ""}
-              onClick={() => setTab("assets")}
+              onClick={() => selectModule("assets")}
               title="个人资产"
             >
-              <span>◈</span><b>个人资产</b>
+              <span aria-hidden="true">💎</span><b>个人资产</b>
             </button>
             <button
               className={tab === "bills" ? "active" : ""}
-              onClick={() => setTab("bills")}
+              onClick={() => selectModule("bills")}
               title="个人账单"
             >
-              <span>▤</span><b>个人账单</b>
+              <span aria-hidden="true">🧾</span><b>个人账单</b>
             </button>
             <button
               className={tab === "planning" ? "active" : ""}
-              onClick={() => setTab("planning")}
+              onClick={() => selectModule("planning")}
               title="管理规划"
             >
-              <span>▦</span><b>管理规划</b>
+              <span aria-hidden="true">🗓️</span><b>管理规划</b>
             </button>
             <button
               className={tab === "analytics" ? "active" : ""}
-              onClick={() => setTab("analytics")}
+              onClick={() => selectModule("analytics")}
               title="统计分析"
             >
-              <span>◔</span><b>统计分析</b>
+              <span aria-hidden="true">📊</span><b>统计分析</b>
             </button>
           </nav>
-          <div className="sidebar-profile">
-            <div className="avatar">☺</div>
-            <div>
-              <strong>我的财务舱</strong>
-              <small>数据仅保存在你的空间</small>
+          <button
+            className="floating-entry-button"
+            onClick={openEntryDialog}
+            aria-label="记一笔"
+            title="记一笔"
+          >
+            <span>＋</span>
+            <b>记一笔</b>
+          </button>
+          <button
+            type="button"
+            className="sidebar-profile"
+            onClick={() => openDialog(authRef, setAuthOpen)}
+            aria-label="我的财富仓账号"
+            title="我的财富仓账号"
+          >
+            <div className="avatar">
+              {authUser?.displayName.slice(0, 1).toUpperCase() ?? "☺"}
             </div>
-          </div>
+            <div>
+              <strong>我的财富仓</strong>
+              <small>
+                {authUser ? `${authUser.displayName} · 已登录` : "点击登录账号"}
+              </small>
+            </div>
+          </button>
         </header>
         <div className="finance-content">
         {(installPrompt || offlineCount > 0) && (
@@ -3708,7 +4393,7 @@ export function LedgerApp({
                 <div className="digital-worth-breakdown">
                   <span>🏦 金融账户</span>
                   <b>{money.format(financialAssetTotal / 100)}</b>
-                  <span>⌁ 固定 / 数字资产</span>
+                  <span>⌁ 实物 / 虚拟资产</span>
                   <b>{money.format(digitalAssetTotal / 100)}</b>
                 </div>
                 <div className="real-worth">
@@ -3755,7 +4440,10 @@ export function LedgerApp({
                   {Math.round((monthExpense / budget) * 100)}%
                 </small>
               </article>
-              <article className="subscription-section top-subscription module-planning">
+              <article
+                className="subscription-section top-subscription module-planning page-scroll-anchor"
+                ref={subscriptionListRef}
+              >
                 <div className="section-heading account-heading">
                   <div>
                     <p className="eyebrow">AUTO PAY</p>
@@ -3777,16 +4465,21 @@ export function LedgerApp({
                 </div>
                 <div className="subscription-list">
                   {subscriptionList.length ? (
-                    subscriptionList.map((item) => {
-                      const anchor = todayKey
-                          ? new Date(`${todayKey}T00:00:00`)
-                          : new Date(),
-                        expiresAt = new Date(`${item.nextChargeDate}T00:00:00`),
-                        daysLeft = Math.ceil(
-                          (expiresAt.getTime() - anchor.getTime()) / 86400000,
+                    subscriptionPageData.rows.map((item) => {
+                      const expiresAt = new Date(
+                          `${item.nextChargeDate}T00:00:00`,
                         ),
+                        daysLeft = todayKey
+                          ? Math.ceil(
+                              (expiresAt.getTime() -
+                                new Date(`${todayKey}T00:00:00`).getTime()) /
+                                86400000,
+                            )
+                          : null,
                         expiryStatus =
-                          daysLeft < 0
+                          daysLeft == null
+                            ? "正在计算"
+                            : daysLeft < 0
                             ? `已到期 ${Math.abs(daysLeft)} 天`
                             : daysLeft === 0
                               ? "今天到期"
@@ -3802,7 +4495,7 @@ export function LedgerApp({
                               : 365);
                       return (
                         <article
-                          className={`${daysLeft < 0 ? "expired" : daysLeft <= 7 ? "expiring" : ""}`}
+                          className={`${daysLeft == null ? "" : daysLeft < 0 ? "expired" : daysLeft <= 7 ? "expiring" : ""}`}
                           key={item.id}
                         >
                           <span>{categoryMeta[item.category].emoji}</span>
@@ -3854,6 +4547,14 @@ export function LedgerApp({
                     </p>
                   )}
                 </div>
+                <CollectionPagination
+                  page={subscriptionPageData.page}
+                  totalPages={subscriptionPageData.totalPages}
+                  totalRows={subscriptionPageData.totalRows}
+                  label="我的续费分页"
+                  unit="项"
+                  onChange={changeSubscriptionPage}
+                />
               </article>
             </section>
 
@@ -4004,35 +4705,35 @@ export function LedgerApp({
               </div>
             </section>
 
-            <section className="digital-assets-section module-assets">
+            <section
+              className="digital-assets-section module-assets page-scroll-anchor"
+              ref={digitalAssetListRef}
+            >
               <div className="section-heading account-heading">
                 <div>
-                  <p className="eyebrow">DEPRECIATION VAULT</p>
-                  <h2>数码与虚拟资产配置</h2>
+                  <p className="eyebrow">UNIVERSAL ASSET VAULT</p>
+                  <h2>全品类资产配置</h2>
                   <span className="section-subline">
-                    多系数加速折旧 · 当前残值合计 {money.format(digitalAssetTotal / 100)}
+                    房产、车辆、奢侈品、收藏品及自定义资产 · 当前估值合计 {money.format(digitalAssetTotal / 100)}
                   </span>
                 </div>
                 <button
                   className="new-account-button"
-                  onClick={() => {
-                    setAssetType("数码设备");
-                    setAssetError("");
-                    openDialog(assetRef, setAssetOpen);
-                  }}
+                  onClick={() => showAssetEditor()}
                 >
-                  ＋ 添置新装备
+                  ＋ 新增资产
                 </button>
               </div>
               <div className="asset-shelf">
                 {digitalAssetList.length ? (
-                  digitalAssetList.map((asset) => {
-                    const icon =
-                      asset.assetType === "游戏账号"
-                        ? "🎮"
-                        : asset.assetType === "潮流玩具"
-                          ? "🏍️"
-                          : "💻";
+                  digitalAssetPageData.rows.map((asset) => {
+                    const icon = assetTypeIcon(asset.assetType);
+                    const valueDirection =
+                      asset.valueChange > 0
+                        ? "gain"
+                        : asset.valueChange < 0
+                          ? "loss"
+                          : "flat";
                     return (
                       <article className="digital-asset-card" key={asset.id}>
                         <div className="asset-card-top">
@@ -4049,53 +4750,140 @@ export function LedgerApp({
                         </div>
                         <div className="asset-value-pair">
                           <span>
-                            购入原值<b>{money.format(asset.purchasePrice / 100)}</b>
+                            购入原值
+                            <b>{formatCurrency(asset.purchasePrice / 100, asset.currency)}</b>
                           </span>
                           <i>→</i>
                           <span>
-                            当前估值<strong>{money.format(asset.currentValue / 100)}</strong>
+                            当前估值
+                            <strong>{formatCurrency(asset.currentValue / 100, asset.currency)}</strong>
                           </span>
                         </div>
-                        <div className="value-loss-copy">
-                          <span>价值流失 {asset.lossPercent.toFixed(1)}%</span>
-                          <b>-{money.format(asset.valueLost / 100)}</b>
+                        <div className={`value-loss-copy ${valueDirection}`}>
+                          <span>
+                            {valueDirection === "gain"
+                              ? `较原值上涨 ${Math.abs(asset.changePercent).toFixed(1)}%`
+                              : valueDirection === "loss"
+                                ? `较原值下降 ${Math.abs(asset.changePercent).toFixed(1)}%`
+                                : "与原值持平"}
+                          </span>
+                          <b>
+                            {valueDirection === "gain" ? "+" : valueDirection === "loss" ? "-" : ""}
+                            {formatCurrency(Math.abs(asset.valueChange) / 100, asset.currency)}
+                          </b>
                         </div>
-                        <div className="value-loss-track">
-                          <i style={{ width: `${Math.min(100, asset.lossPercent)}%` }} />
+                        <div className={`value-loss-track ${valueDirection}`}>
+                          <i style={{ width: `${Math.min(100, Math.abs(asset.changePercent))}%` }} />
                         </div>
                         <div className="depreciation-note">
                           <span>⌁</span>
-                          <p>
-                            平均每天折旧损耗
-                            <b>{money.format(asset.dailyDepreciation / 100)}</b>
-                          </p>
+                          {asset.valuationMode === "手动估值" ? (
+                            <p>
+                              当前估值由你维护
+                              <b>可随市场变化随时更新</b>
+                            </p>
+                          ) : (
+                            <p>
+                              平均每天折旧损耗
+                              <b>{formatCurrency(asset.dailyDepreciation / 100, asset.currency)}</b>
+                            </p>
+                          )}
                         </div>
                         <div className="asset-card-meta">
                           <span>购于 {asset.purchaseDate}</span>
                           <span>
-                            寿命 {asset.lifespanMonths} 月 · 残值率 {asset.residualRateBps / 100}%
+                            {asset.currency} · {asset.valuationMode}
+                            {asset.valuationMode === "自动折旧"
+                              ? ` · ${asset.lifespanMonths} 月 / 残值 ${asset.residualRateBps / 100}%`
+                              : ""}
                           </span>
                         </div>
-                        <button
-                          className="liquidate-button"
-                          onClick={() => showLiquidation(asset)}
-                        >
-                          🛒 一键变现 / 报废
-                        </button>
+                        <div className="asset-card-actions">
+                          <button
+                            className="asset-edit-button"
+                            onClick={() => showAssetEditor(asset)}
+                          >
+                            ✎ 修改资料
+                          </button>
+                          <button
+                            className="liquidate-button"
+                            onClick={() => showLiquidation(asset)}
+                          >
+                            🛒 变现 / 报废
+                          </button>
+                        </div>
                       </article>
                     );
                   })
                 ) : (
                   <div className="asset-shelf-empty">
                     <span>⌁</span>
-                    <strong>资产货架还是空的</strong>
-                    <p>把手机、主机或游戏账号放进来，看看时间每天带走了多少钱。</p>
+                    <strong>资产库还是空的</strong>
+                    <p>房产、车辆、珠宝、收藏品或任何自定义资产都可以在这里统一管理。</p>
                   </div>
                 )}
               </div>
+              {digitalAssetPageData.totalPages > 1 && (
+                <nav
+                  className="bill-pagination asset-pagination"
+                  aria-label="全品类资产分页"
+                >
+                  <button
+                    className="bill-page-arrow"
+                    aria-label="上一页资产"
+                    title="上一页"
+                    disabled={digitalAssetPageData.page <= 1}
+                    onClick={() =>
+                      changeDigitalAssetPage(digitalAssetPageData.page - 1)
+                    }
+                  >
+                    ‹
+                  </button>
+                  <label>
+                    <span>第</span>
+                    <select
+                      value={digitalAssetPageData.page}
+                      aria-label="选择资产页码"
+                      onChange={(event) =>
+                        changeDigitalAssetPage(Number(event.target.value))
+                      }
+                    >
+                      {Array.from(
+                        { length: digitalAssetPageData.totalPages },
+                        (_, index) => index + 1,
+                      ).map((page) => (
+                        <option value={page} key={page}>
+                          {page}
+                        </option>
+                      ))}
+                    </select>
+                    <span>
+                      / {digitalAssetPageData.totalPages} 页 · 共{" "}
+                      {digitalAssetPageData.totalRows} 件
+                    </span>
+                  </label>
+                  <button
+                    className="bill-page-arrow"
+                    aria-label="下一页资产"
+                    title="下一页"
+                    disabled={
+                      digitalAssetPageData.page >=
+                      digitalAssetPageData.totalPages
+                    }
+                    onClick={() =>
+                      changeDigitalAssetPage(digitalAssetPageData.page + 1)
+                    }
+                  >
+                    ›
+                  </button>
+                </nav>
+              )}
             </section>
 
-            <section className="settlement-section module-planning">
+            <section
+              className="settlement-section module-planning page-scroll-anchor"
+              ref={settlementListRef}
+            >
               <div className="section-heading account-heading">
                 <div>
                   <p className="eyebrow">SPLIT & SETTLE</p>
@@ -4106,16 +4894,22 @@ export function LedgerApp({
                 </button>
               </div>
               <div className="member-chips">
-                {memberList.map((item) => (
+                {memberList
+                  .filter((item) => item.isMe)
+                  .map((item) => (
+                    <span key={item.id}>
+                      {item.icon} {item.name} · 本人
+                    </span>
+                  ))}
+                {settlementPageData.rows.map((item) => (
                   <span key={item.id}>
                     {item.icon} {item.name}
-                    {item.isMe ? " · 本人" : ""}
                   </span>
                 ))}
               </div>
               <div className="settlement-grid">
-                {settlements.length ? (
-                  settlements.map(({ member, balance }) => (
+                {visibleSettlements.length ? (
+                  visibleSettlements.map(({ member, balance }) => (
                     <article
                       className={balance < 0 ? "owe" : ""}
                       key={member.id}
@@ -4149,9 +4943,20 @@ export function LedgerApp({
                   </article>
                 )}
               </div>
+              <CollectionPagination
+                page={settlementPageData.page}
+                totalPages={settlementPageData.totalPages}
+                totalRows={settlementPageData.totalRows}
+                label="分账搭子分页"
+                unit="人"
+                onChange={changeSettlementPage}
+              />
             </section>
 
-            <section className="goals-section module-planning">
+            <section
+              className="goals-section module-planning page-scroll-anchor"
+              ref={goalListRef}
+            >
               <div className="section-heading account-heading">
                 <div>
                   <p className="eyebrow">DREAM VAULT</p>
@@ -4170,7 +4975,7 @@ export function LedgerApp({
               </div>
               <div className="goal-grid">
                 {goalList.length ? (
-                  goalList.map((goal) => {
+                  goalPageData.rows.map((goal) => {
                     const percent = Math.min(
                       100,
                       Math.round((goal.savedAmount / goal.targetAmount) * 100),
@@ -4218,9 +5023,20 @@ export function LedgerApp({
                   </p>
                 )}
               </div>
+              <CollectionPagination
+                page={goalPageData.page}
+                totalPages={goalPageData.totalPages}
+                totalRows={goalPageData.totalRows}
+                label="心愿储蓄罐分页"
+                unit="个"
+                onChange={changeGoalPage}
+              />
             </section>
 
-            <section className="installment-section module-planning">
+            <section
+              className="installment-section module-planning page-scroll-anchor"
+              ref={installmentListRef}
+            >
               <div className="section-heading account-heading">
                 <div>
                   <p className="eyebrow">DEBT AMORTIZATION</p>
@@ -4235,7 +5051,7 @@ export function LedgerApp({
               </div>
               <div className="installment-grid">
                 {installmentList.length ? (
-                  installmentList.map((item) => {
+                  installmentPageData.rows.map((item) => {
                     const grand = item.totalAmount + item.feeAmount,
                       paid = Math.round(
                         (grand * item.paidPeriods) / item.periods,
@@ -4298,23 +5114,48 @@ export function LedgerApp({
                   </div>
                 )}
               </div>
+              <CollectionPagination
+                page={installmentPageData.page}
+                totalPages={installmentPageData.totalPages}
+                totalRows={installmentPageData.totalRows}
+                label="负债摊销分页"
+                unit="项"
+                onChange={changeInstallmentPage}
+              />
             </section>
 
             <section className="control-grid module-planning">
-              <div className="category-budget-section">
-                <div className="section-heading">
+              <div
+                className="category-budget-section page-scroll-anchor"
+                ref={categoryBudgetListRef}
+              >
+                <div className="section-heading account-heading">
                   <div>
                     <p className="eyebrow">BUDGET CONTROL</p>
                     <h2>品类预算控制塔</h2>
                   </div>
+                  <button
+                    type="button"
+                    className="new-account-button"
+                    onClick={() => {
+                      setEditingCategory(null);
+                      setCategoryError("");
+                      openDialog(categoryManagerRef, setCategoryManagerOpen);
+                    }}
+                  >
+                    ＋ 自定义分类
+                  </button>
                 </div>
                 <div className="category-budget-grid">
-                  {categories.map((item) => {
+                  {categoryBudgetPageData.rows.map((item) => {
                     const limit =
                       categoryBudgetList.find((row) => row.category === item)
                         ?.amount ?? 0;
                     const ratio = limit ? categorySpend[item] / limit : 0;
                     const level = budgetLevel(item);
+                    const configuredCategory = categoryList.find(
+                      (category) => category.name === item,
+                    );
                     return (
                       <form
                         action={saveCategoryBudget}
@@ -4326,9 +5167,30 @@ export function LedgerApp({
                           <span>
                             {categoryMeta[item].emoji} {item}
                           </span>
-                          <b>
-                            {limit ? `${Math.round(ratio * 100)}%` : "未设置"}
-                          </b>
+                          <div>
+                            <b>
+                              {limit
+                                ? `${Math.round(ratio * 100)}%`
+                                : "未设置"}
+                            </b>
+                            <button
+                              type="button"
+                              className="category-budget-edit"
+                              aria-label={`编辑${item}分类`}
+                              title="编辑分类"
+                              onClick={() => {
+                                if (!configuredCategory) return;
+                                setEditingCategory(configuredCategory);
+                                setCategoryError("");
+                                openDialog(
+                                  categoryManagerRef,
+                                  setCategoryManagerOpen,
+                                );
+                              }}
+                            >
+                              编辑
+                            </button>
+                          </div>
                         </div>
                         <div className="category-budget-track">
                           <i
@@ -4354,10 +5216,21 @@ export function LedgerApp({
                     );
                   })}
                 </div>
+                <CollectionPagination
+                  page={categoryBudgetPageData.page}
+                  totalPages={categoryBudgetPageData.totalPages}
+                  totalRows={categoryBudgetPageData.totalRows}
+                  label="品类预算分页"
+                  unit="类"
+                  onChange={changeCategoryBudgetPage}
+                />
               </div>
             </section>
 
-            <section className="ledger-section module-bills">
+            <section
+              className="ledger-section module-bills page-scroll-anchor"
+              ref={billListRef}
+            >
               <div className="section-heading">
                 <div>
                   <p className="eyebrow">TRANSACTION SEARCH</p>
@@ -4386,45 +5259,130 @@ export function LedgerApp({
                   {(
                     [
                       ["all", "全部"],
-                      ["day", "本日"],
-                      ["week", "本周"],
-                      ["month", "本月"],
-                      ["year", "本年"],
-                      ["other-year", "其他年份"],
+                      ["day", "日"],
+                      ["week", "周"],
+                      ["month", "月"],
+                      ["year", "年"],
                       ["custom", "自定义"],
                     ] as [BillRange, string][]
                   ).map(([value, label]) => (
                     <button
                       className={billRange === value ? "active" : ""}
-                      onClick={() => setBillRange(value)}
+                      onClick={() => {
+                        if (value !== "all" && value !== "custom") {
+                          const anchor = normalizeBillAnchor(
+                            billAnchorDate,
+                            todayKey,
+                          );
+                          if (anchor) setBillAnchorDate(anchor);
+                        }
+                        setBillRange(value);
+                      }}
                       key={value}
                     >
                       {label}
                     </button>
                   ))}
                 </div>
-                {billRange === "other-year" && (
-                  <div className="bill-advanced-filter bill-year-filter">
-                    <span>选择年份</span>
-                    <select
-                      value={
-                        billYear ||
-                        String(
-                          availableBillYears.find(
-                            (year) => year !== new Date().getFullYear(),
-                          ) ??
-                            availableBillYears[0] ??
-                            new Date().getFullYear(),
+                {billAnchorKey &&
+                  (billRange === "day" ||
+                    billRange === "week" ||
+                    billRange === "month" ||
+                    billRange === "year") && (
+                  <div className="bill-period-navigator">
+                    <button
+                      className="bill-period-arrow"
+                      aria-label="查看上一期"
+                      title="上一期"
+                      onClick={() =>
+                        setBillAnchorDate(
+                          shiftBillAnchor(billAnchorKey, billRange, -1),
                         )
                       }
-                      onChange={(event) => setBillYear(event.target.value)}
                     >
-                      {availableBillYears.map((year) => (
-                        <option value={year} key={year}>
-                          {year} 年
-                        </option>
-                      ))}
-                    </select>
+                      ‹
+                    </button>
+                    <div className="bill-period-picker">
+                      <strong>{billPeriodLabel(billRange, billAnchorKey)}</strong>
+                      {billRange === "day" && (
+                        <input
+                          type="date"
+                          value={billAnchorKey}
+                          aria-label="选择日期"
+                          onChange={(event) =>
+                            setBillAnchorDate(event.target.value)
+                          }
+                        />
+                      )}
+                      {billRange === "week" && (
+                        <input
+                          type="week"
+                          value={billWeekValue(billAnchorKey)}
+                          aria-label="选择周"
+                          onChange={(event) =>
+                            setBillAnchorDate(
+                              dateKeyFromBillWeek(
+                                event.target.value,
+                                billAnchorKey,
+                              ),
+                            )
+                          }
+                        />
+                      )}
+                      {billRange === "month" && (
+                        <input
+                          type="month"
+                          value={billAnchorKey.slice(0, 7)}
+                          aria-label="选择月份"
+                          onChange={(event) =>
+                            setBillAnchorDate(
+                              setBillAnchorMonth(
+                                billAnchorKey,
+                                event.target.value,
+                              ),
+                            )
+                          }
+                        />
+                      )}
+                      {billRange === "year" && (
+                        <select
+                          value={billAnchorKey.slice(0, 4)}
+                          aria-label="选择年份"
+                          onChange={(event) =>
+                            setBillAnchorDate(
+                              setBillAnchorYear(
+                                billAnchorKey,
+                                Number(event.target.value),
+                              ),
+                            )
+                          }
+                        >
+                          {billPeriodYears.map((year) => (
+                            <option value={year} key={year}>
+                              {year} 年
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                    <button
+                      className="bill-period-current"
+                      onClick={() => setBillAnchorDate(todayKey)}
+                    >
+                      本期
+                    </button>
+                    <button
+                      className="bill-period-arrow"
+                      aria-label="查看下一期"
+                      title="下一期"
+                      onClick={() =>
+                        setBillAnchorDate(
+                          shiftBillAnchor(billAnchorKey, billRange, 1),
+                        )
+                      }
+                    >
+                      ›
+                    </button>
                   </div>
                 )}
                 {billRange === "custom" && (
@@ -4480,8 +5438,9 @@ export function LedgerApp({
                 </div>
               </div>
               {billResults.rows.length ? (
-                <div className="expense-list">
-                  {billResults.rows.map((item) => {
+                <>
+                  <div className="expense-list">
+                  {billPage.rows.map((item) => {
                     const account = accountList.find(
                       (one) => one.id === item.accountId,
                     );
@@ -4522,18 +5481,75 @@ export function LedgerApp({
                             </small>
                           )}
                         </strong>
-                        <button
-                          className="delete-button"
-                          aria-label={`删除${item.title}`}
-                          disabled={pending}
-                          onClick={() => requestDeleteTransaction(item.id)}
-                        >
-                          🗑
-                        </button>
+                        <div className="bill-row-actions">
+                          <button
+                            className="edit-button"
+                            aria-label={`修改${item.title}`}
+                            title="修改账单"
+                            disabled={pending}
+                            onClick={() => showTransactionEditor(item)}
+                          >
+                            ✎
+                          </button>
+                          <button
+                            className="delete-button"
+                            aria-label={`删除${item.title}`}
+                            title="删除账单"
+                            disabled={pending}
+                            onClick={() => requestDeleteTransaction(item.id)}
+                          >
+                            🗑
+                          </button>
+                        </div>
                       </article>
                     );
                   })}
-                </div>
+                  </div>
+                  {billPage.totalPages > 1 && (
+                    <nav className="bill-pagination" aria-label="账单分页">
+                      <button
+                        className="bill-page-arrow"
+                        aria-label="上一页"
+                        title="上一页"
+                        disabled={billPage.page <= 1}
+                        onClick={() => changeBillPage(billPage.page - 1)}
+                      >
+                        ‹
+                      </button>
+                      <label>
+                        <span>第</span>
+                        <select
+                          value={billPage.page}
+                          aria-label="选择账单页码"
+                          onChange={(event) =>
+                            changeBillPage(Number(event.target.value))
+                          }
+                        >
+                          {Array.from(
+                            { length: billPage.totalPages },
+                            (_, index) => index + 1,
+                          ).map((page) => (
+                            <option value={page} key={page}>
+                              {page}
+                            </option>
+                          ))}
+                        </select>
+                        <span>
+                          / {billPage.totalPages} 页 · 共 {billPage.totalRows} 条
+                        </span>
+                      </label>
+                      <button
+                        className="bill-page-arrow"
+                        aria-label="下一页"
+                        title="下一页"
+                        disabled={billPage.page >= billPage.totalPages}
+                        onClick={() => changeBillPage(billPage.page + 1)}
+                      >
+                        ›
+                      </button>
+                    </nav>
+                  )}
+                </>
               ) : transactions.length ? (
                 <div className="bill-no-results">
                   <span>⌕</span>
@@ -4555,7 +5571,7 @@ export function LedgerApp({
                   <div className="empty-flower">✿</div>
                   <h3>财务舱等待第一笔数据</h3>
                   <p>记一笔，让账户和分析系统开始运转。</p>
-                  <button onClick={() => openDialog(entryRef, setEntryOpen)}>
+                  <button onClick={openEntryDialog}>
                     开始记账
                   </button>
                 </div>
@@ -4587,6 +5603,40 @@ export function LedgerApp({
                 ))}
               </div>
             </div>
+            <div className="health-grid">
+              <article>
+                <span>本期净结余</span>
+                <strong
+                  className={analysis.balance >= 0 ? "healthy" : "danger"}
+                >
+                  {money.format(analysis.balance / 100)}
+                </strong>
+              </article>
+              <article>
+                <span>储蓄率</span>
+                <strong>{analysis.savingRate.toFixed(1)}%</strong>
+              </article>
+              <article>
+                <span>财务健康度</span>
+                <strong>
+                  {analysis.savingRate >= 30
+                    ? "优秀"
+                    : analysis.savingRate >= 10
+                      ? "稳健"
+                      : analysis.balance >= 0
+                        ? "待提升"
+                        : "需关注"}
+                </strong>
+              </article>
+            </div>
+            <article className="insight-card">
+              <span>✨ 模拟 AI 财务点评</span>
+              <p>
+                {analysis.incomeTotal || analysis.expenseTotal
+                  ? `本期净结余 ${money.format(analysis.balance / 100)}，储蓄率 ${analysis.savingRate.toFixed(1)}%。您的理财收益已覆盖 ${analysis.needExpense ? ((analysis.investmentIncome / analysis.needExpense) * 100).toFixed(1) : "0.0"}% 的刚需支出；${analysis.savingRate >= 20 ? "现金流表现不错，继续保持长期主义。" : "建议给冲动消费设一道冷静期，把工资留在账户里久一点。"}`
+                  : "当前时间范围内还没有资金流，专业分析正在等待真实数据。"}
+              </p>
+            </article>
             <div className="pro-chart-grid">
               <article className="pro-chart-card line-card trend-card">
                 <div>
@@ -4689,7 +5739,7 @@ export function LedgerApp({
                   className="fire-score"
                   style={{ "--fire": fireProgress } as React.CSSProperties}
                 >
-                  <strong>{fireProgress.toFixed(1)}%</strong>
+                  <strong>{fireProgress >= 100 ? "100" : fireProgress.toFixed(1)}%</strong>
                   <small>安全躺平指数</small>
                 </div>
               </div>
@@ -4759,7 +5809,7 @@ export function LedgerApp({
                 ).map((item) => (
                   <div
                     className={`fire-node ${item.done ? "done" : ""}`}
-                    style={{ left: `${item.at}%` }}
+                    style={{ "--at": `${item.at}%` } as React.CSSProperties}
                     key={item.name}
                   >
                     <b>{item.done ? "✦" : "○"}</b>
@@ -4911,32 +5961,6 @@ export function LedgerApp({
                 </p>
               </div>
             </article>
-            <div className="health-grid">
-              <article>
-                <span>本期净结余</span>
-                <strong
-                  className={analysis.balance >= 0 ? "healthy" : "danger"}
-                >
-                  {money.format(analysis.balance / 100)}
-                </strong>
-              </article>
-              <article>
-                <span>储蓄率</span>
-                <strong>{analysis.savingRate.toFixed(1)}%</strong>
-              </article>
-              <article>
-                <span>财务健康度</span>
-                <strong>
-                  {analysis.savingRate >= 30
-                    ? "优秀"
-                    : analysis.savingRate >= 10
-                      ? "稳健"
-                      : analysis.balance >= 0
-                        ? "待提升"
-                        : "需关注"}
-                </strong>
-              </article>
-            </div>
             <article className="side-hustle-dashboard">
               <div>
                 <p className="eyebrow">SLASH CAREER P&L</p>
@@ -4974,28 +5998,188 @@ export function LedgerApp({
                 20%费用，再按 20%/30%/40%预扣率及速算扣除数计算。
               </small>
             </article>
-            <article className="insight-card">
-              <span>✨ 模拟 AI 财务点评</span>
-              <p>
-                {analysis.incomeTotal || analysis.expenseTotal
-                  ? `本期净结余 ${money.format(analysis.balance / 100)}，储蓄率 ${analysis.savingRate.toFixed(1)}%。您的理财收益已覆盖 ${analysis.needExpense ? ((analysis.investmentIncome / analysis.needExpense) * 100).toFixed(1) : "0.0"}% 的刚需支出；${analysis.savingRate >= 20 ? "现金流表现不错，继续保持长期主义。" : "建议给冲动消费设一道冷静期，把工资留在账户里久一点。"}`
-                  : "当前时间范围内还没有资金流，专业分析正在等待真实数据。"}
-              </p>
-            </article>
           </section>
         )}
         </div>
 
-        <button
-          className="floating-entry-button"
-          onClick={() => openDialog(entryRef, setEntryOpen)}
-          aria-label="记一笔"
-          title="记一笔"
-        >
-          <span>＋</span>
-          <b>记一笔</b>
-        </button>
       </section>
+
+      {transactionEditOpen && transactionEdit && (
+        <dialog
+          className="expense-dialog transaction-edit-dialog"
+          ref={transactionEditRef}
+          onCancel={(event) => {
+            event.preventDefault();
+            closeTransactionEditor();
+          }}
+        >
+          <form action={submitTransactionEdit} className="expense-form">
+            <button
+              type="button"
+              className="close-button"
+              aria-label="关闭修改账单"
+              onClick={closeTransactionEditor}
+            >
+              ×
+            </button>
+            <p className="eyebrow">EDIT TRANSACTION</p>
+            <h2>修改账单</h2>
+            <div className="type-switch">
+              <button
+                type="button"
+                className={transactionEdit.type === "支出" ? "active" : ""}
+                onClick={() =>
+                  setTransactionEdit((current) =>
+                    current ? { ...current, type: "支出" } : current,
+                  )
+                }
+              >
+                支出
+              </button>
+              <button
+                type="button"
+                className={transactionEdit.type === "收入" ? "active" : ""}
+                onClick={() =>
+                  setTransactionEdit((current) =>
+                    current ? { ...current, type: "收入" } : current,
+                  )
+                }
+              >
+                收入
+              </button>
+            </div>
+            <div className="transaction-edit-grid">
+              <label>
+                <span>账单名称</span>
+                <input
+                  name="title"
+                  defaultValue={transactionEdit.transaction.title}
+                  maxLength={40}
+                  required
+                />
+              </label>
+              <label>
+                <span>
+                  金额 · {accountList.find(
+                    (account) => account.id === transactionEdit.accountId,
+                  )?.currency ?? transactionEdit.transaction.currency}
+                </span>
+                <input
+                  name="amount"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  defaultValue={(transactionEdit.transaction.amount / 100).toFixed(2)}
+                  required
+                />
+              </label>
+              <label>
+                <span>发生时间</span>
+                <input
+                  name="occurredAt"
+                  type="datetime-local"
+                  defaultValue={toLocalDateTimeInput(
+                    transactionEdit.transaction.occurredAt,
+                  )}
+                  required
+                />
+              </label>
+              <label>
+                <span>{transactionEdit.type === "支出" ? "扣款账户" : "入账账户"}</span>
+                <select
+                  value={transactionEdit.accountId}
+                  onChange={(event) =>
+                    setTransactionEdit((current) =>
+                      current
+                        ? { ...current, accountId: Number(event.target.value) }
+                        : current,
+                    )
+                  }
+                >
+                  {accountList.map((account) => (
+                    <option value={account.id} key={account.id}>
+                      {account.name} · {account.currency}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {transactionEdit.type === "支出" ? (
+                <>
+                  <label>
+                    <span>消费分类</span>
+                    <select
+                      value={transactionEdit.category}
+                      onChange={(event) =>
+                        setTransactionEdit((current) =>
+                          current
+                            ? { ...current, category: event.target.value }
+                            : current,
+                        )
+                      }
+                    >
+                      {categories.map((item) => (
+                        <option value={item} key={item}>
+                          {item}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>消费情绪</span>
+                    <select
+                      value={transactionEdit.mood}
+                      onChange={(event) =>
+                        setTransactionEdit((current) =>
+                          current
+                            ? {
+                                ...current,
+                                mood: event.target.value as Mood,
+                              }
+                            : current,
+                        )
+                      }
+                    >
+                      {moods.map((item) => (
+                        <option value={item} key={item}>
+                          {item}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              ) : (
+                <label className="transaction-edit-wide">
+                  <span>收入分类</span>
+                  <select
+                    value={transactionEdit.incomeCategory}
+                    onChange={(event) =>
+                      setTransactionEdit((current) =>
+                        current
+                          ? { ...current, incomeCategory: event.target.value }
+                          : current,
+                      )
+                    }
+                  >
+                    {activeIncomeCategories.map((item) => (
+                      <option value={item} key={item}>
+                        {item}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+            {transactionEditError && (
+              <p className="form-error" role="alert">
+                {transactionEditError}
+              </p>
+            )}
+            <button className="submit-button" disabled={pending}>
+              {pending ? "正在校正账户余额…" : "保存修改"}
+            </button>
+          </form>
+        </dialog>
+      )}
 
       {entryOpen && (
         <dialog
@@ -5083,9 +6267,9 @@ export function LedgerApp({
                 ))}
               </div>
             </fieldset>
-            {entryType === "支出" && memberList.some((item) => !item.isMe) && (
+            {entryType === "支出" && (
               <fieldset className="split-field">
-                <legend>👥 分账模式</legend>
+                <legend>👥 是否需要分账</legend>
                 <div className="split-member-row">
                   <select
                     value={splitMemberId}
@@ -5093,6 +6277,7 @@ export function LedgerApp({
                       setSplitMemberId(Number(event.target.value))
                     }
                   >
+                    <option value={0}>不分账 · 只记录我的收支</option>
                     {memberList
                       .filter((item) => !item.isMe)
                       .map((item) => (
@@ -5105,37 +6290,70 @@ export function LedgerApp({
                     ＋ 搭子
                   </button>
                 </div>
-                <div className="split-mode-grid">
-                  {(
-                    ["全额由我支付", "全额由对方支付", "按比例平摊"] as const
-                  ).map((item) => (
-                    <button
-                      type="button"
-                      className={splitMode === item ? "selected" : ""}
-                      onClick={() => setSplitMode(item)}
-                      key={item}
-                    >
-                      {item}
-                    </button>
-                  ))}
-                </div>
-                {splitMode === "按比例平摊" && (
-                  <label className="ratio-slider">
-                    <span>
-                      我的承担比例 <b>{mySharePercent}%</b> · 对方{" "}
-                      {100 - mySharePercent}%
-                    </span>
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      step="5"
-                      value={mySharePercent}
-                      onChange={(event) =>
-                        setMySharePercent(Number(event.target.value))
-                      }
-                    />
-                  </label>
+                {splitMemberId > 0 ? (
+                  <>
+                    <div className="split-mode-grid">
+                      {(
+                        [
+                          {
+                            value: "全额由我支付",
+                            label: "我先垫付",
+                            hint: "对方欠我全部",
+                          },
+                          {
+                            value: "全额由对方支付",
+                            label: "对方先垫付",
+                            hint: "我欠对方全部",
+                          },
+                          {
+                            value: "按比例平摊",
+                            label: "我先付 · 按比例",
+                            hint: "记录双方承担比例",
+                          },
+                        ] as const
+                      ).map((item) => (
+                        <button
+                          type="button"
+                          className={splitMode === item.value ? "selected" : ""}
+                          onClick={() => setSplitMode(item.value)}
+                          aria-pressed={splitMode === item.value}
+                          key={item.value}
+                        >
+                          <strong>{item.label}</strong>
+                          <small>{item.hint}</small>
+                        </button>
+                      ))}
+                    </div>
+                    {splitMode === "按比例平摊" && (
+                      <label className="ratio-slider">
+                        <span>
+                          我承担 <b>{mySharePercent}%</b> · 对方承担{" "}
+                          <b>{100 - mySharePercent}%</b>
+                        </span>
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          step="5"
+                          value={mySharePercent}
+                          onChange={(event) =>
+                            setMySharePercent(Number(event.target.value))
+                          }
+                        />
+                      </label>
+                    )}
+                    <p className="split-summary">
+                      {splitMode === "全额由我支付"
+                        ? "本笔从我的账户全额扣款，并记为对方欠我全额。"
+                        : splitMode === "全额由对方支付"
+                          ? "本笔不扣我的账户，并记为我欠对方全额。"
+                          : `本笔先从我的账户全额扣款；我承担 ${mySharePercent}%，对方欠我 ${100 - mySharePercent}%。`}
+                    </p>
+                  </>
+                ) : (
+                  <p className="split-summary split-summary-idle">
+                    默认不产生搭子往来；选择搭子后再指定谁先付款。
+                  </p>
                 )}
               </fieldset>
             )}
@@ -5409,25 +6627,6 @@ export function LedgerApp({
                 </button>
               ))}
             </div>
-            <form action={configureLock} className="privacy-setting">
-              <label>
-                <input
-                  type="checkbox"
-                  name="enabled"
-                  defaultChecked={securityEnabled}
-                />
-                <span>开启启动安全锁</span>
-              </label>
-              <input
-                name="pin"
-                type="password"
-                inputMode="numeric"
-                maxLength={4}
-                pattern="\d{4}"
-                placeholder="设置4位数字 PIN"
-              />
-              <button disabled={pending}>保存隐私设置</button>
-            </form>
           </div>
         </dialog>
       )}
@@ -5827,6 +7026,24 @@ export function LedgerApp({
         </dialog>
       )}
 
+      {authOpen && (
+        <dialog
+          className="expense-dialog auth-dialog"
+          ref={authRef}
+          onCancel={() => closeDialog(authRef, setAuthOpen)}
+        >
+          <button
+            type="button"
+            className="close-button"
+            onClick={() => closeDialog(authRef, setAuthOpen)}
+            aria-label="关闭账号窗口"
+          >
+            ×
+          </button>
+          <AuthPanel user={authUser} hasUsers={authHasUsers} />
+        </dialog>
+      )}
+
       {noticeOpen && (
         <dialog
           className="expense-dialog notice-dialog"
@@ -5969,6 +7186,25 @@ export function LedgerApp({
                 />
               </label>
             </div>
+            <form action={configureLock} className="privacy-setting">
+              <label>
+                <input
+                  type="checkbox"
+                  name="enabled"
+                  defaultChecked={securityEnabled}
+                />
+                <span>开启启动安全锁</span>
+              </label>
+              <input
+                name="pin"
+                type="password"
+                inputMode="numeric"
+                maxLength={4}
+                pattern="\d{4}"
+                placeholder="设置4位数字 PIN"
+              />
+              <button disabled={pending}>保存隐私设置</button>
+            </form>
             <section className="app-update-band">
               <div>
                 <p className="eyebrow">SIGNED GITHUB RELEASES</p>
@@ -6249,55 +7485,98 @@ export function LedgerApp({
               )}
             </section>
             <section className="p2p-star-cluster">
-              <div className="p2p-radar">
-                <i />
-                <i />
-                <i />
-                <span>📱</span>
-                <span>💻</span>
-                <b>NAS</b>
-              </div>
-              <div>
-                <p className="eyebrow">ZERO-TRUST LAN MESH</p>
-                <h3>🌐 局域网 P2P 节点同步星群</h3>
+              <div className="nearby-sync-content">
+                <p className="eyebrow">NEARBY ENCRYPTED TRANSFER</p>
+                <h3>📲 附近设备同步</h3>
                 <p>
-                  WebRTC DataChannel 直连传输，账单使用唯一 CRDT ID
-                  与删除墓碑自动合并；信令只在本地服务暂存 10 分钟。
+                  不需要服务器地址。生成加密同步包后，用 AirDrop、微信或局域网
+                  发送给另一台设备；接收端会自动合并，不会覆盖较新的记录。
                 </p>
-                <div className="node-id">
-                  <span>本机节点</span>
-                  <code>{p2pNode || "正在生成…"}</code>
-                </div>
-                <div className="p2p-controls">
-                  <label>
-                    房间码
+                <div className="nearby-sync-grid">
+                  <article>
+                    <span>1 · 从这台设备发出</span>
+                    <button
+                      type="button"
+                      className="nearby-primary"
+                      onClick={() => void createNearbyPackage()}
+                      disabled={pending}
+                    >
+                      生成并分享同步包
+                    </button>
+                    {nearbyPairingCode && (
+                      <div className="nearby-code">
+                        <small>告诉接收方这个配对码</small>
+                        <strong>{nearbyPairingCode}</strong>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void navigator.clipboard.writeText(
+                              nearbyPairingCode,
+                            );
+                            setNearbyStatus("配对码已复制，请与同步包一起发送。");
+                          }}
+                        >
+                          复制
+                        </button>
+                      </div>
+                    )}
+                  </article>
+                  <article>
+                    <span>2 · 在这台设备接收</span>
+                    <label>
+                      <b>{nearbyFile?.name || "选择收到的同步包"}</b>
+                      <input
+                        type="file"
+                        accept=".json,.e2ee.json,application/json,application/octet-stream"
+                        onChange={(event) =>
+                          setNearbyFile(event.target.files?.[0] ?? null)
+                        }
+                      />
+                    </label>
                     <input
-                      value={p2pRoom}
-                      onChange={(event) => setP2pRoom(event.target.value)}
-                      placeholder="neo-home"
+                      value={nearbyReceiveCode}
+                      onChange={(event) =>
+                        setNearbyReceiveCode(
+                          event.target.value.toUpperCase().slice(0, 8),
+                        )
+                      }
+                      placeholder="输入 8 位配对码"
+                      autoComplete="off"
                     />
-                  </label>
-                  <label>
-                    对端节点 ID
-                    <input
-                      value={p2pTarget}
-                      onChange={(event) => setP2pTarget(event.target.value)}
-                      placeholder="node-a1b2c3d4"
-                    />
-                  </label>
-                  <button onClick={() => void hostPeer()}>
-                    发起握手并同步
-                  </button>
+                    <button
+                      type="button"
+                      onClick={receiveNearbyPackage}
+                      disabled={pending || !nearbyFile}
+                    >
+                      接收并合并
+                    </button>
+                  </article>
                 </div>
-                <small>{p2pStatus}</small>
-                <details>
-                  <summary>Bonjour / NAS 发现协议</summary>
-                  <code>_neo-ledger._tcp.local · GET /api/p2p/discovery</code>
-                  <p>
-                    浏览器受安全沙箱限制不能直接广播
-                    mDNS；极空间原生伴侣进程可注册该服务，PWA
-                    继续使用本地信令完成 WebRTC 握手。
-                  </p>
+                <small className="nearby-status">{nearbyStatus}</small>
+                <details className="advanced-peer-sync">
+                  <summary>高级：WebRTC 节点直连</summary>
+                  <div className="node-id">
+                    <span>本机节点</span>
+                    <code>{p2pNode || "正在生成…"}</code>
+                  </div>
+                  <div className="p2p-controls">
+                    <label>
+                      房间码
+                      <input
+                        value={p2pRoom}
+                        onChange={(event) => setP2pRoom(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      对端节点 ID
+                      <input
+                        value={p2pTarget}
+                        onChange={(event) => setP2pTarget(event.target.value)}
+                      />
+                    </label>
+                    <button onClick={() => void hostPeer()}>发起直连</button>
+                  </div>
+                  <small>{p2pStatus}</small>
                 </details>
               </div>
             </section>
@@ -6312,16 +7591,36 @@ export function LedgerApp({
                 <p className="eyebrow">E2EE SOVEREIGN SYNC</p>
                 <h3>多端云同步控制塔</h3>
                 <p>
-                  AES-256-GCM 在浏览器本地加密，密钥不上传、不保存。服务端与
-                  WebDAV 只能看到密文。
+                  当前标签页填写一次，以后只点“立即安全同步”。首次自动创建备份，
+                  后续自动双向合并；关闭标签页后密码与同步密钥自动清除。
                 </p>
                 <form action={syncWebDav}>
                   <label>
-                    <span>WebDAV 地址</span>
+                    <span>
+                      WebDAV 地址
+                      <button
+                        type="button"
+                        className="webdav-preset"
+                        onClick={() =>
+                          setWebdavConfig((current) => ({
+                            ...current,
+                            url: "https://dav.jianguoyun.com/dav/NeoLedger",
+                          }))
+                        }
+                      >
+                        使用坚果云
+                      </button>
+                    </span>
                     <input
                       name="url"
                       type="url"
-                      defaultValue={webdavConfig.url}
+                      value={webdavConfig.url}
+                      onChange={(event) =>
+                        setWebdavConfig((current) => ({
+                          ...current,
+                          url: event.target.value,
+                        }))
+                      }
                       placeholder="https://dav.jianguoyun.com/dav/NeoLedger"
                       required
                     />
@@ -6331,7 +7630,13 @@ export function LedgerApp({
                       <span>用户名</span>
                       <input
                         name="username"
-                        defaultValue={webdavConfig.username}
+                        value={webdavConfig.username}
+                        onChange={(event) =>
+                          setWebdavConfig((current) => ({
+                            ...current,
+                            username: event.target.value,
+                          }))
+                        }
                       />
                     </label>
                     <label>
@@ -6339,6 +7644,13 @@ export function LedgerApp({
                       <input
                         name="password"
                         type="password"
+                        value={webdavSession.password}
+                        onChange={(event) =>
+                          setWebdavSession((current) => ({
+                            ...current,
+                            password: event.target.value,
+                          }))
+                        }
                         autoComplete="new-password"
                       />
                     </label>
@@ -6348,22 +7660,39 @@ export function LedgerApp({
                     <input
                       name="secret"
                       type="password"
+                      value={webdavSession.secret}
+                      onChange={(event) =>
+                        setWebdavSession((current) => ({
+                          ...current,
+                          secret: event.target.value,
+                        }))
+                      }
                       minLength={8}
                       placeholder="至少 8 位；遗失后云端密文无法恢复"
                       required
                     />
                   </label>
                   <div className="sync-actions">
-                    <button name="mode" value="upload" disabled={syncing}>
-                      加密上传
-                    </button>
-                    <button name="mode" value="download" disabled={syncing}>
-                      解密下载
-                    </button>
-                    <button name="mode" value="merge" disabled={syncing}>
-                      双向冲突合并
+                    <button
+                      className="smart-sync-button"
+                      name="mode"
+                      value="smart"
+                      disabled={syncing}
+                    >
+                      {syncing ? "正在安全同步…" : "立即安全同步"}
                     </button>
                   </div>
+                  <details className="webdav-advanced">
+                    <summary>高级操作</summary>
+                    <div className="sync-actions">
+                      <button name="mode" value="upload" disabled={syncing}>
+                        仅上传
+                      </button>
+                      <button name="mode" value="download" disabled={syncing}>
+                        仅下载并覆盖本机
+                      </button>
+                    </div>
+                  </details>
                 </form>
                 <small>
                   {syncing ? "卫星正在交换密文…" : `上次同步：${syncStatus}`}
@@ -6375,19 +7704,63 @@ export function LedgerApp({
                 <span>🌐</span>
                 <div>
                   <p className="eyebrow">AUTOMATION BRIDGE</p>
-                  <h3>极客通道 · Quick Sync API</h3>
+                  <h3>自动记账连接</h3>
                 </div>
               </div>
               <p>
-                密钥由服务器环境变量 <code>SYNC_TOKEN</code>{" "}
-                保管，页面只显示掩码 <b>••••••••••••</b>
-                ，不会把真实密钥泄露给浏览器。
+                给快捷指令、Bark、短信转发或 NAS 生成一把独立密钥。密钥按当前
+                身份保存为哈希，接口每分钟最多接收 60 次请求。
               </p>
-              <pre>{`POST /api/external/quick-sync\nAuthorization: Bearer $SYNC_TOKEN\nContent-Type: application/json\n\n{\n  "amount": 35.5,\n  "merchant": "麦当劳",\n  "time": "2026-07-11T12:30:00+08:00",\n  "ledgerId": ${currentLedgerId},\n  "category": "餐饮"\n}`}</pre>
-              <small>
-                也支持请求头 x-sync-token。amount 单位为元；accountId、category
-                可选，服务端会自动匹配默认资产账户与消费分类。
-              </small>
+              <div className="quick-sync-status">
+                <span>
+                  状态：
+                  <b>{quickSyncStatus?.active ? "已启用" : "未启用"}</b>
+                </span>
+                {quickSyncStatus?.tokenPrefix && (
+                  <code>{quickSyncStatus.tokenPrefix}</code>
+                )}
+                {quickSyncStatus?.lastUsedAt && (
+                  <small>最近使用：{formatTimestamp(quickSyncStatus.lastUsedAt)}</small>
+                )}
+              </div>
+              {quickSyncToken && (
+                <div className="quick-sync-token">
+                  <small>密钥只显示这一次</small>
+                  <code>{quickSyncToken}</code>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(quickSyncToken);
+                      setQuickSyncMessage("密钥已复制，请保存在可信设备中。");
+                    }}
+                  >
+                    复制密钥
+                  </button>
+                  <button type="button" onClick={() => void copyQuickSyncExample()}>
+                    复制请求示例
+                  </button>
+                </div>
+              )}
+              <div className="quick-sync-actions">
+                <button
+                  type="button"
+                  onClick={createQuickSyncToken}
+                  disabled={pending}
+                >
+                  {quickSyncStatus?.active ? "重新生成密钥" : "生成自动记账密钥"}
+                </button>
+                {quickSyncStatus?.active && (
+                  <button
+                    type="button"
+                    className="danger"
+                    onClick={revokeQuickSyncToken}
+                    disabled={pending}
+                  >
+                    撤销密钥
+                  </button>
+                )}
+              </div>
+              {quickSyncMessage && <small>{quickSyncMessage}</small>}
             </article>
           </div>
         </dialog>
@@ -6826,37 +8199,42 @@ export function LedgerApp({
         <dialog
           className="expense-dialog asset-dialog"
           ref={assetRef}
-          onCancel={() => closeDialog(assetRef, setAssetOpen)}
+          onCancel={closeAssetEditor}
         >
-          <form action={submitDigitalAsset} className="expense-form">
+          <form
+            action={submitDigitalAsset}
+            className="expense-form"
+            key={editingAsset?.id ?? "new-asset"}
+          >
             <button
               type="button"
               className="close-button"
-              onClick={() => closeDialog(assetRef, setAssetOpen)}
+              onClick={closeAssetEditor}
             >
               ×
             </button>
-            <p className="eyebrow">DEPRECIATION ONBOARDING</p>
-            <h2>⌁ 添置新装备</h2>
+            <p className="eyebrow">UNIVERSAL ASSET ONBOARDING</p>
+            <h2>{editingAsset ? "✎ 修改资产" : "⌁ 新增资产"}</h2>
             <p className="form-subtitle">
-              系统将按当前日期实时推演残值，不会写入静态估价。
+              可管理会折旧、保值或升值的实物与虚拟资产。
             </p>
             <label className="title-field">
               <span>资产名称</span>
-              <input name="name" placeholder="如：iPhone 16 Pro" required />
+              <input
+                name="name"
+                placeholder="如：自住房、家用车、腕表"
+                defaultValue={editingAsset?.name ?? ""}
+                required
+              />
             </label>
             <fieldset>
               <legend>资产类型</legend>
               <div className="asset-type-switch">
-                {([
-                  ["数码设备", "💻"],
-                  ["游戏账号", "🎮"],
-                  ["潮流玩具", "🏍️"],
-                ] as const).map(([name, icon]) => (
+                {ASSET_TYPE_OPTIONS.map(({ name, icon }) => (
                   <button
                     type="button"
                     className={assetType === name ? "active" : ""}
-                    onClick={() => setAssetType(name)}
+                    onClick={() => chooseAssetType(name)}
                     key={name}
                   >
                     <span>{icon}</span>
@@ -6865,58 +8243,150 @@ export function LedgerApp({
                 ))}
               </div>
             </fieldset>
+            {assetType === "其他资产" && (
+              <label className="title-field">
+                <span>自定义资产类型</span>
+                <input
+                  name="customAssetType"
+                  maxLength={24}
+                  placeholder="如：游艇、乐器、艺术品"
+                  defaultValue={
+                    editingAsset &&
+                    !ASSET_TYPE_OPTIONS.some(
+                      (option) => option.name === editingAsset.assetType,
+                    )
+                      ? editingAsset.assetType
+                      : ""
+                  }
+                  required
+                />
+              </label>
+            )}
+            <fieldset>
+              <legend>估值方式</legend>
+              <div className="asset-type-switch valuation-mode-switch">
+                {(["自动折旧", "手动估值"] as const).map((mode) => (
+                  <button
+                    type="button"
+                    className={assetValuationMode === mode ? "active" : ""}
+                    onClick={() => setAssetValuationMode(mode)}
+                    key={mode}
+                  >
+                    <span>{mode === "自动折旧" ? "📉" : "✍️"}</span>
+                    {mode}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
             <div className="two-fields">
               <label className="title-field">
-                <span>购买价格（原值）</span>
+                <span>购入原值</span>
                 <input
                   name="purchasePrice"
                   type="number"
                   min="0.01"
                   step="0.01"
                   placeholder="8999.00"
+                  defaultValue={
+                    editingAsset
+                      ? (editingAsset.purchasePrice / 100).toFixed(2)
+                      : ""
+                  }
                   required
                 />
               </label>
               <label className="title-field">
-                <span>购买日期</span>
-                <input
-                  name="purchaseDate"
-                  type="date"
-                  max={todayKey || undefined}
-                  defaultValue={todayKey}
-                  required
-                />
+                <span>资产币种</span>
+                <select
+                  name="currency"
+                  defaultValue={editingAsset?.currency ?? "CNY"}
+                >
+                  <option value="CNY">CNY · 人民币</option>
+                  <option value="USD">USD · 美元</option>
+                  <option value="JPY">JPY · 日元</option>
+                  <option value="EUR">EUR · 欧元</option>
+                </select>
               </label>
             </div>
-            <div className="two-fields">
+            <label className="title-field">
+              <span>购入 / 建档日期</span>
+              <input
+                name="purchaseDate"
+                type="date"
+                max={todayKey || undefined}
+                defaultValue={editingAsset?.purchaseDate ?? todayKey}
+                required
+              />
+            </label>
+            {assetValuationMode === "手动估值" ? (
               <label className="title-field">
-                <span>预期寿命（月）</span>
+                <span>当前市场估值</span>
                 <input
-                  name="lifespanMonths"
-                  type="number"
-                  min="1"
-                  max="600"
-                  defaultValue={assetType === "游戏账号" ? 24 : 36}
-                  required
-                />
-              </label>
-              <label className="title-field">
-                <span>保底残值率（%）</span>
-                <input
-                  name="residualRate"
+                  name="manualValue"
                   type="number"
                   min="0"
-                  max="100"
-                  step="0.1"
-                  defaultValue="10"
+                  step="0.01"
+                  placeholder="可高于或低于购入原值"
+                  defaultValue={
+                    editingAsset
+                      ? (
+                          (editingAsset.manualValue ??
+                            editingAsset.currentValue) / 100
+                        ).toFixed(2)
+                      : ""
+                  }
                   required
                 />
               </label>
-            </div>
+            ) : (
+              <div
+                className="two-fields"
+                key={`asset-auto-${assetType}-${editingAsset?.id ?? "new"}`}
+              >
+                <label className="title-field">
+                  <span>预期寿命（月）</span>
+                  <input
+                    name="lifespanMonths"
+                    type="number"
+                    min="1"
+                    max="1200"
+                    defaultValue={
+                      editingAsset?.valuationMode === "自动折旧"
+                        ? editingAsset.lifespanMonths
+                        : (ASSET_TYPE_OPTIONS.find(
+                            (option) => option.name === assetType,
+                          )?.lifespan ?? 60)
+                    }
+                    required
+                  />
+                </label>
+                <label className="title-field">
+                  <span>保底残值率（%）</span>
+                  <input
+                    name="residualRate"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    defaultValue={
+                      editingAsset?.valuationMode === "自动折旧"
+                        ? editingAsset.residualRateBps / 100
+                        : (ASSET_TYPE_OPTIONS.find(
+                            (option) => option.name === assetType,
+                          )?.residualRate ?? 10)
+                    }
+                    required
+                  />
+                </label>
+              </div>
+            )}
             {assetType === "游戏账号" && (
               <label className="title-field heat-field">
                 <span>市场热度</span>
-                <select name="heatLevel" defaultValue="中">
+                <select
+                  name="heatLevel"
+                  defaultValue={editingAsset?.heatLevel ?? "中"}
+                >
                   <option value="高">🔥 高热度 · 衰减较慢</option>
                   <option value="中">🌤️ 中热度 · 标准衰减</option>
                   <option value="低">🧊 低热度 · 急速贬值</option>
@@ -6926,7 +8396,11 @@ export function LedgerApp({
             )}
             {assetError && <p className="account-error">{assetError}</p>}
             <button className="submit-button" disabled={pending}>
-              {pending ? "正在测算初始残值…" : "放入资产货架"}
+              {pending
+                ? "正在保存资产…"
+                : editingAsset
+                  ? "保存资产修改"
+                  : "加入资产库"}
             </button>
           </form>
         </dialog>
@@ -6956,13 +8430,19 @@ export function LedgerApp({
             <h2>🛒 变现 {liquidatingAsset.name}</h2>
             <div className="liquidation-quote">
               <span>系统当前估值</span>
-              <strong>{money.format(liquidatingAsset.currentValue / 100)}</strong>
+              <strong>
+                {formatCurrency(
+                  liquidatingAsset.currentValue / 100,
+                  liquidatingAsset.currency,
+                )}
+              </strong>
               <small>
-                已较原值流失 {money.format(liquidatingAsset.valueLost / 100)}
+                相对原值变动 {liquidatingAsset.changePercent >= 0 ? "+" : ""}
+                {liquidatingAsset.changePercent.toFixed(1)}%
               </small>
             </div>
             <label className="title-field">
-              <span>二手实际卖出价</span>
+              <span>实际变现价格（{liquidatingAsset.currency}）</span>
               <input
                 name="salePrice"
                 type="number"
@@ -6972,16 +8452,38 @@ export function LedgerApp({
               />
             </label>
             <label className="title-field">
-              <span>收入存入账户</span>
-              <select name="accountId" defaultValue={accountList.find((item) => item.type === "资产")?.id}>
+              <span>收入存入同币种账户</span>
+              <select
+                name="accountId"
+                defaultValue={
+                  accountList.find(
+                    (item) =>
+                      item.type === "资产" &&
+                      item.currency === liquidatingAsset.currency,
+                  )?.id
+                }
+              >
                 {accountList
-                  .filter((item) => item.type === "资产")
+                  .filter(
+                    (item) =>
+                      item.type === "资产" &&
+                      item.currency === liquidatingAsset.currency,
+                  )
                   .map((account) => (
                     <option value={account.id} key={account.id}>
                       {account.icon} {account.name}
                     </option>
                   ))}
               </select>
+              {!accountList.some(
+                (item) =>
+                  item.type === "资产" &&
+                  item.currency === liquidatingAsset.currency,
+              ) && (
+                <small>
+                  暂无 {liquidatingAsset.currency} 资产账户，请先新建同币种账户，或直接报废注销。
+                </small>
+              )}
             </label>
             {assetError && <p className="account-error">{assetError}</p>}
             <div className="liquidation-actions">

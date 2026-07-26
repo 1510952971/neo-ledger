@@ -2,10 +2,14 @@ import { env } from "cloudflare:workers";
 import { NextResponse } from "next/server";
 import { ensureDb, getDbBinding } from "../../../../db";
 import { claimLedgerForOwner } from "../../../api-security";
+import {
+  enforceIntegrationRateLimit,
+  ownerForIntegrationToken,
+} from "../../../integration-token";
 
-const categories = ["餐饮", "交通", "购物", "咖啡", "娱乐"];
 export async function POST(request: Request) {
   try {
+    await ensureDb();
     const configured = String(
       (env as unknown as Record<string, unknown>).SYNC_TOKEN || "",
     );
@@ -13,9 +17,15 @@ export async function POST(request: Request) {
       request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ||
       request.headers.get("x-sync-token") ||
       "";
-    if (!configured || provided !== configured)
+    const runtime = env as unknown as Record<string, unknown>;
+    const ownerId =
+      (await ownerForIntegrationToken(provided)) ||
+      (configured && provided === configured
+        ? String(runtime.SYNC_OWNER_ID || "local")
+        : null);
+    if (!ownerId)
       return NextResponse.json({ error: "SYNC_TOKEN 无效" }, { status: 401 });
-    await ensureDb();
+    await enforceIntegrationRateLimit(ownerId);
     const body = (await request.json()) as {
       amount?: number;
       merchant?: string;
@@ -29,10 +39,7 @@ export async function POST(request: Request) {
       db = getDbBinding();
     if (!Number.isFinite(amount) || amount <= 0)
       throw new Error("amount 必须为正数");
-    const integrationOwner = String(
-      (env as unknown as Record<string, unknown>).SYNC_OWNER_ID || "local",
-    );
-    await claimLedgerForOwner(integrationOwner, ledgerId);
+    await claimLedgerForOwner(ownerId, ledgerId);
     const account = body.accountId
       ? await db
           .prepare(
@@ -47,15 +54,25 @@ export async function POST(request: Request) {
           .bind(ledgerId)
           .first<{ id: number; currency: string }>();
     if (!account) throw new Error("找不到可用账户");
-    const category = categories.includes(String(body.category))
-      ? String(body.category)
-      : /咖啡|拿铁/.test(String(body.merchant))
-        ? "咖啡"
-        : /地铁|滴滴|公交/.test(String(body.merchant))
-          ? "交通"
-          : /淘宝|京东/.test(String(body.merchant))
-            ? "购物"
-            : "餐饮";
+    const merchant = String(body.merchant || "外部同步账单").slice(0, 40);
+    const inferredCategory = /咖啡|拿铁/.test(merchant)
+      ? "咖啡"
+      : /地铁|滴滴|公交|打车/.test(merchant)
+        ? "交通"
+        : /淘宝|京东|拼多多|购物/.test(merchant)
+          ? "购物"
+          : "餐饮";
+    const requestedCategory = String(body.category || inferredCategory).trim();
+    const category = await db
+      .prepare(
+        `SELECT name,builtin_key builtinKey FROM expense_categories
+         WHERE ledger_id=? AND is_active=1
+         ORDER BY CASE WHEN name=? THEN 0 WHEN name=? THEN 1 ELSE 2 END,sort_order,id
+         LIMIT 1`,
+      )
+      .bind(ledgerId, requestedCategory, inferredCategory)
+      .first<{ name: string; builtinKey: string | null }>();
+    if (!category) throw new Error("账本没有可用的消费分类");
     const occurredAt =
       body.time && Number.isFinite(new Date(body.time).getTime())
         ? new Date(body.time).toISOString()
@@ -65,10 +82,10 @@ export async function POST(request: Request) {
         "INSERT INTO transactions (ledger_id,title,amount,type,mood,category,category_dynamic,account_id,occurred_at,currency,original_amount,original_currency,exchange_rate_micros,original_timezone) VALUES (?,?,?,'支出','刚需',?,?,?,?,?,?,?,1000000,'UTC')",
       ).bind(
         ledgerId,
-        String(body.merchant || "外部同步账单").slice(0, 40),
+        merchant,
         amount,
-        category,
-        category,
+        category.builtinKey,
+        category.name,
         account.id,
         occurredAt,
         account.currency,
@@ -76,11 +93,11 @@ export async function POST(request: Request) {
         account.currency,
       ),
       db.prepare(
-        "UPDATE accounts SET current_balance=current_balance-? WHERE id=?",
+        "UPDATE accounts SET current_balance=current_balance-?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
       ).bind(amount, account.id),
     ]);
     return NextResponse.json(
-      { ok: true, id: Number(results[0].meta.last_row_id), category },
+      { ok: true, id: Number(results[0].meta.last_row_id), category: category.name },
       { status: 201 },
     );
   } catch (error) {

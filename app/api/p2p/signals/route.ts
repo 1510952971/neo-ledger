@@ -9,7 +9,7 @@ export async function GET(request: Request) {
     node = String(url.searchParams.get("node") || "").slice(0, 80),
     after = Number(url.searchParams.get("after") || 0);
     if (!roomName || !node) throw new Error("缺少节点参数");
-    const room = `${requestOwnerId(request)}:${roomName}`;
+    const room = `${await requestOwnerId(request)}:${roomName}`;
     const rows = await getDbBinding()
       .prepare(
         "SELECT id,from_node fromNode,kind,payload,created_at createdAt FROM peer_signals WHERE room=? AND to_node=? AND id>? AND created_at>=datetime('now','-10 minutes') ORDER BY id LIMIT 50",
@@ -38,7 +38,7 @@ export async function POST(request: Request) {
       payload = JSON.stringify(body.payload ?? {});
     if (!roomName || !from || !to || !kind || payload.length > 100000)
       throw new Error("信令无效");
-    const room = `${requestOwnerId(request)}:${roomName}`;
+    const room = `${await requestOwnerId(request)}:${roomName}`;
     const result = await getDbBinding()
       .prepare(
         "INSERT INTO peer_signals(room,from_node,to_node,kind,payload) VALUES(?,?,?,?,?)",

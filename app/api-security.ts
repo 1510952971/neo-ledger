@@ -1,4 +1,5 @@
 import { ensureDb, getDbBinding } from "../db";
+import { hasLocalUsers, sessionUserFromRequest } from "./auth";
 
 export class ApiAccessError extends Error {
   status: number;
@@ -13,13 +14,19 @@ function isLocalHost(hostname: string) {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
 }
 
-export function requestOwnerId(request: Request) {
+export async function requestOwnerId(request: Request) {
   const email = request.headers
     .get("oai-authenticated-user-email")
     ?.trim()
     .toLowerCase();
   if (email) return `email:${email}`;
-  if (isLocalHost(new URL(request.url).hostname)) return "local";
+  const session = await sessionUserFromRequest(request);
+  if (session) return session.ownerId;
+  if (
+    isLocalHost(new URL(request.url).hostname) &&
+    !(await hasLocalUsers())
+  )
+    return "local";
   throw new ApiAccessError("请先登录后再访问账本", 401);
 }
 
@@ -27,7 +34,7 @@ export async function claimAndRequireLedger(request: Request, ledgerId: number) 
   if (!Number.isInteger(ledgerId) || ledgerId <= 0)
     throw new ApiAccessError("账本不存在", 400);
   await ensureDb();
-  const ownerId = requestOwnerId(request);
+  const ownerId = await requestOwnerId(request);
   await claimLedgerForOwner(ownerId, ledgerId);
   return ownerId;
 }

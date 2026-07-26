@@ -13,6 +13,34 @@ npm run dev
 
 打开 `http://localhost:3000`。`npm run dev` 会同时启动主程序和仅监听本机的更新服务。
 
+## 一键启动（macOS）
+
+在 Finder 中双击 `start.command` 即可：自动检查 Node 版本、按需安装依赖、启动服务，就绪后自动打开浏览器；若程序已在运行则直接打开页面。保持终端窗口开启即在运行，按 `Ctrl+C` 停止。
+
+首次双击如被 macOS 拦截，右键点 `start.command` 选“打开”，再确认一次即可。
+
+## 账号登录
+
+“我的财富仓”支持账号或邮箱登录。注册时邮箱可以留空，登录后可在账号面板绑定或更换；本地密码采用 PBKDF2 加盐存储，邮箱只作为登录标识，不提供邮件找回。
+
+微信、支付宝使用开放平台 OAuth 登录。先在对应开放平台创建并审核网站/网页应用，再把 `.env.example` 中的配置复制到本机 `.env.local`：
+
+```bash
+AUTH_PUBLIC_ORIGIN=https://你的域名
+WECHAT_APP_ID=
+WECHAT_APP_SECRET=
+ALIPAY_APP_ID=
+ALIPAY_PRIVATE_KEY=
+ALIPAY_PUBLIC_KEY=
+```
+
+平台后台需要登记完全一致的回调地址：
+
+- 微信：`https://你的域名/api/auth/oauth/callback?provider=wechat`
+- 支付宝：`https://你的域名/api/auth/oauth/callback?provider=alipay`
+
+支付宝应用私钥使用 PKCS#8 格式。程序验证一次性 OAuth 状态和支付宝响应签名，只保存平台用户标识与绑定关系，不保存访问令牌。未配置完整密钥时登录按钮会保持禁用。
+
 ## 安全更新
 
 数据中心内置“检查更新”和“一键升级”：

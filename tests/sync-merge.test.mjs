@@ -56,3 +56,37 @@ test("a newer tombstone prevents deleted records from returning after restore", 
   assert.equal(merged.syncTombstones[0].ledgerId, 1);
   assert.equal(merged.syncTombstones[0].entityUuid, "tx-deleted");
 });
+
+test("natural-key tables do not duplicate after a backup moves to another installation", () => {
+  const common = {
+    version: 22,
+    ledgers: [ledger("2026-07-15T09:00:00.000Z")],
+    accounts: [],
+    transactions: [],
+  };
+  const category = (installation, id) => ({
+    id,
+    syncId: `${installation}:expenseCategories:${id}`,
+    ledgerSyncId: "ledger-global-1",
+    ledgerId: id,
+    name: "餐饮",
+    builtinKey: "餐饮",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  });
+  const local = {
+    ...common,
+    exportedAt: "2026-07-15T10:00:00.000Z",
+    expenseCategories: [category("installation-b", 41)],
+  };
+  const remote = {
+    ...common,
+    exportedAt: "2026-07-15T11:00:00.000Z",
+    expenseCategories: [category("installation-a", 1)],
+  };
+
+  const merged = mergeSyncSnapshots(local, remote);
+
+  assert.equal(merged.expenseCategories.length, 1);
+  assert.equal(merged.expenseCategories[0].id, 41);
+  assert.equal(merged.expenseCategories[0].ledgerId, 1);
+});

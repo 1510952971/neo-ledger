@@ -39,7 +39,7 @@ function validPin(value: unknown): value is string {
 
 export async function GET(request: Request) {
   try {
-    const row = await getOwnerPreferences(requestOwnerId(request));
+    const row = await getOwnerPreferences(await requestOwnerId(request));
     return NextResponse.json({
       theme: row?.theme ?? "cream",
       lockEnabled: Boolean(row?.lockEnabled),
@@ -51,7 +51,7 @@ export async function GET(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const ownerId = requestOwnerId(request);
+    const ownerId = await requestOwnerId(request);
     await getOwnerPreferences(ownerId);
     const body = (await request.json()) as {
       theme?: string;
@@ -97,7 +97,7 @@ export async function POST(request: Request) {
   try {
     const body = (await request.json()) as { pin?: string };
     if (!validPin(body.pin)) return NextResponse.json({ ok: false }, { status: 400 });
-    const row = await getOwnerPreferences(requestOwnerId(request));
+    const row = await getOwnerPreferences(await requestOwnerId(request));
     if (!row?.lockEnabled || !row.pinHash || !row.pinSalt)
       return NextResponse.json({ ok: false }, { status: 401 });
     const hash = await derivePin(

@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { drizzle } from "drizzle-orm/d1";
 import * as schema from "./schema";
+import { evaluateTrackedAsset } from "../app/asset-core.js";
 import { dateKeyInZone, localDateTimeToUtc } from "../app/time-money.js";
 import {
   ACCOUNT_TRANSFERS_APPLY_TRIGGER_SQL,
@@ -11,7 +12,7 @@ import {
   SCHEDULED_OCCURRENCES_TABLE_SQL,
 } from "./transfer-schema.js";
 
-const SCHEMA_VERSION = "21";
+const SCHEMA_VERSION = "24";
 
 export const FX_TO_CNY = { CNY: 1, USD: 7.2, JPY: 0.0462, EUR: 7.85 } as const;
 
@@ -19,7 +20,10 @@ export type DigitalAssetRow = {
   id: number;
   ledgerId: number;
   name: string;
-  assetType: "数码设备" | "游戏账号" | "潮流玩具";
+  assetType: string;
+  currency: "CNY" | "USD" | "JPY" | "EUR";
+  valuationMode: "自动折旧" | "手动估值";
+  manualValue: number | null;
   purchasePrice: number;
   purchaseDate: string;
   lifespanMonths: number;
@@ -32,58 +36,7 @@ export function evaluateDigitalAsset(
   asset: DigitalAssetRow,
   now = new Date(),
 ) {
-  const purchased = new Date(`${asset.purchaseDate}T12:00:00Z`);
-  const elapsedMonths = Math.max(
-    0,
-    (now.getTime() - purchased.getTime()) / (86400000 * 30.4375),
-  );
-  const residualValue = Math.round(
-    asset.purchasePrice * (asset.residualRateBps / 10000),
-  );
-  // Multi-factor accelerated depreciation:
-  // V = max(P*R, P*(1-t/L)*e^(-lambda*t)).
-  // A popular game retains attention longer; a low-heat account fades faster.
-  const heatLambda =
-    asset.assetType === "游戏账号"
-      ? asset.heatLevel === "高"
-        ? 0.008
-        : asset.heatLevel === "低"
-          ? 0.04
-          : 0.02
-      : 0;
-  const lifeFactor = Math.max(0, 1 - elapsedMonths / asset.lifespanMonths);
-  const modeledValue = Math.round(
-    asset.purchasePrice * lifeFactor * Math.exp(-heatLambda * elapsedMonths),
-  );
-  const currentValue = Math.max(residualValue, modeledValue);
-  const valueLost = Math.max(0, asset.purchasePrice - currentValue);
-  const reachedFloor = currentValue <= residualValue;
-  const nextMonth = Math.min(
-    asset.lifespanMonths,
-    elapsedMonths + 1 / 30.4375,
-  );
-  const nextValue = Math.max(
-    residualValue,
-    Math.round(
-      asset.purchasePrice *
-        Math.max(0, 1 - nextMonth / asset.lifespanMonths) *
-        Math.exp(-heatLambda * nextMonth),
-    ),
-  );
-  return {
-    ...asset,
-    elapsedMonths: Number(elapsedMonths.toFixed(2)),
-    currentValue,
-    residualValue,
-    valueLost,
-    lossPercent: Number(
-      ((valueLost / Math.max(1, asset.purchasePrice)) * 100).toFixed(1),
-    ),
-    dailyDepreciation: reachedFloor
-      ? 0
-      : Math.max(0, currentValue - nextValue),
-    heatLambda,
-  };
+  return evaluateTrackedAsset(asset, now);
 }
 
 export function getDbBinding() {
@@ -106,6 +59,66 @@ export async function ensureDb() {
     .prepare("SELECT value FROM app_meta WHERE key = 'schema_version'")
     .first<{ value: string }>();
   if (version?.value === SCHEMA_VERSION) return;
+  if (version?.value === "23") {
+    await binding.batch([
+      binding.prepare(
+        "ALTER TABLE app_users ADD COLUMN email TEXT COLLATE NOCASE",
+      ),
+      binding.prepare(
+        "ALTER TABLE app_users ADD COLUMN password_enabled INTEGER NOT NULL DEFAULT 1",
+      ),
+      binding.prepare(
+        "CREATE UNIQUE INDEX app_users_email_unique ON app_users(email) WHERE email IS NOT NULL",
+      ),
+      binding.prepare(
+        "CREATE TABLE app_identities(provider TEXT NOT NULL CHECK(provider IN ('wechat','alipay')),subject TEXT NOT NULL,user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,display_name TEXT,avatar_url TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(provider,subject),UNIQUE(provider,user_id))",
+      ),
+      binding.prepare(
+        "CREATE TABLE oauth_states(state_hash TEXT PRIMARY KEY,provider TEXT NOT NULL CHECK(provider IN ('wechat','alipay')),user_id TEXT,return_to TEXT NOT NULL DEFAULT '/',expires_at TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+      ),
+      binding.prepare(
+        "CREATE INDEX oauth_states_expiry_idx ON oauth_states(expires_at)",
+      ),
+      binding.prepare(
+        "UPDATE app_meta SET value='24' WHERE key='schema_version'",
+      ),
+    ]);
+    return ensureDb();
+  }
+  if (version?.value === "22") {
+    await binding.batch([
+      binding.prepare(
+        "CREATE TABLE app_users(id TEXT PRIMARY KEY,username TEXT NOT NULL COLLATE NOCASE UNIQUE,display_name TEXT NOT NULL,password_hash TEXT NOT NULL,password_salt TEXT NOT NULL,password_iterations INTEGER NOT NULL,disabled INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+      ),
+      binding.prepare(
+        "CREATE TABLE app_sessions(token_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,last_used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,expires_at TEXT NOT NULL)",
+      ),
+      binding.prepare(
+        "CREATE INDEX app_sessions_user_expiry_idx ON app_sessions(user_id,expires_at)",
+      ),
+      binding.prepare(
+        "UPDATE app_meta SET value='23' WHERE key='schema_version'",
+      ),
+    ]);
+    return ensureDb();
+  }
+  if (version?.value === "21") {
+    await binding.batch([
+      binding.prepare(
+        "ALTER TABLE digital_assets ADD COLUMN currency TEXT NOT NULL DEFAULT 'CNY'",
+      ),
+      binding.prepare(
+        "ALTER TABLE digital_assets ADD COLUMN valuation_mode TEXT NOT NULL DEFAULT '自动折旧'",
+      ),
+      binding.prepare(
+        "ALTER TABLE digital_assets ADD COLUMN manual_value INTEGER",
+      ),
+      binding.prepare(
+        "UPDATE app_meta SET value='22' WHERE key='schema_version'",
+      ),
+    ]);
+    return ensureDb();
+  }
   if (version?.value === "20") {
     const transactionColumns = await binding
       .prepare("PRAGMA table_info(transactions)")
@@ -123,7 +136,7 @@ export async function ensureDb() {
       binding.prepare("UPDATE app_meta SET value='21' WHERE key='schema_version'"),
     );
     await binding.batch(repairs);
-    return;
+    return ensureDb();
   }
   if (version?.value === "19") {
     await binding.batch([

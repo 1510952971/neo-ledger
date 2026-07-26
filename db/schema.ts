@@ -1,3 +1,14 @@
+// ⚠️ 本文件只是「类型化读取层」，不是数据库结构的真相源。
+//
+// 数据库结构唯一由 db/index.ts 的 ensureDb()（运行时 DDL + schema_version
+// 版本迁移）决定。本文件仅供 drizzle-orm 做类型安全的 SELECT
+//（data/export、accounts、page.tsx），因此：
+//   1. 改表结构时先改 ensureDb()，再同步这里的列定义；
+//   2. 这里缺少 ensureDb() 中的部分表（app_users、app_sessions、oauth_states、
+//      user_preferences、api_rate_limits、sync_tombstones、app_meta 等），
+//      它们只被原生 SQL 访问，属于有意为之；
+//   3. 项目不使用 drizzle-kit 迁移（drizzle/ 目录与 db:generate 已移除，
+//      历史上从未被应用过）。
 import { sql } from "drizzle-orm";
 import {
   integer,
@@ -49,9 +60,16 @@ export const digitalAssets = sqliteTable("digital_assets", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   ledgerId: integer("ledger_id").notNull().default(1),
   name: text("name").notNull(),
-  assetType: text("asset_type", {
-    enum: ["数码设备", "游戏账号", "潮流玩具"],
-  }).notNull(),
+  assetType: text("asset_type").notNull(),
+  currency: text("currency", { enum: ["CNY", "USD", "JPY", "EUR"] })
+    .notNull()
+    .default("CNY"),
+  valuationMode: text("valuation_mode", {
+    enum: ["自动折旧", "手动估值"],
+  })
+    .notNull()
+    .default("自动折旧"),
+  manualValue: integer("manual_value"),
   purchasePrice: integer("purchase_price").notNull(),
   purchaseDate: text("purchase_date").notNull(),
   lifespanMonths: integer("lifespan_months").notNull(),

@@ -34,7 +34,7 @@ function startApp() {
   appProcess = spawn(localBinary("vinext"), [
     mode,
     "--hostname",
-    "127.0.0.1",
+    "0.0.0.0",
   ], {
     cwd: root,
     env: childEnv,

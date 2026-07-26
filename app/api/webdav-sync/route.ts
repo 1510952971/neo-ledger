@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { accessErrorResponse, requestOwnerId } from "../../api-security";
 const isLocalRequest = (request: Request) => {
   const host = new URL(request.url).hostname;
   return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
@@ -29,6 +30,9 @@ const target = (
 };
 export async function POST(request: Request) {
   try {
+    // 该接口会代替调用方向外部 WebDAV 发请求；公开部署时必须先登录，
+    // 否则会成为任意人可用的中继。本地无账号模式仍与其他接口一致放行。
+    await requestOwnerId(request);
     const body = (await request.json()) as {
       action?: "upload" | "download";
       url?: string;
@@ -80,9 +84,6 @@ export async function POST(request: Request) {
       syncedAt: new Date().toISOString(),
     });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "WebDAV 同步失败" },
-      { status: 400 },
-    );
+    return accessErrorResponse(error, "WebDAV 同步失败");
   }
 }

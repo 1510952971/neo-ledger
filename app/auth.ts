@@ -1,0 +1,270 @@
+import { ensureDb, getDbBinding } from "../db";
+import {
+  parseCookieValue,
+  SESSION_COOKIE_NAME,
+  sessionCookie,
+} from "./auth-core.js";
+
+const PASSWORD_ITERATIONS = 240_000;
+const SESSION_SECONDS = 30 * 24 * 60 * 60;
+
+export type AuthUser = {
+  id: string;
+  ownerId: string;
+  username: string;
+  displayName: string;
+  email: string | null;
+  provider: "local" | "chatgpt";
+};
+
+const bytesToHex = (bytes: Uint8Array) =>
+  [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+
+const hexToBytes = (hex: string) =>
+  Uint8Array.from(
+    hex.match(/.{2}/g)?.map((value) => Number.parseInt(value, 16)) ?? [],
+  );
+
+const bytesToBase64Url = (bytes: Uint8Array) => {
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 8192)
+    binary += String.fromCharCode(...bytes.subarray(index, index + 8192));
+  return btoa(binary)
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/g, "");
+};
+
+export async function authTokenDigest(value: string) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return bytesToHex(new Uint8Array(digest));
+}
+
+async function derivePassword(
+  password: string,
+  salt: Uint8Array,
+  iterations = PASSWORD_ITERATIONS,
+) {
+  const material = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", hash: "SHA-256", salt, iterations },
+    material,
+    256,
+  );
+  return bytesToHex(new Uint8Array(bits));
+}
+
+function constantTimeEqual(left: string, right: string) {
+  const length = Math.max(left.length, right.length);
+  let difference = left.length ^ right.length;
+  for (let index = 0; index < length; index += 1)
+    difference |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);
+  return difference === 0;
+}
+
+export async function passwordRecord(password: string) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  return {
+    hash: await derivePassword(password, salt),
+    salt: bytesToHex(salt),
+    iterations: PASSWORD_ITERATIONS,
+  };
+}
+
+export async function verifyPassword(
+  password: string,
+  hash: string,
+  salt: string,
+  iterations: number,
+) {
+  const actual = await derivePassword(password, hexToBytes(salt), iterations);
+  return constantTimeEqual(actual, hash);
+}
+
+export async function hasLocalUsers() {
+  await ensureDb();
+  const row = await getDbBinding()
+    .prepare("SELECT COUNT(*) count FROM app_users WHERE disabled=0")
+    .first<{ count: number }>();
+  return Number(row?.count ?? 0) > 0;
+}
+
+export async function sessionUser(token: string): Promise<AuthUser | null> {
+  if (!/^nls_[A-Za-z0-9_-]{32,}$/.test(token)) return null;
+  await ensureDb();
+  const tokenHash = await authTokenDigest(token);
+  const db = getDbBinding();
+  const row = await db
+    .prepare(
+      `SELECT u.id,u.username,u.display_name displayName,u.email
+       FROM app_sessions s JOIN app_users u ON u.id=s.user_id
+       WHERE s.token_hash=? AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND u.disabled=0`,
+    )
+    .bind(tokenHash)
+    .first<{
+      id: string;
+      username: string;
+      displayName: string;
+      email: string | null;
+    }>();
+  if (!row) return null;
+  await db
+    .prepare(
+      "UPDATE app_sessions SET last_used_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE token_hash=?",
+    )
+    .bind(tokenHash)
+    .run();
+  return {
+    id: row.id,
+    ownerId: `user:${row.id}`,
+    username: row.username,
+    displayName: row.displayName,
+    email: row.email,
+    provider: "local",
+  };
+}
+
+export async function sessionUserFromRequest(request: Request) {
+  const token = parseCookieValue(
+    request.headers.get("cookie"),
+    SESSION_COOKIE_NAME,
+  );
+  return token ? sessionUser(token) : null;
+}
+
+export async function createSession(userId: string, request: Request) {
+  await ensureDb();
+  const token = `nls_${bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)))}`;
+  const tokenHash = await authTokenDigest(token);
+  await getDbBinding()
+    .prepare(
+      `INSERT INTO app_sessions(token_hash,user_id,expires_at)
+       VALUES(?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now','+30 days'))`,
+    )
+    .bind(tokenHash, userId)
+    .run();
+  const secure =
+    new URL(request.url).protocol === "https:" ||
+    request.headers.get("x-forwarded-proto") === "https";
+  return {
+    token,
+    cookie: sessionCookie(token, { secure, maxAge: SESSION_SECONDS }),
+  };
+}
+
+export async function revokeRequestSession(request: Request) {
+  const token = parseCookieValue(
+    request.headers.get("cookie"),
+    SESSION_COOKIE_NAME,
+  );
+  if (token) {
+    await ensureDb();
+    await getDbBinding()
+      .prepare("DELETE FROM app_sessions WHERE token_hash=?")
+      .bind(await authTokenDigest(token))
+      .run();
+  }
+  const secure =
+    new URL(request.url).protocol === "https:" ||
+    request.headers.get("x-forwarded-proto") === "https";
+  return sessionCookie("", { secure, maxAge: 0 });
+}
+
+export function requireSameOrigin(request: Request) {
+  const origin = request.headers.get("origin");
+  if (origin && origin !== new URL(request.url).origin)
+    throw new Error("登录请求来源无效");
+  const fetchSite = request.headers.get("sec-fetch-site");
+  if (fetchSite && !["same-origin", "same-site", "none"].includes(fetchSite))
+    throw new Error("登录请求来源无效");
+}
+
+export async function enforceAuthRateLimit(request: Request, scope: string) {
+  await ensureDb();
+  const ip = String(
+    request.headers.get("cf-connecting-ip") ||
+      request.headers.get("x-forwarded-for")?.split(",")[0] ||
+      "local",
+  ).slice(0, 80);
+  const windowStart = Math.floor(Date.now() / 900_000);
+  const db = getDbBinding();
+  await db
+    .prepare(
+      `INSERT INTO api_rate_limits(owner_id,scope,window_start,count)
+       VALUES(?,?,?,1)
+       ON CONFLICT(owner_id,scope,window_start) DO UPDATE SET count=count+1`,
+    )
+    .bind(`auth:${ip}`, `auth:${scope}`, windowStart)
+    .run();
+  const row = await db
+    .prepare(
+      "SELECT count FROM api_rate_limits WHERE owner_id=? AND scope=? AND window_start=?",
+    )
+    .bind(`auth:${ip}`, `auth:${scope}`, windowStart)
+    .first<{ count: number }>();
+  if (Number(row?.count ?? 0) > (scope === "register" ? 5 : 12))
+    throw new Error("尝试次数过多，请稍后再试");
+}
+
+export async function adoptOrProvisionVault(
+  userId: string,
+  displayName: string,
+  adoptLocal: boolean,
+) {
+  const db = getDbBinding();
+  const ownerId = `user:${userId}`;
+  if (adoptLocal) {
+    await db.batch([
+      db
+        .prepare(
+          "UPDATE ledgers SET owner_id=? WHERE owner_id IS NULL OR owner_id='local'",
+        )
+        .bind(ownerId),
+      db
+        .prepare(
+          "UPDATE sync_tombstones SET owner_id=? WHERE owner_id IS NULL OR owner_id='local'",
+        )
+        .bind(ownerId),
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO user_preferences(owner_id,theme,lock_enabled,pin_hash,pin_salt,pin_iterations)
+           SELECT ?,theme,lock_enabled,pin_hash,pin_salt,pin_iterations FROM user_preferences WHERE owner_id='local'`,
+        )
+        .bind(ownerId),
+    ]);
+  }
+  const owned = await db
+    .prepare("SELECT id FROM ledgers WHERE owner_id=? ORDER BY id LIMIT 1")
+    .bind(ownerId)
+    .first<{ id: number }>();
+  if (owned) return owned.id;
+
+  const ledger = await db
+    .prepare(
+      "INSERT INTO ledgers(name,icon,owner_id,uuid,updated_at) VALUES(?,'🏠',?,lower(hex(randomblob(16))),strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+    )
+    .bind(`${displayName}的账本`.slice(0, 30), ownerId)
+    .run();
+  const ledgerId = Number(ledger.meta.last_row_id);
+  await db.batch([
+    db.prepare("INSERT INTO budget_settings(id,amount) VALUES(?,500000)").bind(ledgerId),
+    db.prepare("INSERT INTO category_budgets(ledger_id,category,amount) VALUES(?,'餐饮',0),(?,'交通',0),(?,'购物',0),(?,'咖啡',30000),(?,'娱乐',50000)").bind(ledgerId, ledgerId, ledgerId, ledgerId, ledgerId),
+    db.prepare("INSERT INTO expense_categories(ledger_id,name,icon,color,builtin_key,is_system,sort_order) VALUES(?,'餐饮','🍔','#e98565','餐饮',1,10),(?,'交通','🚇','#84a28d','交通',1,20),(?,'购物','🛍️','#c98fa7','购物',1,30),(?,'咖啡','☕','#ae8566','咖啡',1,40),(?,'娱乐','🎮','#858cbd','娱乐',1,50)").bind(ledgerId, ledgerId, ledgerId, ledgerId, ledgerId),
+    db.prepare("INSERT INTO income_categories(ledger_id,name,icon,color,builtin_key,is_system,sort_order) VALUES(?,'薪资发放','💼','#4f9b78','薪资发放',1,10),(?,'理财收益','📈','#78b899','理财收益',1,20),(?,'兼职外快','🧧','#d19a5d','兼职外快',1,30),(?,'其它收入','🎁','#8f91b8','其它收入',1,40)").bind(ledgerId, ledgerId, ledgerId, ledgerId),
+    db.prepare("INSERT INTO members(ledger_id,name,icon,is_me) VALUES(?,'我','🧑',1)").bind(ledgerId),
+    db.prepare("INSERT INTO fire_settings(ledger_id) VALUES(?)").bind(ledgerId),
+    db.prepare("INSERT INTO economic_settings(ledger_id) VALUES(?)").bind(ledgerId),
+    db.prepare("INSERT INTO accounts(ledger_id,name,type,current_balance,icon,initial_balance,currency,asset_class,uuid,updated_at) VALUES(?,'现金账户','资产',0,'💰',0,'CNY','现金流',lower(hex(randomblob(16))),strftime('%Y-%m-%dT%H:%M:%fZ','now'))").bind(ledgerId),
+    db.prepare("INSERT OR IGNORE INTO user_preferences(owner_id) VALUES(?)").bind(ownerId),
+  ]);
+  return ledgerId;
+}

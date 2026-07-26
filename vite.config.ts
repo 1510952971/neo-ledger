@@ -18,6 +18,12 @@ const localBindingConfig = {
     NEO_UPDATER_TOKEN: process.env.NEO_UPDATER_TOKEN ?? "",
     NEO_GITHUB_REPOSITORY:
       process.env.NEO_GITHUB_REPOSITORY ?? "1510952971/neo-ledger",
+    AUTH_PUBLIC_ORIGIN: process.env.AUTH_PUBLIC_ORIGIN ?? "",
+    WECHAT_APP_ID: process.env.WECHAT_APP_ID ?? "",
+    WECHAT_APP_SECRET: process.env.WECHAT_APP_SECRET ?? "",
+    ALIPAY_APP_ID: process.env.ALIPAY_APP_ID ?? "",
+    ALIPAY_PRIVATE_KEY: process.env.ALIPAY_PRIVATE_KEY ?? "",
+    ALIPAY_PUBLIC_KEY: process.env.ALIPAY_PUBLIC_KEY ?? "",
   },
   d1_databases: d1
     ? [
@@ -50,12 +56,12 @@ export default defineConfig(async () => {
 
   return {
     server: {
-      host: "127.0.0.1",
+      host: "0.0.0.0",
       ...(isCodexSeatbeltSandbox
         ? { watch: { useFsEvents: false, usePolling: true } }
         : {}),
     },
-    preview: { host: "127.0.0.1" },
+    preview: { host: "0.0.0.0" },
     plugins: [
       vinext(),
       sites(),

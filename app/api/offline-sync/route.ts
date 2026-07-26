@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { ensureDb, evaluateAchievements, getDbBinding } from "../../../db";
 import { accessErrorResponse, claimAndRequireLedger } from "../../api-security";
 import { localDateTimeToUtc } from "../../time-money.js";
+import {
+  isSplitMode,
+  transactionAccountDelta,
+} from "../../split-core.js";
 const moods = ["悦己", "刚需", "冲动"];
 export async function POST(request: Request) {
   try {
@@ -60,9 +64,21 @@ export async function POST(request: Request) {
       const splitMode = type === "支出" ? String(item.splitMode || "") : "";
       const splitWithMemberId = Number(item.splitWithMemberId || 0) || null;
       const mySharePercent = Math.max(0, Math.min(100, Number(item.mySharePercent || 100)));
-      const me = splitWithMemberId
+      const partner = splitWithMemberId
+        ? await db
+            .prepare(
+              "SELECT id FROM members WHERE id=? AND ledger_id=? AND is_me=0",
+            )
+            .bind(splitWithMemberId, ledgerId)
+            .first<{ id: number }>()
+        : null;
+      if (splitWithMemberId && (!partner || !isSplitMode(splitMode)))
+        throw new Error("离线账单的分账搭子不存在或分账方式无效");
+      const shared = type === "支出" && Boolean(partner);
+      const me = shared
         ? await db.prepare("SELECT id FROM members WHERE ledger_id=? AND is_me=1").bind(ledgerId).first<{ id: number }>()
         : null;
+      if (shared && !me) throw new Error("当前账本缺少“我”的分账身份");
       const results = await db.batch([
         db
           .prepare(
@@ -79,14 +95,14 @@ export async function POST(request: Request) {
             type === "收入" ? configuredIncomeCategory?.builtinKey : null,
             type === "收入" ? configuredIncomeCategory?.name : null,
             account.id,
-            splitWithMemberId
+            shared
               ? splitMode === "全额由对方支付"
-                ? splitWithMemberId
+                ? partner?.id
                 : me?.id ?? null
               : null,
-            splitWithMemberId,
-            splitWithMemberId ? splitMode : null,
-            splitWithMemberId ? mySharePercent : 100,
+            shared ? partner?.id : null,
+            shared ? splitMode : null,
+            shared ? mySharePercent : 100,
             account.currency,
             amount,
             account.currency,
@@ -99,7 +115,15 @@ export async function POST(request: Request) {
           .prepare(
             "UPDATE accounts SET current_balance=current_balance+? WHERE id=?",
           )
-          .bind(type === "支出" ? -amount : amount, account.id),
+          .bind(
+            transactionAccountDelta(
+              type,
+              amount,
+              shared ? splitMode : null,
+              shared ? (partner?.id ?? 0) : 0,
+            ),
+            account.id,
+          ),
       ]);
       if (type === "收入" && item.isSideHustle && item.isBusinessExpense) {
         const transactionId = Number(results[0].meta.last_row_id);

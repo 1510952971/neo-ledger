@@ -1,7 +1,9 @@
 import { desc, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
+import { cookies } from "next/headers";
 import { LedgerApp } from "./ledger-app";
+import { AuthGate } from "./auth-panel.tsx";
 import {
   ensureDb,
   evaluateDigitalAsset,
@@ -31,20 +33,69 @@ import {
 } from "../db/schema";
 import { getChatGPTUser, requireChatGPTUser } from "./chatgpt-auth";
 import { getOwnerPreferences } from "./api-security";
+import { hasLocalUsers, sessionUser } from "./auth";
+import { SESSION_COOKIE_NAME } from "./auth-core.js";
 import { localDateTimeToUtc } from "./time-money.js";
+import {
+  isSplitMode,
+  transactionAccountDelta,
+} from "./split-core.js";
 
 export const dynamic = "force-dynamic";
 
 const moods = ["悦己", "刚需", "冲动"] as const;
 const categories = ["餐饮", "交通", "购物", "咖啡", "娱乐"] as const;
-async function currentOwnerId() {
+async function currentIdentity() {
   const requestHeaders = await headers();
   const user = await getChatGPTUser();
-  if (user) return `email:${user.email.toLowerCase()}`;
+  if (user)
+    return {
+      ownerId: `email:${user.email.toLowerCase()}`,
+      user: {
+        username: user.email,
+        displayName: user.displayName,
+        email: user.email,
+        provider: "chatgpt" as const,
+      },
+      hasUsers: true,
+    };
+  const token = (await cookies()).get(SESSION_COOKIE_NAME)?.value ?? "";
+  const session = token ? await sessionUser(token) : null;
+  if (session)
+    return {
+      ownerId: session.ownerId,
+      user: {
+        username: session.username,
+        displayName: session.displayName,
+        email: session.email,
+        provider: session.provider,
+      },
+      hasUsers: true,
+    };
   const hostname = (requestHeaders.get("host") ?? "localhost").split(":")[0];
-  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]")
-    return "local";
-  return `email:${(await requireChatGPTUser("/")).email.toLowerCase()}`;
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]") {
+    const hasUsers = await hasLocalUsers();
+    return hasUsers
+      ? null
+      : { ownerId: "local", user: null, hasUsers: false };
+  }
+  const required = await requireChatGPTUser("/");
+  return {
+    ownerId: `email:${required.email.toLowerCase()}`,
+    user: {
+      username: required.email,
+      displayName: required.displayName,
+      email: required.email,
+      provider: "chatgpt" as const,
+    },
+    hasUsers: true,
+  };
+}
+
+async function currentOwnerId() {
+  const identity = await currentIdentity();
+  if (!identity) throw new Error("请先登录我的财富仓");
+  return identity.ownerId;
 }
 
 async function requireOwnedLedger(ledgerId: number) {
@@ -119,17 +170,37 @@ async function addTransaction(formData: FormData) {
     .bind(accountId, ledgerId)
     .first<{ id: number; isInvestment: number; currency: string }>();
   if (!account) throw new Error("扣款账户不存在");
-  const normalizedTime = localDateTimeToUtc(occurredAt || new Date().toISOString(), originalTimezone);
-  const balanceDelta = type === "支出" ? -amount : amount;
+  const normalizedTime = localDateTimeToUtc(
+    occurredAt || new Date().toISOString(),
+    originalTimezone,
+  );
 
   const me = await binding
     .prepare("SELECT id FROM members WHERE ledger_id=? AND is_me=1")
     .bind(ledgerId)
     .first<{ id: number }>();
+  const partner =
+    type === "支出" && splitWithMemberId > 0
+      ? await binding
+          .prepare(
+            "SELECT id FROM members WHERE id=? AND ledger_id=? AND is_me=0",
+          )
+          .bind(splitWithMemberId, ledgerId)
+          .first<{ id: number }>()
+      : null;
+  if (splitWithMemberId > 0 && (!partner || !isSplitMode(splitMode)))
+    throw new Error("分账搭子不存在或分账方式无效");
   const shared =
     type === "支出" &&
-    splitWithMemberId > 0 &&
-    ["全额由我支付", "全额由对方支付", "按比例平摊"].includes(splitMode);
+    Boolean(partner) &&
+    isSplitMode(splitMode);
+  if (shared && !me) throw new Error("当前账本缺少“我”的分账身份");
+  const balanceDelta = transactionAccountDelta(
+    type,
+    amount,
+    shared ? splitMode : null,
+    shared ? splitWithMemberId : 0,
+  );
   const results = await binding.batch([
     binding
       .prepare(
@@ -200,7 +271,7 @@ async function deleteTransaction(id: number) {
     const binding = getDbBinding();
     const item = await binding
       .prepare(
-        "SELECT amount, type, income_category AS incomeCategory, account_id AS accountId,installment_id AS installmentId,crdt_id AS crdtId,ledger_id AS ledgerId FROM transactions WHERE id = ?",
+        "SELECT amount,type,income_category AS incomeCategory,account_id AS accountId,installment_id AS installmentId,crdt_id AS crdtId,ledger_id AS ledgerId,split_mode AS splitMode,split_with_member_id AS splitWithMemberId FROM transactions WHERE id = ?",
       )
       .bind(id)
       .first<{
@@ -211,6 +282,8 @@ async function deleteTransaction(id: number) {
         installmentId: number | null;
         crdtId: string | null;
         ledgerId: number;
+        splitMode: string | null;
+        splitWithMemberId: number | null;
       }>();
     if (!item)
       return { ok: false, error: "这笔流水已经不存在，页面可能尚未刷新。" };
@@ -221,7 +294,12 @@ async function deleteTransaction(id: number) {
         error:
           "这是分期摊销引擎自动生成的还款流水，不能单独删除。请前往「负债摊销沙盘」管理对应分期项目。",
       };
-    const reverseDelta = item.type === "支出" ? item.amount : -item.amount;
+    const reverseDelta = -transactionAccountDelta(
+      item.type,
+      item.amount,
+      item.splitMode,
+      item.splitWithMemberId ?? 0,
+    );
     await binding.batch([
       binding
         .prepare(
@@ -362,7 +440,9 @@ export default async function Home({
   searchParams: Promise<{ ledger?: string }>;
 }) {
   await ensureDb();
-  const ownerId = await currentOwnerId();
+  const identity = await currentIdentity();
+  if (!identity) return <AuthGate hasUsers />;
+  const ownerId = identity.ownerId;
   await getDbBinding()
     .prepare("UPDATE ledgers SET owner_id=? WHERE owner_id IS NULL")
     .bind(ownerId)
@@ -503,6 +583,8 @@ export default async function Home({
       incomeCategories={incomeCategoryRows}
       initialTheme={(preferenceRows?.theme as "cream" | "obsidian" | "glacier" | "peach") ?? "cream"}
       lockEnabled={Boolean(preferenceRows?.lockEnabled)}
+      authUser={identity.user}
+      authHasUsers={identity.hasUsers}
       addTransaction={addTransaction}
       deleteTransaction={deleteTransaction}
       updateBudget={updateBudget}

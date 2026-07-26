@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { ensureDb, getDb, getDbBinding } from "../../../../db";
-import { requestOwnerId } from "../../../api-security";
+import { accessErrorResponse, requestOwnerId } from "../../../api-security";
 import {
   accounts,
   budgetSettings,
@@ -29,7 +29,12 @@ const quote = (value: unknown) => {
 };
 export async function GET(request: Request) {
   await ensureDb();
-  const ownerId = requestOwnerId(request);
+  let ownerId: string;
+  try {
+    ownerId = await requestOwnerId(request);
+  } catch (error) {
+    return accessErrorResponse(error, "导出失败");
+  }
   const binding = getDbBinding();
   await binding.prepare("UPDATE ledgers SET owner_id=? WHERE owner_id IS NULL").bind(ownerId).run();
   const db = getDb();
@@ -68,10 +73,26 @@ export async function GET(request: Request) {
   const accountSync = new Map(ownedAccounts.map((row) => [row.id, row.uuid]));
   const memberSync = new Map(keep(m).map((row) => [row.id, `${installationId}:members:${row.id}`]));
   const transactionSync = new Map(ownedTransactions.map((row) => [row.id, row.crdtId ?? `${installationId}:transactions:${row.id}`]));
+  const naturalSyncId = (table: string, row: Record<string, unknown>) => {
+    const ledgerId = Number(row.ledgerId ?? row.id);
+    const ledgerIdForSync = ledgerSync.get(ledgerId);
+    if (!ledgerIdForSync) return null;
+    if (table === "budgetSettings" || table === "fireSettings" || table === "economicSettings")
+      return `${ledgerIdForSync}:${table}`;
+    if (table === "categoryBudgets")
+      return `${ledgerIdForSync}:${table}:${String(row.category ?? "")}`;
+    if (table === "expenseCategories" || table === "incomeCategories")
+      return `${ledgerIdForSync}:${table}:${String(row.builtinKey ?? row.name ?? "")}`;
+    if (table === "members")
+      return `${ledgerIdForSync}:${table}:${row.isMe ? "self" : String(row.name ?? row.id ?? "")}`;
+    if (table === "achievements")
+      return `${ledgerIdForSync}:${table}:${String(row.code ?? "")}`;
+    return null;
+  };
   const enrich = (table: string, rows: Record<string, unknown>[]) =>
     rows.map((row) => ({
       ...row,
-      syncId: row.uuid ?? row.crdtId ?? `${installationId}:${table}:${row.id ?? `${row.ledgerId ?? ""}:${row.code ?? row.category ?? row.name ?? "row"}`}`,
+      syncId: row.uuid ?? row.crdtId ?? naturalSyncId(table, row) ?? `${installationId}:${table}:${row.id ?? `${row.ledgerId ?? ""}:${row.code ?? row.category ?? row.name ?? "row"}`}`,
       updatedAt: row.updatedAt ?? row.createdAt ?? new Date(0).toISOString(),
       ledgerSyncId: ledgerSync.get(Number(row.ledgerId)),
       accountSyncId: accountSync.get(Number(row.accountId)),
@@ -132,7 +153,7 @@ export async function GET(request: Request) {
   }
   return NextResponse.json(
     {
-      version: 21,
+      version: 22,
       installationId,
       exportedAt: new Date().toISOString(),
       ledgers: enrich("ledgers", ownedLedgers),
@@ -168,7 +189,7 @@ export async function GET(request: Request) {
     },
     {
       headers: {
-        "Content-Disposition": `attachment; filename="neo-ledger-backup-v21.json"`,
+        "Content-Disposition": `attachment; filename="neo-ledger-backup-v22.json"`,
       },
     },
   );
