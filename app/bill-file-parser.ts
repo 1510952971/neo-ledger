@@ -591,8 +591,9 @@ export async function parseStatementFiles(
   files: File[],
   onProgress?: StatementParseProgress,
 ) {
-  let ocrPromise: Promise<OcrSession> | null = null;
-  const getOcr = () => (ocrPromise ??= createOcrSession(onProgress));
+  const ocrState: { session: OcrSession | null } = { session: null };
+  const getOcr = async () =>
+    (ocrState.session ??= await createOcrSession(onProgress));
   const statements: { fileName: string; statement: ParsedStatement }[] = [];
   const failures: { fileName: string; error: string }[] = [];
   try {
@@ -612,9 +613,9 @@ export async function parseStatementFiles(
       }
     }
   } finally {
-    if (ocrPromise) {
+    if (ocrState.session) {
       try {
-        await (await ocrPromise).terminate();
+        await ocrState.session.terminate();
       } catch {
         // Individual file errors above already explain an OCR startup failure.
       }

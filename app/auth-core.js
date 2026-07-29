@@ -30,8 +30,14 @@ export function validateRegistrationInput(input) {
   const displayName = String(input?.displayName ?? "").trim().slice(0, 30);
   const password = String(input?.password ?? "");
   const email = validateEmail(input?.email, { optional: true });
-  if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(username))
-    throw new Error("账号需为 3—32 位字母、数字、点、横线或下划线");
+  const usernameIsEmail = username.includes("@");
+  if (usernameIsEmail) {
+    const accountEmail = validateEmail(username);
+    if (!email || email !== accountEmail)
+      throw new Error("邮箱账号需与验证邮箱一致");
+  } else if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(username)) {
+    throw new Error("账号需为邮箱，或 3—32 位字母、数字、点、横线或下划线");
+  }
   if (!displayName) throw new Error("请输入显示名称");
   if (password.length < 8 || password.length > 72)
     throw new Error("密码需为 8—72 位");

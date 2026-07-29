@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import Image from "next/image";
+import { useEffect, useRef, useState } from "react";
 
 export type ClientAuthUser = {
   username: string;
   displayName: string;
   email?: string | null;
+  avatarUrl?: string | null;
   provider: "local" | "chatgpt";
 };
 
@@ -19,9 +21,11 @@ type AuthStatus = {
 export function AuthPanel({
   user,
   hasUsers,
+  onUserChange,
 }: {
   user?: ClientAuthUser | null;
   hasUsers: boolean;
+  onUserChange?: (user: ClientAuthUser) => void;
 }) {
   const [mode, setMode] = useState<"login" | "register">(
     hasUsers ? "login" : "register",
@@ -34,6 +38,10 @@ export function AuthPanel({
   const [codeSending, setCodeSending] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [registerEmail, setRegisterEmail] = useState("");
+  const [avatarPending, setAvatarPending] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const deleteFormRef = useRef<HTMLFormElement>(null);
+  const avatarUrl = user?.avatarUrl ?? null;
   const [status, setStatus] = useState<AuthStatus>({
     providers: { wechat: false, alipay: false },
     linkedProviders: [],
@@ -73,6 +81,19 @@ export function AuthPanel({
     return () => window.clearInterval(timer);
   }, [codeCooldown]);
 
+  useEffect(() => {
+    if (!deleteOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      const form = deleteFormRef.current;
+      const scroller = form?.closest<HTMLElement>(".auth-panel");
+      scroller?.scrollTo({
+        top: Math.max(0, (form?.offsetTop ?? 0) - 20),
+        behavior: "smooth",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [deleteOpen]);
+
   // 三个场景共用一套发码逻辑：注册验证、绑定邮箱、找回密码。
   async function requestCode(purpose: "register" | "bind" | "reset", email: string) {
     if (!email) {
@@ -90,15 +111,10 @@ export function AuthPanel({
       });
       const result = (await response.json()) as {
         error?: string;
-        fallback?: boolean;
       };
       if (!response.ok) throw new Error(result.error || "验证码发送失败");
       setCodeCooldown(60);
-      setNotice(
-        result.fallback
-          ? "邮件服务尚未配置，验证码已打印在运行程序的终端窗口里"
-          : "验证码已发送，10 分钟内有效，记得看看垃圾邮件箱",
-      );
+      setNotice("验证码已发送，10 分钟内有效，记得看看垃圾邮件箱");
     } catch (codeError) {
       setError(codeError instanceof Error ? codeError.message : "验证码发送失败");
     } finally {
@@ -257,6 +273,82 @@ export function AuthPanel({
     }
   }
 
+  async function avatarFromFile(file: File) {
+    if (!/^image\/(?:jpeg|png|webp)$/.test(file.type))
+      throw new Error("请选择 JPG、PNG 或 WebP 图片");
+    if (file.size > 8 * 1024 * 1024)
+      throw new Error("原图不能超过 8 MB");
+    const image = await createImageBitmap(file);
+    try {
+      const sourceSize = Math.min(image.width, image.height);
+      const sourceX = Math.max(0, (image.width - sourceSize) / 2);
+      const sourceY = Math.max(0, (image.height - sourceSize) / 2);
+      const canvas = document.createElement("canvas");
+      canvas.width = 256;
+      canvas.height = 256;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("浏览器无法处理这张图片");
+      context.drawImage(
+        image,
+        sourceX,
+        sourceY,
+        sourceSize,
+        sourceSize,
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+      );
+      return canvas.toDataURL("image/webp", 0.82);
+    } finally {
+      image.close();
+    }
+  }
+
+  async function updateAvatar(nextAvatarUrl: string | null) {
+    if (!user) return;
+    setAvatarPending(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/auth", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ avatarUrl: nextAvatarUrl }),
+      });
+      const result = (await response.json()) as {
+        error?: string;
+        avatarUrl?: string | null;
+      };
+      if (!response.ok) throw new Error(result.error || "头像更新失败");
+      const savedAvatarUrl = result.avatarUrl ?? null;
+      onUserChange?.({ ...user, avatarUrl: savedAvatarUrl });
+      setNotice(savedAvatarUrl ? "头像已更新" : "已恢复默认头像");
+    } catch (avatarError) {
+      setError(
+        avatarError instanceof Error ? avatarError.message : "头像更新失败",
+      );
+    } finally {
+      setAvatarPending(false);
+    }
+  }
+
+  async function selectAvatar(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setAvatarPending(true);
+    setError("");
+    try {
+      await updateAvatar(await avatarFromFile(file));
+    } catch (avatarError) {
+      setError(
+        avatarError instanceof Error ? avatarError.message : "头像处理失败",
+      );
+      setAvatarPending(false);
+    }
+  }
+
   const oauthButtons = (linking: boolean) => (
     <div className="auth-oauth-grid" aria-label="第三方账号">
       {(["wechat", "alipay"] as const).map((provider) => {
@@ -308,15 +400,73 @@ export function AuthPanel({
     }
   }
 
+  async function deleteAccount(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setPending(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/auth?action=delete-account", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentPassword: form.get("currentPassword"),
+          confirmation: form.get("confirmation"),
+        }),
+      });
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(result.error || "注销账号失败");
+      window.location.href = "/";
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "注销账号失败");
+      setPending(false);
+    }
+  }
+
   if (user)
     return (
       <section className="auth-panel auth-account-panel">
-        <div className="auth-avatar" aria-hidden="true">
-          {user.displayName.slice(0, 1).toUpperCase()}
+        <div className="auth-avatar-editor">
+          <div className="auth-avatar" aria-hidden="true">
+            {avatarUrl ? (
+              <Image
+                src={avatarUrl}
+                alt=""
+                width={68}
+                height={68}
+                unoptimized
+              />
+            ) : (
+              user.displayName.slice(0, 1).toUpperCase()
+            )}
+          </div>
+          {user.provider === "local" && (
+            <div className="auth-avatar-actions">
+              <label className="auth-avatar-upload">
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={selectAvatar}
+                  disabled={avatarPending}
+                />
+                <span>{avatarPending ? "处理中…" : "更换头像"}</span>
+              </label>
+              {avatarUrl && (
+                <button
+                  type="button"
+                  onClick={() => void updateAvatar(null)}
+                  disabled={avatarPending}
+                >
+                  恢复默认
+                </button>
+              )}
+            </div>
+          )}
         </div>
-        <p className="eyebrow">MY WEALTH VAULT</p>
+        <p className="eyebrow">ACCOUNT PROFILE</p>
         <h2>{user.displayName}</h2>
-        <p className="auth-username">@{user.username}</p>
+        <p className="auth-username">{user.username}</p>
         {user.provider === "local" && (
           <>
             <form className="auth-email-form" id="bind-email-form" onSubmit={bindEmail}>
@@ -391,13 +541,56 @@ export function AuthPanel({
         >
           退出登录
         </button>
+        {user.provider === "local" && (
+          <>
+            <button
+              type="button"
+              className="auth-delete-toggle"
+              onClick={() => {
+                setDeleteOpen((open) => !open);
+                setError("");
+              }}
+              disabled={pending}
+            >
+              {deleteOpen ? "收起注销设置" : "注销账号"}
+            </button>
+            {deleteOpen && (
+              <form
+                ref={deleteFormRef}
+                className="auth-delete-form"
+                onSubmit={deleteAccount}
+              >
+                <strong>确认注销账号</strong>
+                <p>账号和邮箱将被释放，当前设备会立即退出。</p>
+                <label>
+                  <span>当前密码</span>
+                  <input
+                    name="currentPassword"
+                    type="password"
+                    autoComplete="current-password"
+                    minLength={8}
+                    maxLength={72}
+                    required
+                  />
+                </label>
+                <label>
+                  <span>输入“删除账号”确认</span>
+                  <input name="confirmation" required autoComplete="off" />
+                </label>
+                <button disabled={pending}>
+                  {pending ? "处理中…" : "确认注销"}
+                </button>
+              </form>
+            )}
+          </>
+        )}
       </section>
     );
 
   return (
     <section className="auth-panel">
-      <p className="eyebrow">MY WEALTH VAULT</p>
-      <h1>我的财富仓</h1>
+      <p className="eyebrow">ACCOUNT ACCESS</p>
+      <h1>账户号</h1>
       <div className="auth-mode" role="tablist" aria-label="账号操作">
         <button
           type="button"
@@ -443,10 +636,14 @@ export function AuthPanel({
             name="username"
             autoComplete="username"
             minLength={3}
-            maxLength={mode === "register" ? 32 : 254}
-            pattern={mode === "register" ? "[A-Za-z0-9][A-Za-z0-9._-]{2,31}" : undefined}
+            maxLength={254}
             required
-            placeholder={mode === "register" ? "字母或数字账号" : "账号 / name@example.com"}
+            placeholder={mode === "register" ? "用户名或 name@example.com" : "账号 / name@example.com"}
+            onBlur={(event) => {
+              const value = event.currentTarget.value.trim();
+              if (mode === "register" && value.includes("@") && !registerEmail)
+                setRegisterEmail(value);
+            }}
           />
         </label>
         {mode === "register" && (
@@ -459,6 +656,7 @@ export function AuthPanel({
                 autoComplete="email"
                 maxLength={254}
                 placeholder="name@example.com"
+                value={registerEmail}
                 onChange={(event) => setRegisterEmail(event.target.value.trim())}
               />
             </label>
@@ -493,7 +691,7 @@ export function AuthPanel({
         )}
         {error && <p className="auth-error">{error}</p>}
         <button className="auth-submit" disabled={pending}>
-          {pending ? "处理中…" : mode === "register" ? "创建财富仓" : "进入财富仓"}
+          {pending ? "处理中…" : mode === "register" ? "创建账号" : "登录"}
         </button>
         {mode === "login" && (
           <button
@@ -557,8 +755,9 @@ export function AuthPanel({
             </button>
           </div>
           {mailerReady === false && (
-            <p className="auth-reset-hint">
-              邮件服务尚未配置，验证码会打印在运行程序的终端窗口里。
+            <p className="auth-reset-hint auth-reset-unavailable">
+              当前未配置邮件发送服务，暂时不能通过邮箱重置密码。请配置
+              RESEND_API_KEY 和 MAIL_FROM 后重启应用。
             </p>
           )}
         </form>

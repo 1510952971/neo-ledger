@@ -20,6 +20,8 @@ test("restores WebDAV and P2P settings after hydration", () => {
     "neo-webdav-config": JSON.stringify({
       url: "https://dav.example.test/ledger",
       username: "peng",
+      autoSync: true,
+      intervalMinutes: 15,
     }),
     "neo-p2p-node": "node-existing",
   });
@@ -33,6 +35,8 @@ test("restores WebDAV and P2P settings after hydration", () => {
     webdavConfig: {
       url: "https://dav.example.test/ledger",
       username: "peng",
+      autoSync: true,
+      intervalMinutes: 15,
     },
     p2pNode: "node-existing",
   });
@@ -63,6 +67,11 @@ test("keeps a temporary P2P identity when storage is blocked", () => {
     online: true,
     createNodeId: () => "abcdefgh-rest-of-id",
   });
-  assert.deepEqual(result.webdavConfig, { url: "", username: "" });
+  assert.deepEqual(result.webdavConfig, {
+    url: "",
+    username: "",
+    autoSync: false,
+    intervalMinutes: 5,
+  });
   assert.equal(result.p2pNode, "node-abcdefgh");
 });

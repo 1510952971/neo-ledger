@@ -14,17 +14,31 @@ export async function GET(request: Request) {
     await ensureDb();
     await ensureIntegrationTokenTable();
     const ownerId = await requestOwnerId(request);
-    const row = await getDbBinding()
-      .prepare(
-        "SELECT token_prefix tokenPrefix,created_at createdAt,last_used_at lastUsedAt FROM integration_tokens WHERE owner_id=?",
-      )
-      .bind(ownerId)
-      .first<{
-        tokenPrefix: string;
-        createdAt: string;
-        lastUsedAt: string | null;
-      }>();
-    return NextResponse.json({ active: Boolean(row), ...row });
+    const db = getDbBinding();
+    const [row, stats] = await Promise.all([
+      db
+        .prepare(
+          "SELECT token_prefix tokenPrefix,created_at createdAt,last_used_at lastUsedAt FROM integration_tokens WHERE owner_id=?",
+        )
+        .bind(ownerId)
+        .first<{
+          tokenPrefix: string;
+          createdAt: string;
+          lastUsedAt: string | null;
+        }>(),
+      db
+        .prepare(
+          "SELECT COUNT(*) processedCount,MAX(created_at) lastEventAt FROM integration_events WHERE owner_id=?",
+        )
+        .bind(ownerId)
+        .first<{ processedCount: number; lastEventAt: string | null }>(),
+    ]);
+    return NextResponse.json({
+      active: Boolean(row),
+      ...row,
+      processedCount: Number(stats?.processedCount ?? 0),
+      lastEventAt: stats?.lastEventAt ?? null,
+    });
   } catch (error) {
     return accessErrorResponse(error, "读取自动记账密钥失败");
   }

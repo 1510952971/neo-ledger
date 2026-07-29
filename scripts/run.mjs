@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
+import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { sqliteRestoreArgs } from "./sqlite-commands.mjs";
@@ -8,13 +9,24 @@ import { sqliteRestoreArgs } from "./sqlite-commands.mjs";
 const exec = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "..");
 const mode = process.argv[2] === "start" ? "start" : "dev";
+const appPort = Number(process.env.PORT || "3000");
+const defaultHealthUrl = "http://127.0.0.1:3000/api/app-update/health";
 const statePath = path.join(root, ".neo-update-state.json");
 const token = process.env.NEO_UPDATER_TOKEN || randomBytes(32).toString("hex");
+function detectLanOrigin() {
+  const port = process.env.PORT || "3000";
+  for (const entries of Object.values(networkInterfaces()))
+    for (const entry of entries || [])
+      if (entry.family === "IPv4" && !entry.internal && /^(10|172\.(1[6-9]|2\d|3[0-1])|192\.168)\./.test(entry.address))
+        return `http://${entry.address}:${port}`;
+  return "";
+}
 const childEnv = {
   ...process.env,
   NEO_UPDATER_TOKEN: token,
   NEO_GITHUB_REPOSITORY:
     process.env.NEO_GITHUB_REPOSITORY || "1510952971/neo-ledger",
+  LAN_ORIGIN: process.env.LAN_ORIGIN || detectLanOrigin(),
 };
 let appProcess = null;
 let updaterProcess = null;
@@ -35,6 +47,8 @@ function startApp() {
     mode,
     "--hostname",
     "0.0.0.0",
+    "--port",
+    String(appPort),
   ], {
     cwd: root,
     env: childEnv,
@@ -85,11 +99,16 @@ async function waitForVersion(version) {
   const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
     try {
-      const health = await fetch("http://127.0.0.1:3000/api/app-update/health", {
+      const health = await fetch(
+        appPort === 3000
+          ? defaultHealthUrl
+          : `http://127.0.0.1:${appPort}/api/app-update/health`,
+        {
         cache: "no-store",
-      });
+        },
+      );
       if (health.ok && (await health.json()).version === version) {
-        const database = await fetch("http://127.0.0.1:3000/api/ledgers", {
+        const database = await fetch(`http://127.0.0.1:${appPort}/api/ledgers`, {
           cache: "no-store",
         });
         if (database.ok) return true;

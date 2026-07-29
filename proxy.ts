@@ -13,6 +13,17 @@ function isLocalHost(hostname: string) {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
 }
 
+function isPrivateNetworkHost(hostname: string) {
+  const octets = hostname.split(".").map((value) => Number(value));
+  if (octets.length !== 4 || octets.some((value) => !Number.isInteger(value) || value < 0 || value > 255))
+    return false;
+  return (
+    octets[0] === 10 ||
+    (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+    (octets[0] === 192 && octets[1] === 168)
+  );
+}
+
 function limitFor(pathname: string, method: string) {
   if (pathname === "/api/data/restore") return 3;
   if (pathname === "/api/bill-import") return method === "POST" ? 10 : 5;
@@ -101,7 +112,9 @@ export async function proxy(request: NextRequest) {
     .get("oai-authenticated-user-email")
     ?.trim()
     .toLowerCase();
-  if (!externalTokenRoute && !email && !isLocalHost(hostname))
+  const trustedLocalNetwork = isLocalHost(hostname) || isPrivateNetworkHost(hostname);
+  const sessionIdentity = !externalTokenRoute ? await sessionOwnerId(request) : null;
+  if (!externalTokenRoute && !email && !sessionIdentity && !trustedLocalNetwork)
     return NextResponse.json({ error: "请先登录后再访问账本" }, { status: 401 });
 
   if (!externalTokenRoute && !["GET", "HEAD", "OPTIONS"].includes(request.method)) {
@@ -116,8 +129,7 @@ export async function proxy(request: NextRequest) {
   const now = Date.now();
   const identity = email
     ? `email:${email}`
-    : ((await sessionOwnerId(request)) ??
-      (isLocalHost(hostname) ? "local" : "external-token"));
+    : (sessionIdentity ?? (trustedLocalNetwork ? "local" : "external-token"));
   if (
     !externalTokenRoute &&
     !(await ownsRequestedLedger(identity, request.nextUrl.searchParams.get("ledger")))

@@ -43,7 +43,9 @@ export async function POST(request: Request) {
     if (!Number.isInteger(fromAccountId) || !Number.isInteger(toAccountId) || fromAccountId === toAccountId)
       throw new Error("请选择不同的转出和转入账户");
     await claimAndRequireLedger(request, ledgerId);
-    const accounts = await getDbBinding()
+    const accounts: {
+      results: Array<{ id: number; type: string; currency: string }>;
+    } = await getDbBinding()
       .prepare("SELECT id,type,currency FROM accounts WHERE ledger_id=? AND id IN (?,?)")
       .bind(ledgerId, fromAccountId, toAccountId)
       .all<{ id: number; type: string; currency: string }>();

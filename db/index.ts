@@ -12,7 +12,7 @@ import {
   SCHEDULED_OCCURRENCES_TABLE_SQL,
 } from "./transfer-schema.js";
 
-const SCHEMA_VERSION = "25";
+const SCHEMA_VERSION = "28";
 
 export const FX_TO_CNY = { CNY: 1, USD: 7.2, JPY: 0.0462, EUR: 7.85 } as const;
 
@@ -59,6 +59,47 @@ export async function ensureDb() {
     .prepare("SELECT value FROM app_meta WHERE key = 'schema_version'")
     .first<{ value: string }>();
   if (version?.value === SCHEMA_VERSION) return;
+  if (version?.value === "26") {
+    await binding.batch([
+      binding.prepare(
+        "CREATE TABLE integration_events(owner_id TEXT NOT NULL,external_id TEXT NOT NULL,payload_hash TEXT NOT NULL,transaction_id INTEGER,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(owner_id,external_id))",
+      ),
+      binding.prepare(
+        "CREATE INDEX integration_events_created_idx ON integration_events(created_at)",
+      ),
+      binding.prepare(
+        "CREATE TABLE peer_presence(owner_id TEXT NOT NULL,room TEXT NOT NULL,node_id TEXT NOT NULL,label TEXT NOT NULL,last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(owner_id,room,node_id))",
+      ),
+      binding.prepare(
+        "CREATE INDEX peer_presence_active_idx ON peer_presence(owner_id,room,last_seen_at)",
+      ),
+      binding.prepare(
+        "UPDATE app_meta SET value='27' WHERE key='schema_version'",
+      ),
+    ]);
+    return ensureDb();
+  }
+  if (version?.value === "27") {
+    await binding.batch([
+      binding.prepare(
+        "CREATE TABLE nearby_packages(id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,room TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,expires_at TEXT NOT NULL,consumed_at TEXT)",
+      ),
+      binding.prepare(
+        "CREATE INDEX nearby_packages_lookup_idx ON nearby_packages(owner_id,room,created_at)",
+      ),
+      binding.prepare("UPDATE app_meta SET value='28' WHERE key='schema_version'"),
+    ]);
+    return ensureDb();
+  }
+  if (version?.value === "25") {
+    await binding.batch([
+      binding.prepare("ALTER TABLE app_users ADD COLUMN avatar_url TEXT"),
+      binding.prepare(
+        "UPDATE app_meta SET value='26' WHERE key='schema_version'",
+      ),
+    ]);
+    return ensureDb();
+  }
   if (version?.value === "24") {
     await binding.batch([
       binding.prepare(
@@ -141,7 +182,7 @@ export async function ensureDb() {
     return ensureDb();
   }
   if (version?.value === "20") {
-    const transactionColumns = await binding
+    const transactionColumns: { results: Array<{ name: string }> } = await binding
       .prepare("PRAGMA table_info(transactions)")
       .all<{ name: string }>();
     const names = new Set(transactionColumns.results.map((column) => column.name));

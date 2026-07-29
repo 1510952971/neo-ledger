@@ -1,9 +1,8 @@
 import { maskEmail } from "./email-code-core.js";
 import { configValue } from "./runtime-env";
 
-// 邮件发送通道。Cloudflare Workers 运行时没有 TCP，发不了传统 SMTP，
-// 因此走 Resend 的 HTTP API。未配置密钥时自动降级：验证码打印到运行程序的
-// 终端里，本地自用同样能完成全流程，不会阻塞开发。
+// Cloudflare Workers 运行时没有 TCP，因此通过 Resend HTTP API 发信。
+// 没有配置发信通道时必须明确失败，不能把终端输出伪装成已发送。
 
 export function mailerStatus() {
   const apiKey = configValue("RESEND_API_KEY");
@@ -11,12 +10,10 @@ export function mailerStatus() {
   return {
     configured: Boolean(apiKey && from),
     from,
-    // 没配好时前端会提示“验证码已输出到终端”，避免用户干等收不到的邮件。
-    fallback: !(apiKey && from),
   };
 }
 
-export type MailResult = { ok: boolean; fallback: boolean; error?: string };
+export type MailResult = { ok: boolean; error?: string };
 
 export async function sendMail(input: {
   to: string;
@@ -27,10 +24,8 @@ export async function sendMail(input: {
   const apiKey = configValue("RESEND_API_KEY");
   const from = configValue("MAIL_FROM");
   if (!apiKey || !from) {
-    console.log(
-      `[邮件未配置] 发往 ${maskEmail(input.to)} 的内容：\n${input.text}`,
-    );
-    return { ok: true, fallback: true };
+    console.error(`[邮件未配置] 无法向 ${maskEmail(input.to)} 发送邮件`);
+    return { ok: false, error: "邮件服务未配置，暂时无法发送验证码" };
   }
   try {
     const response = await fetch("https://api.resend.com/emails", {
@@ -50,19 +45,24 @@ export async function sendMail(input: {
     if (!response.ok) {
       const detail = (await response.text()).slice(0, 300);
       console.error(`[邮件发送失败] ${response.status} ${detail}`);
+      const domainPending =
+        response.status === 403 &&
+        /domain is not verified|verify your domain/i.test(detail);
       return {
         ok: false,
-        fallback: false,
-        error:
-          response.status === 401 || response.status === 403
+        error: domainPending
+          ? "发件域名正在验证中，请稍后再试"
+          : response.status === 401
             ? "邮件服务密钥无效，请检查 RESEND_API_KEY"
-            : "邮件发送失败，请稍后再试",
+            : response.status === 403
+              ? "邮件服务暂无发送权限，请检查 Resend 配置"
+              : "邮件发送失败，请稍后再试",
       };
     }
-    return { ok: true, fallback: false };
+    return { ok: true };
   } catch (error) {
     console.error("[邮件发送异常]", error);
-    return { ok: false, fallback: false, error: "邮件服务连接失败" };
+    return { ok: false, error: "邮件服务连接失败" };
   }
 }
 

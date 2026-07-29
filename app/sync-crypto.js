@@ -1,3 +1,7 @@
+import { gcm } from "@noble/ciphers/aes.js";
+import { pbkdf2Async } from "@noble/hashes/pbkdf2.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+
 const bytesToBase64 = (bytes) => {
   let value = "";
   for (let i = 0; i < bytes.length; i += 8192) {
@@ -9,15 +13,31 @@ const bytesToBase64 = (bytes) => {
 const base64ToBytes = (value) =>
   Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
 
+const hasWebCrypto = () => Boolean(globalThis.crypto?.subtle);
+
+function randomBytes(length) {
+  const bytes = new Uint8Array(length);
+  if (!globalThis.crypto?.getRandomValues)
+    throw new Error("当前浏览器不支持安全随机数，请升级浏览器后重试");
+  globalThis.crypto.getRandomValues(bytes);
+  return bytes;
+}
+
 async function deriveSyncKey(secret, salt) {
-  const material = await crypto.subtle.importKey(
+  if (!hasWebCrypto())
+    return pbkdf2Async(sha256, new TextEncoder().encode(secret), salt, {
+      c: 250000,
+      dkLen: 32,
+      asyncTick: 1,
+    });
+  const material = await globalThis.crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(secret),
     "PBKDF2",
     false,
     ["deriveKey"],
   );
-  return crypto.subtle.deriveKey(
+  return globalThis.crypto.subtle.deriveKey(
     { name: "PBKDF2", salt, iterations: 250000, hash: "SHA-256" },
     material,
     { name: "AES-GCM", length: 256 },
@@ -27,14 +47,19 @@ async function deriveSyncKey(secret, salt) {
 }
 
 export async function encryptSyncPayload(value, secret) {
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const salt = randomBytes(16);
+  const iv = randomBytes(12);
   const key = await deriveSyncKey(secret, salt);
-  const cipher = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    key,
-    new TextEncoder().encode(JSON.stringify(value)),
-  );
+  const plain = new TextEncoder().encode(JSON.stringify(value));
+  const cipher = hasWebCrypto()
+    ? new Uint8Array(
+        await globalThis.crypto.subtle.encrypt(
+          { name: "AES-GCM", iv },
+          key,
+          plain,
+        ),
+      )
+    : gcm(key, iv).encrypt(plain);
   return JSON.stringify({
     version: 1,
     algorithm: "AES-256-GCM",
@@ -58,10 +83,14 @@ export async function decryptSyncPayload(payload, secret) {
     throw new Error("无法识别的加密同步文件");
   }
   const key = await deriveSyncKey(secret, base64ToBytes(box.salt));
-  const plain = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: base64ToBytes(box.iv) },
-    key,
-    base64ToBytes(box.ciphertext),
-  );
+  const iv = base64ToBytes(box.iv);
+  const ciphertext = base64ToBytes(box.ciphertext);
+  const plain = hasWebCrypto()
+    ? await globalThis.crypto.subtle.decrypt(
+        { name: "AES-GCM", iv },
+        key,
+        ciphertext,
+      )
+    : gcm(key, iv).decrypt(ciphertext);
   return JSON.parse(new TextDecoder().decode(plain));
 }

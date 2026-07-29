@@ -1,0 +1,13 @@
+node_modules
+.git
+.github
+.next
+.vinext
+.wrangler
+android-companion/.gradle
+android-companion/app/build
+.env*
+outputs
+work
+backups
+npm-debug.log*

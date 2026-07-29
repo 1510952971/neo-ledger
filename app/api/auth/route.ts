@@ -10,6 +10,7 @@ import {
   requireSameOrigin,
   revokeRequestSession,
   sessionUserFromRequest,
+  validateAvatarDataUrl,
   verifyPassword,
 } from "../../auth";
 import {
@@ -19,6 +20,7 @@ import {
   validateRegistrationInput,
 } from "../../auth-core.js";
 import { consumeEmailCode } from "../../email-code";
+import { ensureIntegrationTokenTable } from "../../integration-token";
 import { oauthProviderStatus } from "../../oauth";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +30,7 @@ export async function GET(request: Request) {
     await ensureDb();
     const user = await sessionUserFromRequest(request);
     const db = getDbBinding();
-    const linked = user
+    const linked: { results: Array<{ provider: "wechat" | "alipay" }> } = user
       ? await db
           .prepare("SELECT provider FROM app_identities WHERE user_id=? ORDER BY provider")
           .bind(user.id)
@@ -51,6 +53,7 @@ export async function GET(request: Request) {
             username: user.username,
             displayName: user.displayName,
             email: user.email,
+            avatarUrl: user.avatarUrl,
           }
         : null,
     });
@@ -73,7 +76,12 @@ export async function POST(request: Request) {
     const action = body.action === "register" ? "register" : "login";
     await enforceAuthRateLimit(request, action);
     const db = getDbBinding();
-    let user: { id: string; username: string; displayName: string };
+    let user: {
+      id: string;
+      username: string;
+      displayName: string;
+      avatarUrl: string | null;
+    };
 
     if (action === "register") {
       const value = validateRegistrationInput(body);
@@ -118,6 +126,7 @@ export async function POST(request: Request) {
         id,
         username: value.username,
         displayName: value.displayName,
+        avatarUrl: null,
       };
     } else {
       const identifier = normalizeUsername(body.username);
@@ -125,7 +134,7 @@ export async function POST(request: Request) {
       const password = String(body.password ?? "");
       const row = await db
         .prepare(
-          `SELECT id,username,display_name displayName,password_hash passwordHash,
+          `SELECT id,username,display_name displayName,avatar_url avatarUrl,password_hash passwordHash,
                   password_salt passwordSalt,password_iterations passwordIterations,
                   password_enabled passwordEnabled
            FROM app_users WHERE (username=? OR email=?) AND disabled=0`,
@@ -135,6 +144,7 @@ export async function POST(request: Request) {
           id: string;
           username: string;
           displayName: string;
+          avatarUrl: string | null;
           passwordHash: string;
           passwordSalt: string;
           passwordIterations: number;
@@ -164,7 +174,11 @@ export async function POST(request: Request) {
     const session = await createSession(user.id, request);
     const response = NextResponse.json({
       authenticated: true,
-      user: { username: user.username, displayName: user.displayName },
+      user: {
+        username: user.username,
+        displayName: user.displayName,
+        avatarUrl: user.avatarUrl,
+      },
     });
     response.headers.set("Set-Cookie", session.cookie);
     return response;
@@ -178,13 +192,29 @@ export async function PATCH(request: Request) {
     requireSameOrigin(request);
     await enforceAuthRateLimit(request, "account");
     const session = await sessionUserFromRequest(request);
-    if (!session) throw new ApiAccessError("请先登录后再绑定邮箱", 401);
+    if (!session) throw new ApiAccessError("请先登录后再更新账号", 401);
     const body = (await request.json()) as {
       email?: string;
       code?: string;
       currentPassword?: string;
       newPassword?: string;
+      avatarUrl?: string | null;
     };
+    const updatesAvatar = Object.prototype.hasOwnProperty.call(body, "avatarUrl");
+    const updatesEmail = Object.prototype.hasOwnProperty.call(body, "email");
+    if (updatesAvatar) {
+      if (updatesEmail)
+        throw new ApiAccessError("请分别更新头像和绑定邮箱", 400);
+      const avatarUrl =
+        body.avatarUrl === null ? null : validateAvatarDataUrl(body.avatarUrl);
+      await getDbBinding()
+        .prepare(
+          "UPDATE app_users SET avatar_url=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND disabled=0",
+        )
+        .bind(avatarUrl, session.id)
+        .run();
+      return NextResponse.json({ ok: true, avatarUrl });
+    }
     const email = validateEmail(body.email);
     if (!email) throw new ApiAccessError("请输入邮箱地址", 400);
     // 绑定/更换邮箱同样要验证码，确认这个邮箱确实归本人所有。
@@ -255,13 +285,72 @@ export async function PATCH(request: Request) {
     }
     return NextResponse.json({ ok: true, email });
   } catch (error) {
-    return accessErrorResponse(error, "绑定邮箱失败");
+    return accessErrorResponse(error, "更新账号失败");
   }
 }
 
 export async function DELETE(request: Request) {
   try {
     requireSameOrigin(request);
+    const deletesAccount =
+      new URL(request.url).searchParams.get("action") === "delete-account";
+    if (deletesAccount) {
+      await enforceAuthRateLimit(request, "account");
+      const session = await sessionUserFromRequest(request);
+      if (!session) throw new ApiAccessError("请先登录后再注销账号", 401);
+      const body = (await request.json()) as {
+        currentPassword?: string;
+        confirmation?: string;
+      };
+      if (String(body.confirmation ?? "").trim() !== "删除账号")
+        throw new ApiAccessError("请输入“删除账号”确认操作", 400);
+      const db = getDbBinding();
+      const row = await db
+        .prepare(
+          `SELECT password_hash passwordHash,password_salt passwordSalt,
+                  password_iterations passwordIterations,password_enabled passwordEnabled
+           FROM app_users WHERE id=? AND disabled=0`,
+        )
+        .bind(session.id)
+        .first<{
+          passwordHash: string;
+          passwordSalt: string;
+          passwordIterations: number;
+          passwordEnabled: number;
+        }>();
+      if (!row || !row.passwordEnabled)
+        throw new ApiAccessError("当前账号不支持密码注销", 400);
+      const valid = await verifyPassword(
+        String(body.currentPassword ?? ""),
+        row.passwordHash,
+        row.passwordSalt,
+        row.passwordIterations,
+      );
+      if (!valid) throw new ApiAccessError("当前密码不正确", 401);
+      const ownerId = `user:${session.id}`;
+      const deletedUsername = `deleted_${session.id.replaceAll("-", "")}`;
+      await ensureIntegrationTokenTable();
+      await db.batch([
+        db
+          .prepare(
+            `UPDATE app_users SET username=?,email=NULL,display_name='已注销账号',avatar_url=NULL,
+                    password_hash='',password_salt='',password_enabled=0,disabled=1,
+                    updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
+          )
+          .bind(deletedUsername, session.id),
+        db.prepare("DELETE FROM app_sessions WHERE user_id=?").bind(session.id),
+        db.prepare("DELETE FROM app_identities WHERE user_id=?").bind(session.id),
+        db.prepare("DELETE FROM oauth_states WHERE user_id=?").bind(session.id),
+        db.prepare("DELETE FROM email_codes WHERE user_id=?").bind(session.id),
+        db.prepare("DELETE FROM user_preferences WHERE owner_id=?").bind(ownerId),
+        db.prepare("DELETE FROM api_rate_limits WHERE owner_id=?").bind(ownerId),
+        db.prepare("DELETE FROM integration_tokens WHERE owner_id=?").bind(ownerId),
+      ]);
+      const cookie = await revokeRequestSession(request);
+      const response = NextResponse.json({ ok: true });
+      response.headers.set("Set-Cookie", cookie);
+      return response;
+    }
     const cookie = await revokeRequestSession(request);
     const response = NextResponse.json({ ok: true });
     response.headers.set("Set-Cookie", cookie);

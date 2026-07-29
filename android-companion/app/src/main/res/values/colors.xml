@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="neo_background">#F8F6F1</color>
+    <color name="neo_surface">#FFFFFF</color>
+    <color name="neo_text">#262824</color>
+    <color name="neo_muted">#657066</color>
+    <color name="neo_accent">#247A55</color>
+    <color name="neo_danger">#B44040</color>
+</resources>

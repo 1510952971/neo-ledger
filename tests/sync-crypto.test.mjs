@@ -19,6 +19,30 @@ test("sync encryption round-trips a ledger snapshot", async () => {
   );
 });
 
+test("sync encryption works when HTTP has no SubtleCrypto", async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+  Object.defineProperty(globalThis, "crypto", {
+    configurable: true,
+    value: {
+      getRandomValues(bytes) {
+        for (let index = 0; index < bytes.length; index += 1)
+          bytes[index] = (index * 29 + 11) & 255;
+        return bytes;
+      },
+    },
+  });
+  try {
+    const payload = await encryptSyncPayload({ localHttp: true }, "lan-secret");
+    assert.deepEqual(
+      await decryptSyncPayload(payload, "lan-secret"),
+      { localHttp: true },
+    );
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, "crypto", descriptor);
+    else delete globalThis.crypto;
+  }
+});
+
 test("sync encryption rejects the wrong secret", async () => {
   const payload = await encryptSyncPayload({ ok: true }, "correct-secret");
 

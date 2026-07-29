@@ -17,7 +17,11 @@ function hexToBytes(hex: string) {
   return new Uint8Array(hex.match(/.{2}/g)?.map((value) => Number.parseInt(value, 16)) ?? []);
 }
 
-async function derivePin(pin: string, salt: Uint8Array, iterations: number) {
+async function derivePin(
+  pin: string,
+  salt: Uint8Array<ArrayBuffer>,
+  iterations: number,
+) {
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(pin),

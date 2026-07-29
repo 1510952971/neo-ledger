@@ -2,6 +2,12 @@ import { transactionAccountDelta } from "./split-core.js";
 
 const MOODS = new Set(["悦己", "刚需", "冲动"]);
 
+/**
+ * @param {string} type
+ * @param {number} amount
+ * @param {string | null} [splitMode]
+ * @param {number} [splitWithMemberId]
+ */
 export function transactionBalanceDelta(
   type,
   amount,

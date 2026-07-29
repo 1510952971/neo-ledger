@@ -7,7 +7,6 @@ set -u
 SCRIPT_DIR="${0:A:h}"
 cd "$SCRIPT_DIR" || exit 1
 
-APP_URL="http://localhost:3000"
 REQUIRED_NODE_MAJOR=22
 REQUIRED_NODE_MINOR=13
 
@@ -58,29 +57,10 @@ if [[ ! -d node_modules ]] || [[ package.json -nt node_modules ]]; then
   }
 fi
 
-# ---------- 3. 已在运行则直接打开浏览器 ----------
-if lsof -nP -iTCP:3000 -sTCP:LISTEN >/dev/null 2>&1; then
-  echo
-  echo "检测到 Neo Ledger 已在运行，直接打开浏览器。"
-  open "$APP_URL"
-  exit 0
-fi
-
-# ---------- 4. 启动并在就绪后自动打开浏览器 ----------
+# ---------- 3. 启动桌面入口 ----------
 echo
 echo "正在启动 Neo Ledger ..."
-echo "就绪后浏览器会自动打开：$APP_URL"
+echo "手机/平板地址会在数据中心的“附近设备同步”里自动显示。"
 echo "保持此窗口运行；按 Ctrl+C 停止。"
 echo
-
-(
-  for _ in {1..90}; do
-    sleep 2
-    if curl -sf -o /dev/null "$APP_URL"; then
-      open "$APP_URL"
-      exit 0
-    fi
-  done
-) &
-
-exec npm run dev
+exec node scripts/launch-desktop.mjs --mode dev --open

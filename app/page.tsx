@@ -55,6 +55,7 @@ async function currentIdentity() {
         username: user.email,
         displayName: user.displayName,
         email: user.email,
+        avatarUrl: null,
         provider: "chatgpt" as const,
       },
       hasUsers: true,
@@ -68,17 +69,22 @@ async function currentIdentity() {
         username: session.username,
         displayName: session.displayName,
         email: session.email,
+        avatarUrl: session.avatarUrl,
         provider: session.provider,
       },
       hasUsers: true,
     };
   const hostname = (requestHeaders.get("host") ?? "localhost").split(":")[0];
-  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]") {
-    const hasUsers = await hasLocalUsers();
+  const hasUsers = await hasLocalUsers();
+  if (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]" ||
+    hasUsers
+  )
     return hasUsers
       ? null
       : { ownerId: "local", user: null, hasUsers: false };
-  }
   const required = await requireChatGPTUser("/");
   return {
     ownerId: `email:${required.email.toLowerCase()}`,
@@ -86,6 +92,7 @@ async function currentIdentity() {
       username: required.email,
       displayName: required.displayName,
       email: required.email,
+      avatarUrl: null,
       provider: "chatgpt" as const,
     },
     hasUsers: true,
@@ -94,7 +101,7 @@ async function currentIdentity() {
 
 async function currentOwnerId() {
   const identity = await currentIdentity();
-  if (!identity) throw new Error("请先登录我的财富仓");
+  if (!identity) throw new Error("请先登录账户号");
   return identity.ownerId;
 }
 
@@ -292,7 +299,7 @@ async function deleteTransaction(id: number) {
       return {
         ok: false,
         error:
-          "这是分期摊销引擎自动生成的还款流水，不能单独删除。请前往「负债摊销沙盘」管理对应分期项目。",
+          "这是分期摊销引擎自动生成的还款流水，不能单独删除。请前往「分期付款」管理对应分期项目。",
       };
     const reverseDelta = -transactionAccountDelta(
       item.type,
@@ -367,7 +374,11 @@ async function parseImportText(text: string, ledgerId: number) {
     [/游戏|电影|会员|演出|谷子/i, "娱乐"],
     [/淘宝|京东|衣服|商品|购物/i, "购物"],
   ];
-  const type = /工资|薪资|奖金|入账|收入|到账/.test(cleaned) ? "收入" : "支出";
+  const type: "收入" | "支出" = /工资|薪资|奖金|入账|收入|到账/.test(
+    cleaned,
+  )
+    ? "收入"
+    : "支出";
   const legacyCategory =
     rules.find(([rule]) => rule.test(cleaned))?.[1] ?? "餐饮";
   const legacyIncomeCategory = /工资|薪资|奖金/.test(cleaned)
@@ -377,7 +388,7 @@ async function parseImportText(text: string, ledgerId: number) {
       : /兼职|外快/.test(cleaned)
         ? "兼职外快"
         : "其它收入";
-  const mood = /冲动|上头|后悔/.test(cleaned)
+  const mood: (typeof moods)[number] = /冲动|上头|后悔/.test(cleaned)
     ? "冲动"
     : /开心|奖励|悦己/.test(cleaned)
       ? "悦己"

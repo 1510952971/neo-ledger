@@ -17,25 +17,30 @@ export async function POST(request: Request) {
     if (!message) throw new Error("请先输入问题");
     await claimAndRequireLedger(request, ledgerId);
     const db = getDbBinding(),
+      wealthPromise = db
+        .prepare(
+          "SELECT COALESCE(SUM(CASE WHEN type='资产' THEN current_balance ELSE -ABS(current_balance) END)*(CASE currency WHEN 'USD' THEN 7.2 WHEN 'JPY' THEN .0462 WHEN 'EUR' THEN 7.85 ELSE 1 END),0) netWorth,COALESCE(SUM(CASE WHEN type='资产' THEN current_balance*(CASE currency WHEN 'USD' THEN 7.2 WHEN 'JPY' THEN .0462 WHEN 'EUR' THEN 7.85 ELSE 1 END) ELSE 0 END),0) assets,COALESCE(SUM(CASE WHEN type='负债' THEN ABS(current_balance)*(CASE currency WHEN 'USD' THEN 7.2 WHEN 'JPY' THEN .0462 WHEN 'EUR' THEN 7.85 ELSE 1 END) ELSE 0 END),0) liabilities FROM accounts WHERE ledger_id=?",
+        )
+        .bind(ledgerId)
+        .first<{ netWorth: number; assets: number; liabilities: number }>(),
+      categoryPromise: Promise<{
+        results: Array<{ category: string; amount: number }>;
+      }> = db
+        .prepare(
+          "SELECT COALESCE(category_dynamic,category,'未分类') category,SUM(amount*(CASE currency WHEN 'USD' THEN 7.2 WHEN 'JPY' THEN .0462 WHEN 'EUR' THEN 7.85 ELSE 1 END)) amount FROM transactions WHERE ledger_id=? AND type='支出' AND strftime('%Y-%m',occurred_at)=strftime('%Y-%m','now') GROUP BY COALESCE(category_dynamic,category,'未分类') ORDER BY amount DESC",
+        )
+        .bind(ledgerId)
+        .all<{ category: string; amount: number }>(),
+      moodPromise = db
+        .prepare(
+          "SELECT COALESCE(SUM(CASE WHEN mood='冲动' THEN amount*(CASE currency WHEN 'USD' THEN 7.2 WHEN 'JPY' THEN .0462 WHEN 'EUR' THEN 7.85 ELSE 1 END) ELSE 0 END),0) impulse,COALESCE(SUM(amount*(CASE currency WHEN 'USD' THEN 7.2 WHEN 'JPY' THEN .0462 WHEN 'EUR' THEN 7.85 ELSE 1 END)),0) expense FROM transactions WHERE ledger_id=? AND type='支出' AND strftime('%Y-%m',occurred_at)=strftime('%Y-%m','now')",
+        )
+        .bind(ledgerId)
+        .first<{ impulse: number; expense: number }>(),
       [wealth, category, mood] = await Promise.all([
-        db
-          .prepare(
-            "SELECT COALESCE(SUM(CASE WHEN type='资产' THEN current_balance ELSE -ABS(current_balance) END)*(CASE currency WHEN 'USD' THEN 7.2 WHEN 'JPY' THEN .0462 WHEN 'EUR' THEN 7.85 ELSE 1 END),0) netWorth,COALESCE(SUM(CASE WHEN type='资产' THEN current_balance*(CASE currency WHEN 'USD' THEN 7.2 WHEN 'JPY' THEN .0462 WHEN 'EUR' THEN 7.85 ELSE 1 END) ELSE 0 END),0) assets,COALESCE(SUM(CASE WHEN type='负债' THEN ABS(current_balance)*(CASE currency WHEN 'USD' THEN 7.2 WHEN 'JPY' THEN .0462 WHEN 'EUR' THEN 7.85 ELSE 1 END) ELSE 0 END),0) liabilities FROM accounts WHERE ledger_id=?",
-          )
-          .bind(ledgerId)
-          .first<{ netWorth: number; assets: number; liabilities: number }>(),
-        db
-          .prepare(
-            "SELECT COALESCE(category_dynamic,category,'未分类') category,SUM(amount*(CASE currency WHEN 'USD' THEN 7.2 WHEN 'JPY' THEN .0462 WHEN 'EUR' THEN 7.85 ELSE 1 END)) amount FROM transactions WHERE ledger_id=? AND type='支出' AND strftime('%Y-%m',occurred_at)=strftime('%Y-%m','now') GROUP BY COALESCE(category_dynamic,category,'未分类') ORDER BY amount DESC",
-          )
-          .bind(ledgerId)
-          .all<{ category: string; amount: number }>(),
-        db
-          .prepare(
-            "SELECT COALESCE(SUM(CASE WHEN mood='冲动' THEN amount*(CASE currency WHEN 'USD' THEN 7.2 WHEN 'JPY' THEN .0462 WHEN 'EUR' THEN 7.85 ELSE 1 END) ELSE 0 END),0) impulse,COALESCE(SUM(amount*(CASE currency WHEN 'USD' THEN 7.2 WHEN 'JPY' THEN .0462 WHEN 'EUR' THEN 7.85 ELSE 1 END)),0) expense FROM transactions WHERE ledger_id=? AND type='支出' AND strftime('%Y-%m',occurred_at)=strftime('%Y-%m','now')",
-          )
-          .bind(ledgerId)
-          .first<{ impulse: number; expense: number }>(),
+        wealthPromise,
+        categoryPromise,
+        moodPromise,
       ]);
     const context = {
       currency: "CNY",

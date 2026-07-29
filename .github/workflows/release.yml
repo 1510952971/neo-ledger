@@ -24,6 +24,7 @@ jobs:
           VERSION="$(node -p "require('./package.json').version")"
           test "${GITHUB_REF_NAME}" = "v${VERSION}"
       - run: npm ci
+      - run: npm run lint
       - run: npm test
       - name: Publish GitHub Release
         env:

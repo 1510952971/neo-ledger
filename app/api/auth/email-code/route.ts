@@ -17,8 +17,6 @@ export async function GET() {
   const status = mailerStatus();
   return NextResponse.json({
     configured: status.configured,
-    // 未配置时前端提示“验证码已输出到运行程序的终端窗口”。
-    fallback: status.fallback,
   });
 }
 
@@ -35,6 +33,8 @@ export async function POST(request: Request) {
     if (!purpose) throw new ApiAccessError("验证码用途无效", 400);
     const email = validateEmail(body.email);
     if (!email) throw new ApiAccessError("请输入邮箱地址", 400);
+    if (!mailerStatus().configured)
+      throw new ApiAccessError("邮件服务未配置，暂时无法发送验证码", 503);
     const db = getDbBinding();
 
     if (purpose === "bind") {
@@ -69,7 +69,6 @@ export async function POST(request: Request) {
     if (!owner)
       return NextResponse.json({
         ok: true,
-        fallback: false,
         configured: mailerStatus().configured,
       });
     const result = await issueEmailCode({ email, purpose, userId: owner.id });

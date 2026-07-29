@@ -13,11 +13,6 @@ const offline = await import("../../app/api/offline-sync/route.ts");
 const transactions = await import("../../app/api/transactions/route.ts");
 const transfers = await import("../../app/api/transfers/route.ts");
 const budgets = await import("../../app/api/category-budgets/route.ts");
-const goals = await import("../../app/api/savings-goals/route.ts");
-const subs = await import("../../app/api/subscriptions/route.ts");
-const inst = await import("../../app/api/installments/route.ts");
-const members = await import("../../app/api/members/route.ts");
-const settlements = await import("../../app/api/settlements/route.ts");
 const prefs = await import("../../app/api/preferences/route.ts");
 const fireSet = await import("../../app/api/fire-settings/route.ts");
 const ecoSet = await import("../../app/api/economic-settings/route.ts");
@@ -34,7 +29,6 @@ r = await call(ledgers, "POST", "/api/ledgers", { body: { name: "测试账本", 
 check("POST 新建账本", r.status === 200 || r.status === 201, r.text);
 r = await call(ledgers, "GET", "/api/ledgers");
 check("新账本出现在列表", r.json?.some?.(x => x.name === "测试账本"), r.text);
-const L2 = r.json.find(x => x.name === "测试账本")?.id;
 
 describe("账户");
 r = await call(accounts, "POST", "/api/accounts", { body: { ledgerId: L, name: "工资卡", type: "资产", balance: 10000, currency: "CNY" } });

@@ -6,6 +6,20 @@ import {
   enforceIntegrationRateLimit,
   ownerForIntegrationToken,
 } from "../../../integration-token";
+import {
+  inferAutomationCategory,
+  parseAutomationText,
+} from "../../../automation-core.js";
+
+async function payloadHash(value: unknown) {
+  const bytes = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(JSON.stringify(value)),
+  );
+  return [...new Uint8Array(bytes)]
+    .map((item) => item.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 export async function POST(request: Request) {
   try {
@@ -33,8 +47,14 @@ export async function POST(request: Request) {
       ledgerId?: number;
       accountId?: number;
       category?: string;
+      incomeCategory?: string;
+      type?: "支出" | "收入";
+      text?: string;
+      externalId?: string;
+      source?: string;
     };
-    const amount = Math.round(Number(body.amount) * 100),
+    const parsed = body.text ? parseAutomationText(body.text) : null;
+    const amount = parsed?.amount || Math.round(Number(body.amount) * 100),
       ledgerId = Number(body.ledgerId || 1),
       db = getDbBinding();
     if (!Number.isFinite(amount) || amount <= 0)
@@ -54,50 +74,137 @@ export async function POST(request: Request) {
           .bind(ledgerId)
           .first<{ id: number; currency: string }>();
     if (!account) throw new Error("找不到可用账户");
-    const merchant = String(body.merchant || "外部同步账单").slice(0, 40);
-    const inferredCategory = /咖啡|拿铁/.test(merchant)
-      ? "咖啡"
-      : /地铁|滴滴|公交|打车/.test(merchant)
-        ? "交通"
-        : /淘宝|京东|拼多多|购物/.test(merchant)
-          ? "购物"
-          : "餐饮";
+    const merchant = String(
+      body.merchant || parsed?.merchant || "外部同步账单",
+    ).slice(0, 40);
+    const type = body.type === "收入" || parsed?.type === "收入" ? "收入" : "支出";
+    const inferredCategory = inferAutomationCategory(merchant);
     const requestedCategory = String(body.category || inferredCategory).trim();
-    const category = await db
-      .prepare(
-        `SELECT name,builtin_key builtinKey FROM expense_categories
-         WHERE ledger_id=? AND is_active=1
-         ORDER BY CASE WHEN name=? THEN 0 WHEN name=? THEN 1 ELSE 2 END,sort_order,id
-         LIMIT 1`,
-      )
-      .bind(ledgerId, requestedCategory, inferredCategory)
-      .first<{ name: string; builtinKey: string | null }>();
-    if (!category) throw new Error("账本没有可用的消费分类");
+    const requestedIncomeCategory = String(
+      body.incomeCategory || "其它收入",
+    ).trim();
+    const category =
+      type === "支出"
+        ? await db
+            .prepare(
+              `SELECT name,builtin_key builtinKey FROM expense_categories
+               WHERE ledger_id=? AND is_active=1
+               ORDER BY CASE WHEN name=? THEN 0 WHEN name=? THEN 1 ELSE 2 END,sort_order,id
+               LIMIT 1`,
+            )
+            .bind(ledgerId, requestedCategory, inferredCategory)
+            .first<{ name: string; builtinKey: string | null }>()
+        : null;
+    const incomeCategory =
+      type === "收入"
+        ? await db
+            .prepare(
+              `SELECT name,builtin_key builtinKey FROM income_categories
+               WHERE ledger_id=? AND is_active=1
+               ORDER BY CASE WHEN name=? THEN 0 ELSE 1 END,sort_order,id LIMIT 1`,
+            )
+            .bind(ledgerId, requestedIncomeCategory)
+            .first<{ name: string; builtinKey: string | null }>()
+        : null;
+    if (type === "支出" && !category)
+      throw new Error("账本没有可用的消费分类");
+    if (type === "收入" && !incomeCategory)
+      throw new Error("账本没有可用的收入分类");
     const occurredAt =
       body.time && Number.isFinite(new Date(body.time).getTime())
         ? new Date(body.time).toISOString()
         : new Date().toISOString();
-    const results = await db.batch([
-      db.prepare(
-        "INSERT INTO transactions (ledger_id,title,amount,type,mood,category,category_dynamic,account_id,occurred_at,currency,original_amount,original_currency,exchange_rate_micros,original_timezone) VALUES (?,?,?,'支出','刚需',?,?,?,?,?,?,?,1000000,'UTC')",
-      ).bind(
-        ledgerId,
-        merchant,
-        amount,
-        category.builtinKey,
-        category.name,
-        account.id,
-        occurredAt,
-        account.currency,
-        amount,
-        account.currency,
-      ),
-      db.prepare(
-        "UPDATE accounts SET current_balance=current_balance-?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
-      ).bind(amount, account.id),
-    ]);
+    const digest = await payloadHash({
+      ledgerId,
+      accountId: account.id,
+      amount,
+      merchant,
+      type,
+      occurredAt,
+      source: String(body.source || parsed?.source || "external"),
+      raw: parsed?.raw || "",
+    });
+    const externalId = String(
+      body.externalId || request.headers.get("idempotency-key") || `auto:${digest}`,
+    )
+      .trim()
+      .slice(0, 128);
+    const claim = await db
+      .prepare(
+        "INSERT OR IGNORE INTO integration_events(owner_id,external_id,payload_hash) VALUES(?,?,?)",
+      )
+      .bind(ownerId, externalId, digest)
+      .run();
+    if (!Number(claim.meta.changes || 0)) {
+      const previous = await db
+        .prepare(
+          "SELECT transaction_id transactionId,payload_hash payloadHash FROM integration_events WHERE owner_id=? AND external_id=?",
+        )
+        .bind(ownerId, externalId)
+        .first<{ transactionId: number | null; payloadHash: string }>();
+      if (previous?.payloadHash && previous.payloadHash !== digest)
+        return NextResponse.json(
+          { error: "同一个幂等 ID 不能用于不同账单" },
+          { status: 409 },
+        );
+      return NextResponse.json({
+        ok: true,
+        duplicate: true,
+        id: previous?.transactionId ?? null,
+      });
+    }
+    let results;
+    try {
+      results = await db.batch([
+        db.prepare(
+          "INSERT INTO transactions (ledger_id,title,amount,type,mood,category,category_dynamic,income_category,income_category_dynamic,account_id,occurred_at,currency,original_amount,original_currency,exchange_rate_micros,original_timezone) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1000000,'UTC')",
+        ).bind(
+          ledgerId,
+          merchant,
+          amount,
+          type,
+          type === "支出" ? "刚需" : null,
+          category?.builtinKey ?? null,
+          category?.name ?? null,
+          incomeCategory?.builtinKey ?? null,
+          incomeCategory?.name ?? null,
+          account.id,
+          occurredAt,
+          account.currency,
+          amount,
+          account.currency,
+        ),
+        db.prepare(
+          "UPDATE accounts SET current_balance=current_balance+?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+        ).bind(type === "支出" ? -amount : amount, account.id),
+      ]);
+    } catch (error) {
+      await db
+        .prepare(
+          "DELETE FROM integration_events WHERE owner_id=? AND external_id=?",
+        )
+        .bind(ownerId, externalId)
+        .run();
+      throw error;
+    }
+    const transactionId = Number(results[0].meta.last_row_id);
+    await db
+      .prepare(
+        "UPDATE integration_events SET transaction_id=? WHERE owner_id=? AND external_id=?",
+      )
+      .bind(transactionId, ownerId, externalId)
+      .run();
+    await db
+      .prepare("DELETE FROM integration_events WHERE created_at<datetime('now','-90 days')")
+      .run();
     return NextResponse.json(
-      { ok: true, id: Number(results[0].meta.last_row_id), category: category.name },
+      {
+        ok: true,
+        id: transactionId,
+        externalId,
+        type,
+        category: category?.name ?? incomeCategory?.name,
+      },
       { status: 201 },
     );
   } catch (error) {

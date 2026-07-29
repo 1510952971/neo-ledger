@@ -46,3 +46,8 @@ next-env.d.ts
 
 # typescript incremental build cache
 tsconfig.tsbuildinfo
+
+# Android local build output and machine-specific SDK settings
+/android-companion/.gradle/
+/android-companion/local.properties
+/android-companion/app/build/

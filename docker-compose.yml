@@ -1,0 +1,29 @@
+services:
+  neo-ledger:
+    build:
+      context: .
+    container_name: neo-ledger
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      TZ: Asia/Shanghai
+      LAN_ORIGIN: ${LAN_ORIGIN:-}
+      SYNC_TOKEN: ${SYNC_TOKEN:-}
+      SYNC_OWNER_ID: ${SYNC_OWNER_ID:-local}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      OLLAMA_URL: ${OLLAMA_URL:-}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-}
+      AUTH_PUBLIC_ORIGIN: ${AUTH_PUBLIC_ORIGIN:-}
+      WECHAT_APP_ID: ${WECHAT_APP_ID:-}
+      WECHAT_APP_SECRET: ${WECHAT_APP_SECRET:-}
+      ALIPAY_APP_ID: ${ALIPAY_APP_ID:-}
+      ALIPAY_PRIVATE_KEY: ${ALIPAY_PRIVATE_KEY:-}
+      ALIPAY_PUBLIC_KEY: ${ALIPAY_PUBLIC_KEY:-}
+      P2P_STUN_URLS: ${P2P_STUN_URLS:-}
+    volumes:
+      - neo-ledger-data:/app/.wrangler
+
+volumes:
+  neo-ledger-data:

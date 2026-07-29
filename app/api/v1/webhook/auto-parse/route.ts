@@ -66,7 +66,9 @@ export async function POST(request: Request) {
           ? "收入"
           : "支出",
       db = getDbBinding();
-    const accounts = await db
+    const accounts: {
+      results: Array<{ id: number; name: string; currency: string }>;
+    } = await db
       .prepare(
         "SELECT id,name,currency FROM accounts WHERE ledger_id=? ORDER BY id",
       )

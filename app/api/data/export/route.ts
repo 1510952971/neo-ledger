@@ -27,6 +27,10 @@ const quote = (value: unknown) => {
   const safe = /^[=+\-@]/.test(text) ? `'${text}` : text;
   return `"${safe.replaceAll('"', '""')}"`;
 };
+
+type ExportRow = Record<string, unknown>;
+type ExportRows = { results: ExportRow[] };
+
 export async function GET(request: Request) {
   await ensureDb();
   let ownerId: string;
@@ -67,8 +71,8 @@ export async function GET(request: Request) {
   const ownedTransactions = keep(t);
   const installation = await binding.prepare("SELECT value FROM app_meta WHERE key='installation_id'").first<{ value: string }>();
   const installationId = installation?.value ?? "legacy-installation";
-  const transferRows = await binding.prepare("SELECT uuid,ledger_id AS ledgerId,kind,from_account_id AS fromAccountId,to_account_id AS toAccountId,amount,currency,target_type AS targetType,target_id AS targetId,occurrence_key AS occurrenceKey,occurred_at AS occurredAt,original_timezone AS originalTimezone,note,created_at AS createdAt,updated_at AS updatedAt FROM account_transfers").all<Record<string, unknown>>();
-  const syncTombRows = await binding.prepare("SELECT entity_type AS entityType,entity_uuid AS entityUuid,ledger_id AS ledgerId,owner_id AS ownerId,deleted_at AS deletedAt FROM sync_tombstones").all<Record<string, unknown>>();
+  const transferRows: ExportRows = await binding.prepare("SELECT uuid,ledger_id AS ledgerId,kind,from_account_id AS fromAccountId,to_account_id AS toAccountId,amount,currency,target_type AS targetType,target_id AS targetId,occurrence_key AS occurrenceKey,occurred_at AS occurredAt,original_timezone AS originalTimezone,note,created_at AS createdAt,updated_at AS updatedAt FROM account_transfers").all<ExportRow>();
+  const syncTombRows: ExportRows = await binding.prepare("SELECT entity_type AS entityType,entity_uuid AS entityUuid,ledger_id AS ledgerId,owner_id AS ownerId,deleted_at AS deletedAt FROM sync_tombstones").all<ExportRow>();
   const ledgerSync = new Map(ownedLedgers.map((row) => [row.id, row.uuid]));
   const accountSync = new Map(ownedAccounts.map((row) => [row.id, row.uuid]));
   const memberSync = new Map(keep(m).map((row) => [row.id, `${installationId}:members:${row.id}`]));

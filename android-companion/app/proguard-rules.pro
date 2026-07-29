@@ -1,0 +1,1 @@
+-keep class online.eyeme.neoledger.companion.NeoNotificationListener { *; }

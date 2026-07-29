@@ -2,8 +2,12 @@ import { env } from "cloudflare:workers";
 import { ensureDb, getDbBinding } from "../db";
 import {
   adoptOrProvisionVault,
+  avatarDataUrlFromBytes,
   authTokenDigest,
+  MAX_AVATAR_BYTES,
   passwordRecord,
+  validateAvatarDataUrl,
+  type AvatarMimeType,
 } from "./auth";
 import {
   buildAlipayAuthorizeUrl,
@@ -29,9 +33,76 @@ type OAuthState = {
 };
 
 const runtimeEnv = env as unknown as Record<string, string | undefined>;
+const OAUTH_AVATAR_HOSTS: Record<OAuthProvider, string[]> = {
+  wechat: ["qlogo.cn"],
+  alipay: ["alipayobjects.com", "alipay.com"],
+};
 
 function configValue(name: string) {
   return String(runtimeEnv[name] ?? "").trim();
+}
+
+function isAllowedAvatarHost(provider: OAuthProvider, hostname: string) {
+  return OAUTH_AVATAR_HOSTS[provider].some(
+    (suffix) => hostname === suffix || hostname.endsWith(`.${suffix}`),
+  );
+}
+
+function isLegacyRemoteAvatar(value: string | null) {
+  if (!value) return false;
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+async function oauthAvatarDataUrl(profile: OAuthProfile) {
+  const source = profile.avatarUrl?.trim();
+  if (!source) return null;
+  if (source.startsWith("data:")) {
+    try {
+      return validateAvatarDataUrl(source);
+    } catch {
+      return null;
+    }
+  }
+
+  let url: URL;
+  try {
+    url = new URL(source);
+  } catch {
+    return null;
+  }
+  if (!isAllowedAvatarHost(profile.provider, url.hostname.toLowerCase()))
+    return null;
+  // WeChat still returns an http:// qlogo URL for some older accounts. The
+  // same allowlisted CDN supports HTTPS, so upgrade it before downloading.
+  if (url.protocol === "http:") url.protocol = "https:";
+  if (url.protocol !== "https:") return null;
+
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: "image/jpeg,image/png,image/webp" },
+      redirect: "error",
+    });
+    if (!response.ok) return null;
+    const mimeType = response.headers
+      .get("content-type")
+      ?.split(";", 1)[0]
+      .trim()
+      .toLowerCase();
+    if (!mimeType || !["image/jpeg", "image/png", "image/webp"].includes(mimeType))
+      return null;
+    const declaredSize = Number(response.headers.get("content-length") ?? 0);
+    if (Number.isFinite(declaredSize) && declaredSize > MAX_AVATAR_BYTES)
+      return null;
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return avatarDataUrlFromBytes(mimeType as AvatarMimeType, bytes);
+  } catch {
+    // A profile image must never make an otherwise valid OAuth login fail.
+    return null;
+  }
 }
 
 function secureRequest(request: Request) {
@@ -331,13 +402,61 @@ export async function provisionOauthUser(profile: OAuthProfile) {
   const db = getDbBinding();
   const existing = await db
     .prepare(
-      `SELECT u.id,u.username,u.display_name displayName,u.email
+      `SELECT u.id,u.username,u.display_name displayName,u.email,
+              u.avatar_url avatarUrl,i.avatar_url identityAvatarUrl
        FROM app_identities i JOIN app_users u ON u.id=i.user_id
        WHERE i.provider=? AND i.subject=? AND u.disabled=0`,
     )
     .bind(profile.provider, profile.subject)
-    .first<{ id: string; username: string; displayName: string; email: string | null }>();
-  if (existing) return { ...existing, created: false };
+    .first<{
+      id: string;
+      username: string;
+      displayName: string;
+      email: string | null;
+      avatarUrl: string | null;
+      identityAvatarUrl: string | null;
+    }>();
+  const platformAvatarUrl = await oauthAvatarDataUrl(profile);
+  if (existing) {
+    // The main avatar follows the provider only while it still matches the
+    // previous provider snapshot. Any user-selected image, including null,
+    // therefore survives future OAuth logins. A remote URL marks a v25 row.
+    const providerManaged =
+      existing.avatarUrl === existing.identityAvatarUrl ||
+      (existing.avatarUrl === null &&
+        isLegacyRemoteAvatar(existing.identityAvatarUrl));
+    const statements = [
+      db
+        .prepare(
+          `UPDATE app_identities
+           SET display_name=?,avatar_url=COALESCE(?,avatar_url),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+           WHERE provider=? AND subject=?`,
+        )
+        .bind(
+          profile.displayName,
+          platformAvatarUrl,
+          profile.provider,
+          profile.subject,
+        ),
+    ];
+    if (providerManaged && platformAvatarUrl)
+      statements.push(
+        db
+          .prepare(
+            "UPDATE app_users SET avatar_url=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+          )
+          .bind(platformAvatarUrl, existing.id),
+      );
+    await db.batch(statements);
+    return {
+      ...existing,
+      avatarUrl:
+        providerManaged && platformAvatarUrl
+          ? platformAvatarUrl
+          : existing.avatarUrl,
+      created: false,
+    };
+  }
 
   const firstAccount = !(await db
     .prepare("SELECT 1 found FROM app_users WHERE disabled=0 LIMIT 1")
@@ -348,16 +467,38 @@ export async function provisionOauthUser(profile: OAuthProfile) {
   const password = await passwordRecord(crypto.randomUUID() + crypto.randomUUID());
   await db.batch([
     db.prepare(
-      `INSERT INTO app_users(id,username,display_name,password_hash,password_salt,password_iterations,password_enabled)
-       VALUES(?,?,?,?,?,?,0)`,
-    ).bind(id, username, profile.displayName, password.hash, password.salt, password.iterations),
+      `INSERT INTO app_users(id,username,display_name,avatar_url,password_hash,password_salt,password_iterations,password_enabled)
+       VALUES(?,?,?,?,?,?,?,0)`,
+    ).bind(
+      id,
+      username,
+      profile.displayName,
+      platformAvatarUrl,
+      password.hash,
+      password.salt,
+      password.iterations,
+    ),
     db.prepare(
       `INSERT INTO app_identities(provider,subject,user_id,display_name,avatar_url)
        VALUES(?,?,?,?,?)`,
-    ).bind(profile.provider, profile.subject, id, profile.displayName, profile.avatarUrl),
+    ).bind(
+      profile.provider,
+      profile.subject,
+      id,
+      profile.displayName,
+      platformAvatarUrl,
+    ),
   ]);
   await adoptOrProvisionVault(id, profile.displayName, firstAccount);
-  return { id, username, displayName: profile.displayName, email: null, created: true, firstAccount };
+  return {
+    id,
+    username,
+    displayName: profile.displayName,
+    email: null,
+    avatarUrl: platformAvatarUrl,
+    created: true,
+    firstAccount,
+  };
 }
 
 export async function linkOauthIdentity(userId: string, profile: OAuthProfile) {
@@ -367,15 +508,23 @@ export async function linkOauthIdentity(userId: string, profile: OAuthProfile) {
     .bind(profile.provider, profile.subject)
     .first<{ userId: string }>();
   if (claimed && claimed.userId !== userId)
-    throw new Error("这个第三方账号已经绑定到其他财富仓");
+    throw new Error("这个第三方账号已经绑定到其他账户");
   const other = await db
     .prepare("SELECT subject FROM app_identities WHERE provider=? AND user_id=?")
     .bind(profile.provider, userId)
     .first();
-  if (other && !claimed) throw new Error("当前财富仓已经绑定过同类账号");
+  if (other && !claimed) throw new Error("当前账户已经绑定过同类账号");
+  const platformAvatarUrl = await oauthAvatarDataUrl(profile);
   await db.prepare(
     `INSERT INTO app_identities(provider,subject,user_id,display_name,avatar_url,updated_at)
      VALUES(?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-     ON CONFLICT(provider,subject) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,updated_at=excluded.updated_at`,
-  ).bind(profile.provider, profile.subject, userId, profile.displayName, profile.avatarUrl).run();
+     ON CONFLICT(provider,subject) DO UPDATE SET display_name=excluded.display_name,
+       avatar_url=COALESCE(excluded.avatar_url,app_identities.avatar_url),updated_at=excluded.updated_at`,
+  ).bind(
+    profile.provider,
+    profile.subject,
+    userId,
+    profile.displayName,
+    platformAvatarUrl,
+  ).run();
 }

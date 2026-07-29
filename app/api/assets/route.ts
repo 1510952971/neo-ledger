@@ -29,7 +29,7 @@ export async function GET(request: Request) {
   await ensureDb();
   const ledgerId = Number(new URL(request.url).searchParams.get("ledger") || 1);
   await claimAndRequireLedger(request, ledgerId);
-  const rows = await getDbBinding()
+  const rows: { results: DigitalAssetRow[] } = await getDbBinding()
     .prepare(
       "SELECT id,ledger_id ledgerId,name,asset_type assetType,currency,valuation_mode valuationMode,manual_value manualValue,purchase_price purchasePrice,purchase_date purchaseDate,lifespan_months lifespanMonths,residual_rate_bps residualRateBps,heat_level heatLevel,created_at createdAt FROM digital_assets WHERE ledger_id=? ORDER BY id DESC",
     )

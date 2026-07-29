@@ -8,6 +8,12 @@ export function isSplitMode(value) {
   return SPLIT_MODES.has(String(value || ""));
 }
 
+/**
+ * @param {string} type
+ * @param {number} amount
+ * @param {string | null} [splitMode]
+ * @param {number} [splitWithMemberId]
+ */
 export function transactionAccountDelta(
   type,
   amount,

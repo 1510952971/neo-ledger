@@ -28,7 +28,7 @@ async function codeDigest(email: string, purpose: string, code: string) {
 }
 
 /**
- * 发送验证码。返回的 fallback 表示邮件服务未配置、验证码已打印到终端。
+ * 发送验证码。只有真正的发信通道可用时才创建验证码。
  * 出于安全考虑，即使邮箱不存在也不会告诉调用方，避免被用来枚举注册用户。
  */
 export async function issueEmailCode(input: {
@@ -36,6 +36,8 @@ export async function issueEmailCode(input: {
   purpose: CodePurpose;
   userId?: string | null;
 }) {
+  if (!mailerStatus().configured)
+    throw new ApiAccessError("邮件服务未配置，暂时无法发送验证码", 503);
   await ensureDb();
   const db = getDbBinding();
   const now = Date.now();
@@ -88,10 +90,18 @@ export async function issueEmailCode(input: {
 
   const mail = verificationMail(code, input.purpose);
   const result = await sendMail({ to: input.email, ...mail });
-  if (!result.ok)
+  if (!result.ok) {
+    await db
+      .prepare("DELETE FROM email_codes WHERE email=? AND purpose=? AND code_hash=?")
+      .bind(
+        input.email,
+        input.purpose,
+        await codeDigest(input.email, input.purpose, code),
+      )
+      .run();
     throw new ApiAccessError(result.error ?? "邮件发送失败", 502);
+  }
   return {
-    fallback: result.fallback,
     resendAfterMs: RESEND_INTERVAL_MS,
     configured: mailerStatus().configured,
   };

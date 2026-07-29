@@ -10,7 +10,7 @@ import {
   validateEmail,
 } from "../app/auth-core.js";
 
-test("normalizes and validates local wealth-vault accounts", () => {
+test("normalizes and validates local accounts", () => {
   assert.equal(normalizeUsername("  Peng.User  "), "peng.user");
   assert.deepEqual(
     validateRegistrationInput({
@@ -41,6 +41,33 @@ test("normalizes email addresses and accepts them during registration", () => {
     "peng@example.com",
   );
   assert.throws(() => validateEmail("not-an-email"), /有效的邮箱/);
+});
+
+test("accepts a verified email address as the account name", () => {
+  assert.deepEqual(
+    validateRegistrationInput({
+      username: "User@Gmail.COM",
+      displayName: "用户",
+      password: "correct-horse",
+      email: "user@gmail.com",
+    }),
+    {
+      username: "user@gmail.com",
+      displayName: "用户",
+      password: "correct-horse",
+      email: "user@gmail.com",
+    },
+  );
+  assert.throws(
+    () =>
+      validateRegistrationInput({
+        username: "user@gmail.com",
+        displayName: "用户",
+        password: "correct-horse",
+        email: "other@gmail.com",
+      }),
+    /验证邮箱一致/,
+  );
 });
 
 test("rejects weak or ambiguous account input", () => {

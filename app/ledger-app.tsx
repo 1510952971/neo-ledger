@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import Script from "next/script";
 import {
@@ -34,6 +35,8 @@ import {
   paginateBills,
 } from "./bill-pagination.js";
 import { restoreBrowserState } from "./browser-state.js";
+import { createClientId } from "./client-id.js";
+import { shouldRunCloudSync } from "./cloud-sync-core.js";
 import { mergeSyncSnapshots } from "./sync-merge.js";
 import { decryptSyncPayload, encryptSyncPayload } from "./sync-crypto.js";
 import { ASSET_TYPE_OPTIONS, assetTypeIcon } from "./asset-core.js";
@@ -61,7 +64,6 @@ type Transaction = {
   category: Category | null;
   incomeCategory: IncomeCategory | null;
   accountId: number;
-  paymentAccountId: number | null;
   paidByMemberId: number | null;
   splitWithMemberId: number | null;
   splitMode:
@@ -452,7 +454,20 @@ type QuickSyncStatus = {
   tokenPrefix?: string;
   createdAt?: string;
   lastUsedAt?: string | null;
+  processedCount?: number;
+  lastEventAt?: string | null;
 };
+type NearbyPeer = {
+  nodeId: string;
+  label: string;
+  lastSeenAt: string;
+};
+type NearbyPackage = {
+  id: string;
+  size: number;
+  createdAt: string;
+};
+type WebDavSyncMode = "smart" | "upload" | "download";
 type PendingFlow = {
   id: number;
   rawText: string;
@@ -744,6 +759,8 @@ export function LedgerApp({
   const [tab, setTab] = useState<
     "dashboard" | "assets" | "bills" | "planning" | "analytics"
   >("dashboard");
+  const [currentAuthUser, setCurrentAuthUser] =
+    useState<ClientAuthUser | null>(authUser);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [clockTick, setClockTick] = useState(0);
   const [billQuery, setBillQuery] = useState("");
@@ -910,24 +927,39 @@ export function LedgerApp({
   const [fireConfig, setFireConfig] = useState(fireSetting);
   const [syncStatus, setSyncStatus] = useState("尚未同步");
   const [syncing, setSyncing] = useState(false);
-  const [webdavConfig, setWebdavConfig] = useState({ url: "", username: "" });
+  const [webdavSyncMode, setWebdavSyncMode] =
+    useState<WebDavSyncMode | null>(null);
+  const [webdavConfig, setWebdavConfig] = useState({
+    url: "",
+    username: "",
+    autoSync: false,
+    intervalMinutes: 5,
+  });
   const [webdavSession, setWebdavSession] = useState({
     password: "",
     secret: "",
   });
+  const [browserStateReady, setBrowserStateReady] = useState(false);
   const [nearbyPairingCode, setNearbyPairingCode] = useState("");
   const [nearbyReceiveCode, setNearbyReceiveCode] = useState("");
-  const [nearbyFile, setNearbyFile] = useState<File | null>(null);
   const [nearbyStatus, setNearbyStatus] = useState("等待生成或接收同步包");
+  const [nearbyDownload, setNearbyDownload] = useState<{
+    url: string;
+    name: string;
+  } | null>(null);
+  const [nearbyLanPackages, setNearbyLanPackages] = useState<NearbyPackage[]>([]);
+  const [nearbyLanPackageId, setNearbyLanPackageId] = useState("");
+  const [nearbyLanUploading, setNearbyLanUploading] = useState(false);
+  const [nearbyAccessUrl, setNearbyAccessUrl] = useState("");
+  const [nearbyAddressRefreshKey, setNearbyAddressRefreshKey] = useState(0);
   const [quickSyncStatus, setQuickSyncStatus] =
     useState<QuickSyncStatus | null>(null);
   const [quickSyncToken, setQuickSyncToken] = useState("");
   const [quickSyncMessage, setQuickSyncMessage] = useState("");
   const [inflationConfig, setInflationConfig] = useState(economicSetting);
-  const [p2pRoom, setP2pRoom] = useState("neo-home");
+  const [p2pRoom] = useState("neo-home");
   const [p2pNode, setP2pNode] = useState("");
-  const [p2pTarget, setP2pTarget] = useState("");
-  const [p2pStatus, setP2pStatus] = useState("等待局域网节点");
+  const [nearbyPeers, setNearbyPeers] = useState<NearbyPeer[]>([]);
   const [splitMode, setSplitMode] = useState<
     "全额由我支付" | "全额由对方支付" | "按比例平摊"
   >("全额由我支付");
@@ -944,7 +976,7 @@ export function LedgerApp({
   const settlementListRef = useRef<HTMLElement>(null);
   const goalListRef = useRef<HTMLElement>(null);
   const installmentListRef = useRef<HTMLElement>(null);
-  const categoryBudgetListRef = useRef<HTMLElement>(null);
+  const categoryBudgetListRef = useRef<HTMLDivElement>(null);
   const budgetRef = useRef<HTMLDialogElement>(null);
   const accountRef = useRef<HTMLDialogElement>(null);
   const transferRef = useRef<HTMLDialogElement>(null);
@@ -963,13 +995,18 @@ export function LedgerApp({
   const badgeRef = useRef<HTMLDialogElement>(null);
   const askRef = useRef<HTMLDialogElement>(null);
   const router = useRouter();
-  const peerRef = useRef<RTCPeerConnection | null>(null);
-  const channelRef = useRef<RTCDataChannel | null>(null);
-  const signalCursorRef = useRef(0);
+  const webdavSyncLockRef = useRef(false);
   const pieCanvas = useRef<HTMLCanvasElement>(null);
   const moodCanvas = useRef<HTMLCanvasElement>(null);
   const lineCanvas = useRef<HTMLCanvasElement>(null);
   const forecastCanvas = useRef<HTMLCanvasElement>(null);
+
+  useEffect(
+    () => () => {
+      if (nearbyDownload) URL.revokeObjectURL(nearbyDownload.url);
+    },
+    [nearbyDownload],
+  );
 
   const categories = useMemo(
     () => categoryList.filter((item) => item.isActive).map((item) => item.name),
@@ -1026,9 +1063,9 @@ export function LedgerApp({
   });
   const reloadPendingFlowsEffect = useEffectEvent(reloadPendingFlows);
   const syncOfflineEntriesEffect = useEffectEvent(syncOfflineEntries);
-  const handlePeerSignalEffect = useEffectEvent(handlePeerSignal);
   const checkAppUpdateEffect = useEffectEvent(checkAppUpdate);
   const loadQuickSyncStatusEffect = useEffectEvent(loadQuickSyncStatus);
+  const runWebDavSyncEffect = useEffectEvent(runWebDavSync);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(refreshTransactionView);
@@ -1047,10 +1084,15 @@ export function LedgerApp({
       const browserState = restoreBrowserState({
         storage: localStorage,
         online: navigator.onLine,
-        createNodeId: () => crypto.randomUUID(),
+        createNodeId: createClientId,
       }) as {
         isOnline: boolean;
-        webdavConfig: { url: string; username: string };
+        webdavConfig: {
+          url: string;
+          username: string;
+          autoSync: boolean;
+          intervalMinutes: number;
+        };
         p2pNode: string;
       };
       setIsOnline(browserState.isOnline);
@@ -1062,9 +1104,66 @@ export function LedgerApp({
           secret: sessionStorage.getItem("neo-webdav-secret") || "",
         });
       } catch {}
+      setBrowserStateReady(true);
     });
     return () => window.cancelAnimationFrame(frame);
   }, []);
+  useEffect(() => {
+    if (!browserStateReady) return;
+    localStorage.setItem("neo-webdav-config", JSON.stringify(webdavConfig));
+  }, [browserStateReady, webdavConfig]);
+  useEffect(() => {
+    if (
+      !browserStateReady ||
+      !webdavConfig.autoSync ||
+      !webdavConfig.url ||
+      !webdavSession.password ||
+      webdavSession.secret.length < 8
+    )
+      return;
+    const runIfDue = () => {
+      const last = Number(localStorage.getItem("neo-webdav-last-sync") || 0);
+      if (
+        shouldRunCloudSync({
+          enabled: webdavConfig.autoSync,
+          online: navigator.onLine,
+          url: webdavConfig.url,
+          password: webdavSession.password,
+          secret: webdavSession.secret,
+          intervalMinutes: webdavConfig.intervalMinutes,
+          lastSyncAt: last,
+          now: Date.now(),
+        })
+      )
+        void runWebDavSyncEffect(
+          "smart",
+          {
+            url: webdavConfig.url,
+            username: webdavConfig.username,
+            password: webdavSession.password,
+            secret: webdavSession.secret,
+          },
+          true,
+        );
+    };
+    runIfDue();
+    const timer = window.setInterval(runIfDue, 30_000);
+    window.addEventListener("focus", runIfDue);
+    window.addEventListener("online", runIfDue);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", runIfDue);
+      window.removeEventListener("online", runIfDue);
+    };
+  }, [
+    browserStateReady,
+    webdavConfig.autoSync,
+    webdavConfig.intervalMinutes,
+    webdavConfig.url,
+    webdavConfig.username,
+    webdavSession.password,
+    webdavSession.secret,
+  ]);
   useEffect(() => {
     const updateClock = () => {
       const now = Date.now();
@@ -1156,25 +1255,71 @@ export function LedgerApp({
   }, [dataOpen, updateInfo]);
   useEffect(() => {
     if (!dataOpen || !p2pNode || !p2pRoom) return;
-    const poll = async () => {
-      const response = await fetch(
-        `/api/p2p/signals?room=${encodeURIComponent(p2pRoom)}&node=${encodeURIComponent(p2pNode)}&after=${signalCursorRef.current}`,
-        { cache: "no-store" },
-      );
-      if (response.ok) {
-        const rows = (await response.json()) as {
-          id: number;
-          fromNode: string;
-          kind: string;
-          payload: string;
-        }[];
-        for (const row of rows) await handlePeerSignalEffect(row);
+    let active = true;
+    const announce = async () => {
+      try {
+        const label = `${navigator.platform || "浏览器设备"} · ${p2pNode.slice(-8)}`;
+        const heartbeat = await fetch("/api/p2p/discovery", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ room: p2pRoom, nodeId: p2pNode, label }),
+        });
+        if (!heartbeat.ok) return;
+        const response = await fetch(
+          `/api/p2p/discovery?room=${encodeURIComponent(p2pRoom)}&node=${encodeURIComponent(p2pNode)}`,
+          { cache: "no-store" },
+        );
+        if (!response.ok || !active) return;
+        const result = (await response.json()) as {
+          peers?: NearbyPeer[];
+          accessUrl?: string;
+        };
+        setNearbyPeers(result.peers ?? []);
+        setNearbyAccessUrl(result.accessUrl ?? window.location.origin);
+      } catch {
+        if (active) setNearbyStatus("设备发现暂时不可用，请使用局域网同步包");
       }
     };
+    void announce();
+    const timer = window.setInterval(() => void announce(), 8_000);
+    const refresh = () => void announce();
+    window.addEventListener("focus", refresh);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      setNearbyPeers([]);
+      setNearbyAccessUrl("");
+      void fetch(
+        `/api/p2p/discovery?room=${encodeURIComponent(p2pRoom)}&node=${encodeURIComponent(p2pNode)}`,
+        { method: "DELETE", keepalive: true },
+      );
+    };
+  }, [dataOpen, p2pNode, p2pRoom, nearbyAddressRefreshKey]);
+  useEffect(() => {
+    if (!dataOpen || !p2pRoom) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const response = await fetch(
+          `/api/p2p/packages?room=${encodeURIComponent(p2pRoom)}`,
+          { cache: "no-store" },
+        );
+        if (!response.ok || !active) return;
+        const result = (await response.json()) as {
+          packages?: NearbyPackage[];
+        };
+        setNearbyLanPackages(result.packages ?? []);
+      } catch {}
+    };
     void poll();
-    const timer = window.setInterval(() => void poll(), 1500);
-    return () => window.clearInterval(timer);
-  }, [dataOpen, p2pNode, p2pRoom]);
+    const timer = window.setInterval(() => void poll(), 5000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      setNearbyLanPackages([]);
+    };
+  }, [dataOpen, p2pRoom]);
   useEffect(() => {
     if (tab !== "assets" || !todayKey || locked) return;
     const unlocked = badgeDefinitions
@@ -2393,113 +2538,6 @@ export function LedgerApp({
       ]);
     });
   }
-  async function sendPeerSignal(
-    kind: string,
-    payload: unknown,
-    to = p2pTarget,
-  ) {
-    if (!p2pRoom || !p2pNode || !to) return;
-    await fetch("/api/p2p/signals", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        room: p2pRoom,
-        fromNode: p2pNode,
-        toNode: to,
-        kind,
-        payload,
-      }),
-    });
-  }
-  function setupPeerChannel(channel: RTCDataChannel) {
-    channelRef.current = channel;
-    channel.onopen = async () => {
-      setP2pStatus("P2P 通道已连接，正在交换增量");
-      const snapshot = await fetch(
-        `/api/p2p/crdt?ledger=${currentLedgerId}`,
-      ).then((r) => r.json());
-      channel.send(JSON.stringify({ type: "sync", snapshot }));
-    };
-    channel.onmessage = async (event) => {
-      const message = JSON.parse(String(event.data)) as {
-        type: string;
-        snapshot?: Record<string, unknown>;
-      };
-      if (!message.snapshot) return;
-      const response = await fetch("/api/p2p/crdt", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ledgerId: currentLedgerId,
-          ...message.snapshot,
-        }),
-      });
-      const result = (await response.json()) as {
-        inserted?: number;
-        deleted?: number;
-      };
-      setP2pStatus(
-        `同步完成：新增 ${result.inserted ?? 0}，删除 ${result.deleted ?? 0}`,
-      );
-      if (message.type === "sync") {
-        const snapshot = await fetch(
-          `/api/p2p/crdt?ledger=${currentLedgerId}`,
-        ).then((r) => r.json());
-        channel.send(JSON.stringify({ type: "reply", snapshot }));
-      }
-      window.setTimeout(() => window.location.reload(), 700);
-    };
-    channel.onclose = () => setP2pStatus("节点已断开");
-  }
-  function makePeer() {
-    const peer = new RTCPeerConnection({ iceServers: [] });
-    peerRef.current = peer;
-    peer.onicecandidate = (event) => {
-      if (event.candidate) void sendPeerSignal("ice", event.candidate.toJSON());
-    };
-    peer.ondatachannel = (event) => setupPeerChannel(event.channel);
-    peer.onconnectionstatechange = () =>
-      setP2pStatus(`连接状态：${peer.connectionState}`);
-    return peer;
-  }
-  async function hostPeer() {
-    if (!p2pTarget) {
-      notify("请填写对端节点 ID");
-      return;
-    }
-    peerRef.current?.close();
-    const peer = makePeer(),
-      channel = peer.createDataChannel("neo-ledger-crdt", { ordered: true });
-    setupPeerChannel(channel);
-    const offer = await peer.createOffer();
-    await peer.setLocalDescription(offer);
-    await sendPeerSignal("offer", offer);
-    setP2pStatus("握手邀请已发送，等待对端回应");
-  }
-  async function handlePeerSignal(signal: {
-    id: number;
-    fromNode: string;
-    kind: string;
-    payload: string;
-  }) {
-    signalCursorRef.current = Math.max(signalCursorRef.current, signal.id);
-    const payload = JSON.parse(signal.payload);
-    if (signal.kind === "offer") {
-      setP2pTarget(signal.fromNode);
-      peerRef.current?.close();
-      const peer = makePeer();
-      await peer.setRemoteDescription(payload);
-      const answer = await peer.createAnswer();
-      await peer.setLocalDescription(answer);
-      await sendPeerSignal("answer", answer, signal.fromNode);
-      setP2pStatus("已接受局域网节点握手");
-    } else if (signal.kind === "answer" && peerRef.current)
-      await peerRef.current.setRemoteDescription(payload);
-    else if (signal.kind === "ice" && peerRef.current)
-      try {
-        await peerRef.current.addIceCandidate(payload);
-      } catch {}
-  }
   function saveInflation(formData: FormData) {
     startTransition(async () => {
       const inflationRate = Number(formData.get("inflationRate"));
@@ -2656,17 +2694,169 @@ export function LedgerApp({
       setQuickSyncMessage("自动记账密钥已撤销。");
     });
   }
+  async function copyToClipboard(value: string) {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        return true;
+      }
+    } catch {}
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    return copied;
+  }
   async function copyQuickSyncExample() {
     if (!quickSyncToken) return;
     const endpoint = `${window.location.origin}/api/external/quick-sync`;
-    const command = `curl -X POST '${endpoint}' -H 'Authorization: Bearer ${quickSyncToken}' -H 'Content-Type: application/json' -d '{"amount":35.5,"merchant":"午餐","ledgerId":${currentLedgerId},"category":"餐饮"}'`;
-    await navigator.clipboard.writeText(command);
+    const command = `curl -X POST '${endpoint}' -H 'Authorization: Bearer ${quickSyncToken}' -H 'Content-Type: application/json' -H 'Idempotency-Key: demo-001' -d '{"amount":35.5,"merchant":"午餐","ledgerId":${currentLedgerId},"category":"餐饮","source":"shortcut","time":"${new Date().toISOString()}"}'`;
+    await copyToClipboard(command);
     setQuickSyncMessage("请求示例已复制，可粘贴到终端、快捷指令或 NAS 自动化中。");
+  }
+  async function copyAndroidCompanionConfig() {
+    if (!quickSyncToken) return;
+    const origin = (nearbyAccessUrl || window.location.origin).replace(/\/+$/, "");
+    const config = {
+      type: "neo-ledger-android-config-v1",
+      url: origin,
+      token: quickSyncToken,
+      ledgerId: currentLedgerId,
+    };
+    await copyToClipboard(JSON.stringify(config));
+    setQuickSyncMessage(
+      origin.includes("localhost") || origin.includes("127.0.0.1")
+        ? "配置已复制，但当前是本机地址；请先启动局域网访问，再复制给手机。"
+        : "安卓配置已复制；在手机伴侣中点击“从 Neo Ledger 粘贴配置”。",
+    );
+  }
+  async function testQuickSyncConnection() {
+    if (!quickSyncToken) {
+      setQuickSyncMessage("测试需要当前完整密钥，请重新生成密钥后再试。");
+      return;
+    }
+    setQuickSyncMessage("正在发送一笔 ¥0.01 的测试账单…");
+    const response = await fetch("/api/external/quick-sync", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${quickSyncToken}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": `ui-test-${Date.now()}`,
+      },
+      body: JSON.stringify({
+        ledgerId: currentLedgerId,
+        amount: 0.01,
+        merchant: "自动记账连接测试",
+        category: "餐饮",
+        source: "connection-test",
+        time: new Date().toISOString(),
+      }),
+    });
+    const result = (await response.json()) as { id?: number; error?: string };
+    if (!response.ok || !result.id) {
+      setQuickSyncMessage(result.error || "连接测试失败");
+      return;
+    }
+    setQuickSyncMessage("连接测试成功，已新增一笔 ¥0.01 的测试账单。");
+    setToast({ kind: "success", message: "自动记账连接正常，测试账单已入账。" });
+    await Promise.all([loadQuickSyncStatus(), refreshLedger()]);
+  }
+  async function copyQuickSyncTemplate(kind: "shortcut" | "notification") {
+    if (!quickSyncToken) return;
+    const template = {
+      name: kind === "shortcut" ? "Neo Ledger 快捷记账" : "Neo Ledger 通知转发",
+      method: "POST",
+      url: `${window.location.origin}/api/external/quick-sync`,
+      headers: {
+        Authorization: `Bearer ${quickSyncToken}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": kind === "shortcut" ? "{{快捷指令运行ID}}" : "{{通知ID}}",
+      },
+      body:
+        kind === "shortcut"
+          ? {
+              ledgerId: currentLedgerId,
+              amount: "{{金额}}",
+              merchant: "{{商户}}",
+              category: "{{分类}}",
+              source: "ios-shortcut",
+              time: "{{当前日期ISO}}",
+            }
+          : {
+              ledgerId: currentLedgerId,
+              text: "{{通知全文}}",
+              source: "notification-forwarder",
+              time: "{{通知时间ISO}}",
+            },
+    };
+    await copyToClipboard(JSON.stringify(template, null, 2));
+    setQuickSyncMessage(
+      kind === "shortcut"
+        ? "快捷指令配置已复制，可用于“获取 URL 内容”。"
+        : "通知转发配置已复制，可导入支持自定义 Webhook 的工具。",
+    );
   }
   function makeNearbyCode() {
     const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     const bytes = crypto.getRandomValues(new Uint8Array(8));
     return [...bytes].map((value) => alphabet[value % alphabet.length]).join("");
+  }
+  function downloadNearbyPackage() {
+    if (!nearbyDownload) return;
+    const link = document.createElement("a");
+    link.href = nearbyDownload.url;
+    link.download = nearbyDownload.name;
+    link.click();
+    setNearbyStatus("同步包已下载，请通过 AirDrop、微信或局域网发送给另一台设备。");
+  }
+  async function uploadNearbyPackage() {
+    if (!nearbyDownload || nearbyLanUploading) return;
+    setNearbyLanUploading(true);
+    setNearbyStatus("正在上传到本机局域网，手机稍后可直接获取…");
+    try {
+      const payload = await fetch(nearbyDownload.url).then((response) => response.text());
+      const response = await fetch("/api/p2p/packages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ room: p2pRoom, payload }),
+      });
+      const result = (await response.json()) as { id?: string; error?: string };
+      if (!response.ok || !result.id) throw new Error(result.error || "上传失败");
+      setNearbyLanPackageId(result.id);
+      setNearbyStatus("已发送到局域网，接收设备可在下方直接获取。");
+    } catch (error) {
+      setNearbyStatus(error instanceof Error ? error.message : "上传局域网同步包失败");
+    } finally {
+      setNearbyLanUploading(false);
+    }
+  }
+  async function mergeNearbyPayload(payload: string, code: string, packageId = "") {
+    const remote = await decryptSyncPayload(payload, `nearby:${code}`);
+    const local = (await fetch("/api/data/export?format=json", {
+      cache: "no-store",
+    }).then((response) => response.json())) as Record<string, unknown>;
+    const merged = mergeSyncSnapshots(local, remote);
+    const response = await fetch("/api/data/restore", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(merged),
+    });
+    if (!response.ok)
+      throw new Error(
+        ((await response.json()) as { error?: string }).error || "合并失败",
+      );
+    if (packageId)
+      await fetch(
+        `/api/p2p/packages?room=${encodeURIComponent(p2pRoom)}&id=${encodeURIComponent(packageId)}`,
+        { method: "DELETE" },
+      );
+    setNearbyStatus("附近同步完成，正在刷新账本…");
+    window.setTimeout(() => window.location.reload(), 500);
   }
   async function createNearbyPackage() {
     setNearbyStatus("正在整理并加密全部账本…");
@@ -2682,22 +2872,11 @@ export function LedgerApp({
         { type: "application/octet-stream" },
       );
       setNearbyPairingCode(code);
-      if (navigator.share && navigator.canShare?.({ files: [file] })) {
-        await navigator.share({
-          title: "NeoLedger 附近同步包",
-          text: `配对码：${code}`,
-          files: [file],
-        });
-        setNearbyStatus("同步包已交给系统分享，请把配对码一并告诉另一台设备。");
-      } else {
-        const url = URL.createObjectURL(file);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = file.name;
-        link.click();
-        URL.revokeObjectURL(url);
-        setNearbyStatus("同步包已下载，请通过 AirDrop、微信或局域网发送给另一台设备。");
-      }
+      setNearbyDownload({
+        url: URL.createObjectURL(file),
+        name: file.name,
+      });
+      setNearbyStatus("同步包已准备好，请点击“通过局域网发送”。");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         setNearbyStatus("已取消分享，同步包没有发送。");
@@ -2706,103 +2885,88 @@ export function LedgerApp({
       setNearbyStatus(error instanceof Error ? error.message : "生成同步包失败");
     }
   }
-  function receiveNearbyPackage() {
+  function receiveNearbyLanPackage(packageId: string) {
     const code = nearbyReceiveCode.trim().toUpperCase();
-    if (!nearbyFile || !/^[A-Z2-9]{8}$/.test(code)) {
-      setNearbyStatus("请选择同步包并输入发送设备显示的 8 位配对码。");
+    if (!/^[A-Z2-9]{8}$/.test(code)) {
+      setNearbyStatus("请先输入发送设备显示的 8 位配对码。");
       return;
     }
-    setNearbyStatus("正在解密并合并两台设备的数据…");
+    setNearbyStatus("正在从局域网获取并合并同步包…");
     startTransition(async () => {
       try {
-        const remote = await decryptSyncPayload(
-          await nearbyFile.text(),
-          `nearby:${code}`,
+        const response = await fetch(
+          `/api/p2p/packages?room=${encodeURIComponent(p2pRoom)}&id=${encodeURIComponent(packageId)}`,
+          { cache: "no-store" },
         );
-        const local = (await fetch("/api/data/export?format=json", {
-          cache: "no-store",
-        }).then((response) => response.json())) as Record<string, unknown>;
-        const merged = mergeSyncSnapshots(local, remote);
-        const response = await fetch("/api/data/restore", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(merged),
-        });
-        if (!response.ok)
-          throw new Error(
-            ((await response.json()) as { error?: string }).error || "合并失败",
-          );
-        setNearbyStatus("附近同步完成，正在刷新账本…");
-        window.setTimeout(() => window.location.reload(), 500);
-      } catch {
-        setNearbyStatus("无法解密同步包，请检查文件和配对码是否来自同一次分享。");
+        const result = (await response.json()) as { payload?: string; error?: string };
+        if (!response.ok || !result.payload)
+          throw new Error(result.error || "同步包已过期");
+        await mergeNearbyPayload(result.payload, code, packageId);
+      } catch (error) {
+        setNearbyStatus(
+          error instanceof Error ? error.message : "局域网同步失败，请检查配对码",
+        );
       }
     });
   }
-  function syncWebDav(formData: FormData) {
-    const mode = String(formData.get("mode")),
-      url = String(formData.get("url") || ""),
-      username = String(formData.get("username") || ""),
-      password = String(formData.get("password") || ""),
-      secret = String(formData.get("secret") || "");
+  async function runWebDavSync(
+    mode: string,
+    config: { url: string; username: string; password: string; secret: string },
+    silent = false,
+  ) {
+    const { url, username, password, secret } = config;
     if (!url || !secret || secret.length < 8) {
-      notify("请填写 WebDAV 地址和至少 8 位本地同步密钥");
+      if (!silent) notify("请填写 WebDAV 地址和至少 8 位本地同步密钥");
       return;
     }
-    localStorage.setItem(
-      "neo-webdav-config",
-      JSON.stringify({ url, username }),
+    if (webdavSyncLockRef.current) return;
+    webdavSyncLockRef.current = true;
+    setWebdavSyncMode(
+      mode === "upload" || mode === "download" ? mode : "smart",
     );
-    try {
-      sessionStorage.setItem("neo-webdav-password", password);
-      sessionStorage.setItem("neo-webdav-secret", secret);
-      setWebdavSession({ password, secret });
-    } catch {}
     setSyncing(true);
-    startTransition(async () => {
-      try {
-        const credentials = { url, username, password };
-        const local = (await fetch("/api/data/export?format=json", {
-          cache: "no-store",
-        }).then((r) => r.json())) as Record<string, unknown>;
-        const upload = async (snapshot: Record<string, unknown>) => {
-          const payload = await encryptSyncPayload(snapshot, secret);
-          const response = await fetch("/api/webdav-sync", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              ...credentials,
-              action: "upload",
-              payload,
-            }),
-          });
-          if (!response.ok)
-            throw new Error(
-              ((await response.json()) as { error?: string }).error ||
-                "加密上传失败",
-            );
+    try {
+      const credentials = { url, username, password };
+      const localResponse = await fetch("/api/data/export?format=json", {
+        cache: "no-store",
+      });
+      if (!localResponse.ok) throw new Error("读取本地账本失败");
+      const local = (await localResponse.json()) as Record<string, unknown>;
+      const upload = async (snapshot: Record<string, unknown>) => {
+        const payload = await encryptSyncPayload(snapshot, secret);
+        const response = await fetch("/api/webdav-sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...credentials, action: "upload", payload }),
+        });
+        if (!response.ok)
+          throw new Error(
+            ((await response.json()) as { error?: string }).error ||
+              "加密上传失败",
+          );
+      };
+      let changedLocal = false;
+      if (mode === "upload") {
+        await upload(local);
+        setSyncStatus("刚刚完成加密上传");
+      } else {
+        const response = await fetch("/api/webdav-sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...credentials, action: "download" }),
+        });
+        const result = (await response.json()) as {
+          payload?: string;
+          error?: string;
         };
-        if (mode === "upload") {
-          await upload(local);
-          setSyncStatus("刚刚完成加密上传");
-        } else {
-          const response = await fetch("/api/webdav-sync", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ...credentials, action: "download" }),
-          });
-          const result = (await response.json()) as {
-            payload?: string;
-            error?: string;
-          };
-          if (!response.ok || !result.payload) {
-            if (mode === "smart" && /404|没有备份/.test(result.error || "")) {
-              await upload(local);
-              setSyncStatus("首次安全同步完成，已创建云端加密备份");
-              return;
-            }
+        if (!response.ok || !result.payload) {
+          if (mode === "smart" && /404|没有备份/.test(result.error || "")) {
+            await upload(local);
+            setSyncStatus("首次安全同步完成，已创建云端加密备份");
+          } else {
             throw new Error(result.error || "云端没有备份");
           }
+        } else {
           const remote = await decryptSyncPayload(result.payload, secret);
           let next = remote;
           if (mode === "merge" || mode === "smart") {
@@ -2816,21 +2980,53 @@ export function LedgerApp({
           });
           if (!restore.ok)
             throw new Error(
-              ((await restore.json()) as { error?: string }).error,
+              ((await restore.json()) as { error?: string }).error ||
+                "恢复本地账本失败",
             );
+          changedLocal = true;
           setSyncStatus(
             mode === "merge" || mode === "smart"
               ? "刚刚完成安全双向同步"
               : "刚刚从云端解密恢复",
           );
-          window.location.reload();
         }
-      } catch (error) {
-        notify(error instanceof Error ? error.message : "同步失败");
-      } finally {
-        setSyncing(false);
       }
-    });
+      localStorage.setItem("neo-webdav-last-sync", String(Date.now()));
+      if (changedLocal) router.refresh();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "同步失败";
+      setSyncStatus(`同步失败：${message}`);
+      if (!silent) notify(message);
+    } finally {
+      webdavSyncLockRef.current = false;
+      setSyncing(false);
+    }
+  }
+  function syncWebDav(formData: FormData) {
+    const mode = String(formData.get("mode"));
+    const selectedMode: WebDavSyncMode =
+      mode === "upload" || mode === "download" ? mode : "smart";
+    setWebdavSyncMode(selectedMode);
+    const config = {
+      url: String(formData.get("url") || ""),
+      username: String(formData.get("username") || ""),
+      password: String(formData.get("password") || ""),
+      secret: String(formData.get("secret") || ""),
+    };
+    if (!config.url || !config.secret || config.secret.length < 8) {
+      setSyncStatus(
+        `已选择${selectedMode === "upload" ? "仅上传" : selectedMode === "download" ? "仅下载并覆盖本机" : "安全双向同步"}，请补全同步配置`,
+      );
+      notify("请填写 WebDAV 地址和至少 8 位本地同步密钥");
+      return;
+    }
+    localStorage.setItem("neo-webdav-config", JSON.stringify(webdavConfig));
+    try {
+      sessionStorage.setItem("neo-webdav-password", config.password);
+      sessionStorage.setItem("neo-webdav-secret", config.secret);
+      setWebdavSession({ password: config.password, secret: config.secret });
+    } catch {}
+    startTransition(() => void runWebDavSync(mode, config));
   }
   function submitEntry(formData: FormData) {
     if (nudgeActive && reflection.trim() !== reflectionPhrase) {
@@ -2869,7 +3065,7 @@ export function LedgerApp({
         string,
         unknown
       >;
-      entry.offlineId = crypto.randomUUID();
+      entry.offlineId = createClientId();
       entry.occurredAt = String(entry.occurredAt || new Date().toISOString());
       startTransition(async () => {
         await offlinePut(entry);
@@ -3407,7 +3603,7 @@ export function LedgerApp({
     }
     return result;
   }
-  function parseBillFiles(fileList: FileList | File[] | undefined) {
+  function parseBillFiles(fileList: FileList | File[] | null | undefined) {
     const files = fileList ? Array.from(fileList) : [];
     if (!files.length) return;
     setBillImportError("");
@@ -4181,8 +4377,8 @@ export function LedgerApp({
               )}
             </button>
             <button
-              aria-label="美学实验室"
-              title="美学实验室"
+              aria-label="换肤中心"
+              title="换肤中心"
               onClick={() => openDialog(aestheticRef, setAestheticOpen)}
             >
               🎨
@@ -4238,17 +4434,34 @@ export function LedgerApp({
             type="button"
             className="sidebar-profile"
             onClick={() => openDialog(authRef, setAuthOpen)}
-            aria-label="我的财富仓账号"
-            title="我的财富仓账号"
+            aria-label={
+              currentAuthUser
+                ? `当前登录账号 ${currentAuthUser.username}`
+                : "登录账号"
+            }
+            title={
+              currentAuthUser
+                ? `当前登录账号 ${currentAuthUser.username}`
+                : "登录账号"
+            }
           >
             <div className="avatar">
-              {authUser?.displayName.slice(0, 1).toUpperCase() ?? "☺"}
+              {currentAuthUser?.avatarUrl ? (
+                <Image
+                  src={currentAuthUser.avatarUrl}
+                  alt=""
+                  width={34}
+                  height={34}
+                  unoptimized
+                />
+              ) : (
+                currentAuthUser?.displayName.slice(0, 1).toUpperCase() ?? "☺"
+              )}
             </div>
             <div>
-              <strong>我的财富仓</strong>
-              <small>
-                {authUser ? `${authUser.displayName} · 已登录` : "点击登录账号"}
-              </small>
+              <strong>
+                {currentAuthUser ? currentAuthUser.username : "登录账号"}
+              </strong>
             </div>
           </button>
         </header>
@@ -4900,7 +5113,7 @@ export function LedgerApp({
               <div className="section-heading account-heading">
                 <div>
                   <p className="eyebrow">SPLIT & SETTLE</p>
-                  <h2>分账搭子 · 即时清算</h2>
+                  <h2>分账搭子</h2>
                 </div>
                 <button className="new-account-button" onClick={addMember}>
                   ＋ 添加成员
@@ -5052,8 +5265,8 @@ export function LedgerApp({
             >
               <div className="section-heading account-heading">
                 <div>
-                  <p className="eyebrow">DEBT AMORTIZATION</p>
-                  <h2>📈 负债摊销沙盘</h2>
+                  <p className="eyebrow">INSTALLMENT PLAN</p>
+                  <h2>📈 分期付款</h2>
                 </div>
                 <button
                   className="new-account-button"
@@ -5131,7 +5344,7 @@ export function LedgerApp({
                 page={installmentPageData.page}
                 totalPages={installmentPageData.totalPages}
                 totalRows={installmentPageData.totalRows}
-                label="负债摊销分页"
+                label="分期付款分页"
                 unit="项"
                 onChange={changeInstallmentPage}
               />
@@ -5145,7 +5358,7 @@ export function LedgerApp({
                 <div className="section-heading account-heading">
                   <div>
                     <p className="eyebrow">BUDGET CONTROL</p>
-                    <h2>品类预算控制塔</h2>
+                    <h2>品类预算</h2>
                   </div>
                   <button
                     type="button"
@@ -5839,7 +6052,7 @@ export function LedgerApp({
               <div className="forecast-head">
                 <div>
                   <p className="eyebrow">FUTURE VISION</p>
-                  <h3>🔮 未来视界 · 现金流预测</h3>
+                  <h3>🔮 未来现金流预测</h3>
                   <span>净资产 + 近 90 天烧钱速度 + 固定订阅</span>
                 </div>
                 <div className="forecast-pills">
@@ -5883,7 +6096,7 @@ export function LedgerApp({
               <div className="stress-head">
                 <div>
                   <p className="eyebrow">BLACK SWAN LAB</p>
-                  <h3>🌪️ 黑天鹅压力测试沙盘</h3>
+                  <h3>🌪️ 资金测试沙盘</h3>
                   <span>仅在前端内存演练，不修改任何真实账户与账单</span>
                 </div>
                 <div
@@ -5977,7 +6190,7 @@ export function LedgerApp({
             <article className="side-hustle-dashboard">
               <div>
                 <p className="eyebrow">SLASH CAREER P&L</p>
-                <h3>💼 多源收益与综合税筹</h3>
+                <h3>💼 综合税筹</h3>
                 <span>本月副业经营视角 · 金额统一折算人民币</span>
               </div>
               <div className="side-profit-grid">
@@ -6590,8 +6803,8 @@ export function LedgerApp({
             >
               ×
             </button>
-            <p className="eyebrow">AESTHETIC LAB</p>
-            <h2>🎨 美学实验室</h2>
+            <p className="eyebrow">THEME CENTER</p>
+            <h2>🎨 换肤中心</h2>
             <p className="form-subtitle">
               选择你的财务人格，整站与图表同步换肤。
             </p>
@@ -7053,7 +7266,11 @@ export function LedgerApp({
           >
             ×
           </button>
-          <AuthPanel user={authUser} hasUsers={authHasUsers} />
+          <AuthPanel
+            user={currentAuthUser}
+            hasUsers={authHasUsers}
+            onUserChange={setCurrentAuthUser}
+          />
         </dialog>
       )}
 
@@ -7502,9 +7719,34 @@ export function LedgerApp({
                 <p className="eyebrow">NEARBY ENCRYPTED TRANSFER</p>
                 <h3>📲 附近设备同步</h3>
                 <p>
-                  不需要服务器地址。生成加密同步包后，用 AirDrop、微信或局域网
-                  发送给另一台设备；接收端会自动合并，不会覆盖较新的记录。
+                  两台设备打开同一个局域网地址即可。发送端生成加密同步包并点击
+                  “通过局域网发送”，接收端输入配对码后获取并合并，不会覆盖较新的记录。
                 </p>
+                <div className="nearby-access-url">
+                  <span>本机局域网连接地址</span>
+                  <code>{nearbyAccessUrl || "正在获取…"}</code>
+                  <button
+                    type="button"
+                    disabled={!nearbyAccessUrl}
+                    onClick={() => {
+                      if (!nearbyAccessUrl) return;
+                      void copyToClipboard(nearbyAccessUrl);
+                      setNearbyStatus("局域网地址已复制，请发给另一台设备。");
+                    }}
+                  >
+                    复制地址
+                  </button>
+                </div>
+                <div className="nearby-access-actions">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setNearbyAddressRefreshKey((value) => value + 1)
+                    }
+                  >
+                    重新检测地址
+                  </button>
+                </div>
                 <div className="nearby-sync-grid">
                   <article>
                     <span>1 · 从这台设备发出</span>
@@ -7514,7 +7756,7 @@ export function LedgerApp({
                       onClick={() => void createNearbyPackage()}
                       disabled={pending}
                     >
-                      生成并分享同步包
+                      生成同步包
                     </button>
                     {nearbyPairingCode && (
                       <div className="nearby-code">
@@ -7523,9 +7765,7 @@ export function LedgerApp({
                         <button
                           type="button"
                           onClick={() => {
-                            void navigator.clipboard.writeText(
-                              nearbyPairingCode,
-                            );
+                            void copyToClipboard(nearbyPairingCode);
                             setNearbyStatus("配对码已复制，请与同步包一起发送。");
                           }}
                         >
@@ -7533,19 +7773,27 @@ export function LedgerApp({
                         </button>
                       </div>
                     )}
+                    {nearbyDownload && (
+                      <>
+                        <button type="button" onClick={downloadNearbyPackage}>
+                          下载同步包
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void uploadNearbyPackage()}
+                          disabled={nearbyLanUploading}
+                        >
+                          {nearbyLanUploading ? "正在发送…" : "通过局域网发送"}
+                        </button>
+                        {nearbyLanPackageId && (
+                          <small>已发送，接收设备可直接获取（15 分钟内有效）</small>
+                        )}
+                      </>
+                    )}
                   </article>
                   <article>
                     <span>2 · 在这台设备接收</span>
-                    <label>
-                      <b>{nearbyFile?.name || "选择收到的同步包"}</b>
-                      <input
-                        type="file"
-                        accept=".json,.e2ee.json,application/json,application/octet-stream"
-                        onChange={(event) =>
-                          setNearbyFile(event.target.files?.[0] ?? null)
-                        }
-                      />
-                    </label>
+                    <small>发送设备上传后，同步包会自动出现在这里。</small>
                     <input
                       value={nearbyReceiveCode}
                       onChange={(event) =>
@@ -7556,41 +7804,39 @@ export function LedgerApp({
                       placeholder="输入 8 位配对码"
                       autoComplete="off"
                     />
-                    <button
-                      type="button"
-                      onClick={receiveNearbyPackage}
-                      disabled={pending || !nearbyFile}
-                    >
-                      接收并合并
-                    </button>
+                    {nearbyLanPackages.length ? (
+                      <div className="nearby-lan-packages">
+                        <small>局域网待接收同步包</small>
+                        {nearbyLanPackages.map((item) => (
+                          <button
+                            type="button"
+                            key={item.id}
+                            onClick={() => receiveNearbyLanPackage(item.id)}
+                            disabled={pending || !nearbyReceiveCode}
+                          >
+                            获取并合并 · {Math.ceil(item.size / 1024)} KB
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <small>等待发送设备点击“通过局域网发送”…</small>
+                    )}
                   </article>
                 </div>
                 <small className="nearby-status">{nearbyStatus}</small>
-                <details className="advanced-peer-sync">
-                  <summary>高级：WebRTC 节点直连</summary>
-                  <div className="node-id">
-                    <span>本机节点</span>
-                    <code>{p2pNode || "正在生成…"}</code>
-                  </div>
-                  <div className="p2p-controls">
-                    <label>
-                      房间码
-                      <input
-                        value={p2pRoom}
-                        onChange={(event) => setP2pRoom(event.target.value)}
-                      />
-                    </label>
-                    <label>
-                      对端节点 ID
-                      <input
-                        value={p2pTarget}
-                        onChange={(event) => setP2pTarget(event.target.value)}
-                      />
-                    </label>
-                    <button onClick={() => void hostPeer()}>发起直连</button>
-                  </div>
-                  <small>{p2pStatus}</small>
-                </details>
+                <div className="nearby-peers">
+                  <span>在线设备</span>
+                  {nearbyPeers.length ? (
+                    nearbyPeers.map((peer) => (
+                      <small key={peer.nodeId}>{peer.label} · 已在线</small>
+                    ))
+                  ) : (
+                    <small>另一台设备打开数据中心后会自动出现</small>
+                  )}
+                </div>
+                <small className="nearby-lan-hint">
+                  在线设备仅用于确认连接状态，实际同步请使用上方“通过局域网发送”。
+                </small>
               </div>
             </section>
             <section className="webdav-tower">
@@ -7610,7 +7856,7 @@ export function LedgerApp({
                 <form action={syncWebDav}>
                   <label>
                     <span>
-                      WebDAV 地址
+                      WebDAV 文件夹地址
                       <button
                         type="button"
                         className="webdav-preset"
@@ -7638,6 +7884,14 @@ export function LedgerApp({
                       required
                     />
                   </label>
+                  <small className="webdav-file-location">
+                    云端文件：
+                    <code>
+                      {webdavConfig.url
+                        ? `${webdavConfig.url.replace(/\/+$/, "")}/neo-ledger.e2ee.json`
+                        : "填写文件夹地址后自动确定"}
+                    </code>
+                  </small>
                   <div>
                     <label>
                       <span>用户名</span>
@@ -7685,30 +7939,78 @@ export function LedgerApp({
                       required
                     />
                   </label>
+                  <div className="webdav-auto-row">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={webdavConfig.autoSync}
+                        onChange={(event) =>
+                          setWebdavConfig((current) => ({
+                            ...current,
+                            autoSync: event.target.checked,
+                          }))
+                        }
+                      />
+                      <span>自动同步</span>
+                    </label>
+                    <select
+                      aria-label="自动同步间隔"
+                      value={webdavConfig.intervalMinutes}
+                      onChange={(event) =>
+                        setWebdavConfig((current) => ({
+                          ...current,
+                          intervalMinutes: Number(event.target.value),
+                        }))
+                      }
+                    >
+                      <option value={1}>每 1 分钟</option>
+                      <option value={5}>每 5 分钟</option>
+                      <option value={15}>每 15 分钟</option>
+                      <option value={30}>每 30 分钟</option>
+                    </select>
+                  </div>
                   <div className="sync-actions">
                     <button
-                      className="smart-sync-button"
+                      className={`smart-sync-button ${webdavSyncMode === "smart" ? "active" : webdavSyncMode ? "inactive" : ""}`}
                       name="mode"
                       value="smart"
                       disabled={syncing}
                     >
-                      {syncing ? "正在安全同步…" : "立即安全同步"}
+                      {syncing && webdavSyncMode === "smart"
+                        ? "正在安全同步…"
+                        : "立即安全同步"}
                     </button>
                   </div>
                   <details className="webdav-advanced">
                     <summary>高级操作</summary>
-                    <div className="sync-actions">
-                      <button name="mode" value="upload" disabled={syncing}>
-                        仅上传
+                    <div className="sync-actions advanced-sync-actions">
+                      <button
+                        className={webdavSyncMode === "upload" ? "active" : ""}
+                        name="mode"
+                        value="upload"
+                        disabled={syncing}
+                      >
+                        {syncing && webdavSyncMode === "upload"
+                          ? "正在仅上传…"
+                          : "仅上传"}
                       </button>
-                      <button name="mode" value="download" disabled={syncing}>
-                        仅下载并覆盖本机
+                      <button
+                        className={webdavSyncMode === "download" ? "active" : ""}
+                        name="mode"
+                        value="download"
+                        disabled={syncing}
+                      >
+                        {syncing && webdavSyncMode === "download"
+                          ? "正在下载覆盖…"
+                          : "仅下载并覆盖本机"}
                       </button>
                     </div>
                   </details>
                 </form>
                 <small>
-                  {syncing ? "卫星正在交换密文…" : `上次同步：${syncStatus}`}
+                  {syncing
+                    ? `当前操作：${webdavSyncMode === "upload" ? "仅上传" : webdavSyncMode === "download" ? "仅下载并覆盖本机" : "安全双向同步"}`
+                    : `${webdavSyncMode ? `当前模式：${webdavSyncMode === "upload" ? "仅上传" : webdavSyncMode === "download" ? "仅下载并覆盖本机" : "安全双向同步"} · ` : ""}上次同步：${syncStatus}`}
                 </small>
               </div>
             </section>
@@ -7735,6 +8037,9 @@ export function LedgerApp({
                 {quickSyncStatus?.lastUsedAt && (
                   <small>最近使用：{formatTimestamp(quickSyncStatus.lastUsedAt)}</small>
                 )}
+                {Boolean(quickSyncStatus?.processedCount) && (
+                  <small>已接收：{quickSyncStatus?.processedCount} 笔</small>
+                )}
               </div>
               {quickSyncToken && (
                 <div className="quick-sync-token">
@@ -7743,14 +8048,39 @@ export function LedgerApp({
                   <button
                     type="button"
                     onClick={() => {
-                      void navigator.clipboard.writeText(quickSyncToken);
+                      void copyToClipboard(quickSyncToken);
                       setQuickSyncMessage("密钥已复制，请保存在可信设备中。");
                     }}
                   >
                     复制密钥
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => void testQuickSyncConnection()}
+                    disabled={pending}
+                  >
+                    发送测试账单
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void copyAndroidCompanionConfig()}
+                  >
+                    复制安卓配置
+                  </button>
                   <button type="button" onClick={() => void copyQuickSyncExample()}>
                     复制请求示例
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void copyQuickSyncTemplate("shortcut")}
+                  >
+                    复制快捷指令配置
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void copyQuickSyncTemplate("notification")}
+                  >
+                    复制通知转发配置
                   </button>
                 </div>
               )}

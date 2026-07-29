@@ -41,6 +41,15 @@ type ExistingRow = {
   offlineId: string | null;
 };
 
+type CategoryRow = {
+  name: string;
+  builtinKey: string | null;
+};
+
+type QueryRows<T> = {
+  results: T[];
+};
+
 const BLACKLIST = [
   "涂改",
   "编造",
@@ -118,7 +127,7 @@ function normalizeItem(value: ParsedBill): ParsedBill | null {
   };
 }
 
-async function loadAccounts(ledgerId: number) {
+async function loadAccounts(ledgerId: number): Promise<AccountRow[]> {
   return (
     await getDbBinding()
       .prepare(
@@ -261,22 +270,26 @@ export async function PUT(request: Request) {
       .filter((item): item is ParsedBill => Boolean(item));
     if (!items.length) throw new Error("没有待导入流水");
     const db = getDbBinding();
+    const accountsPromise: Promise<AccountRow[]> = loadAccounts(ledgerId);
+    const categoryRowsPromise: Promise<QueryRows<CategoryRow>> = db
+      .prepare(
+        "SELECT name,builtin_key AS builtinKey FROM expense_categories WHERE ledger_id=? AND is_active=1 ORDER BY sort_order,id",
+      )
+      .bind(ledgerId)
+      .all<CategoryRow>();
+    const incomeCategoryRowsPromise: Promise<QueryRows<CategoryRow>> = db
+      .prepare(
+        "SELECT name,builtin_key AS builtinKey FROM income_categories WHERE ledger_id=? AND is_active=1 ORDER BY sort_order,id",
+      )
+      .bind(ledgerId)
+      .all<CategoryRow>();
+    const existingPromise: Promise<ExistingRow[]> = loadExisting(ledgerId, items);
     const [accounts, categoryRows, incomeCategoryRows, existing] =
       await Promise.all([
-        loadAccounts(ledgerId),
-        db
-          .prepare(
-            "SELECT name,builtin_key AS builtinKey FROM expense_categories WHERE ledger_id=? AND is_active=1 ORDER BY sort_order,id",
-          )
-          .bind(ledgerId)
-          .all<{ name: string; builtinKey: string | null }>(),
-        db
-          .prepare(
-            "SELECT name,builtin_key AS builtinKey FROM income_categories WHERE ledger_id=? AND is_active=1 ORDER BY sort_order,id",
-          )
-          .bind(ledgerId)
-          .all<{ name: string; builtinKey: string | null }>(),
-        loadExisting(ledgerId, items),
+        accountsPromise,
+        categoryRowsPromise,
+        incomeCategoryRowsPromise,
+        existingPromise,
       ]);
     const accountMap = new Map(accounts.map((account) => [account.id, account]));
     const existingImportKeys = new Set(

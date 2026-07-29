@@ -3,7 +3,7 @@
 直接调用 `app/api/**/route.ts` 导出的 `GET/POST/PUT/PATCH/DELETE` 函数，在真实 SQLite 上验证行为。不需要启动开发服务器，也不会碰你本机的账本数据库。
 
 ```bash
-npm run test:api     # 只跑 API 套件（约 96 项断言）
+npm run test:api     # 只跑 API 套件（130 项断言）
 npm test             # 构建 + 单元测试 + API 套件
 ```
 
@@ -18,7 +18,7 @@ npm test             # 构建 + 单元测试 + API 套件
 | `lib.mjs` | 断言与请求辅助函数 |
 | `suite1.mjs` | 核心记账链路：账本、账户、分类、流水、转账、预算、导出 |
 | `suite2.mjs` | 业务模块：储蓄目标、订阅、分期、成员、资产、令牌、导入、P2P |
-| `suite3.mjs` | 备份恢复回环、注册登录、鉴权边界、WebDAV 安全校验 |
+| `suite3.mjs` | 备份恢复回环、注册登录、鉴权边界、账号头像、邮箱验证码、WebDAV 安全校验 |
 
 套件 3 会读取套件 1 导出的备份快照，因此三者必须按顺序执行。
 

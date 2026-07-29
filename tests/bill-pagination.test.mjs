@@ -43,10 +43,10 @@ test("shows ten tracked assets on each asset page", () => {
 test("keeps every addable management collection to ten rows per page", () => {
   const collections = [
     "我的续费",
-    "负债摊销沙盘",
+    "分期付款",
     "心愿储蓄罐",
     "分账搭子",
-    "品类预算控制塔",
+    "品类预算",
   ];
   const rows = Array.from({ length: 21 }, (_, index) => index + 1);
 

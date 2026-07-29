@@ -1,13 +1,27 @@
+import { normalizeCloudSyncInterval } from "./cloud-sync-core.js";
+
 export function restoreBrowserState({ storage, online, createNodeId }) {
-  let webdavConfig = { url: "", username: "" };
+  let webdavConfig = {
+    url: "",
+    username: "",
+    autoSync: false,
+    intervalMinutes: 5,
+  };
   try {
     const saved = JSON.parse(storage.getItem("neo-webdav-config") || "{}");
     webdavConfig = {
       url: String(saved?.url || ""),
       username: String(saved?.username || ""),
+      autoSync: Boolean(saved?.autoSync),
+      intervalMinutes: normalizeCloudSyncInterval(saved?.intervalMinutes),
     };
   } catch {
-    webdavConfig = { url: "", username: "" };
+    webdavConfig = {
+      url: "",
+      username: "",
+      autoSync: false,
+      intervalMinutes: 5,
+    };
   }
 
   let p2pNode = "";

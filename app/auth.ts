@@ -7,6 +7,9 @@ import {
 
 const PASSWORD_ITERATIONS = 240_000;
 const SESSION_SECONDS = 30 * 24 * 60 * 60;
+export const MAX_AVATAR_BYTES = 512 * 1024;
+
+export type AvatarMimeType = "image/jpeg" | "image/png" | "image/webp";
 
 export type AuthUser = {
   id: string;
@@ -14,6 +17,7 @@ export type AuthUser = {
   username: string;
   displayName: string;
   email: string | null;
+  avatarUrl: string | null;
   provider: "local" | "chatgpt";
 };
 
@@ -35,6 +39,82 @@ const bytesToBase64Url = (bytes: Uint8Array) => {
     .replace(/=+$/g, "");
 };
 
+const bytesToBase64 = (bytes: Uint8Array) => {
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 8192)
+    binary += String.fromCharCode(...bytes.subarray(index, index + 8192));
+  return btoa(binary);
+};
+
+function hasAvatarSignature(mimeType: AvatarMimeType, bytes: Uint8Array) {
+  if (mimeType === "image/jpeg")
+    return (
+      bytes.length >= 3 &&
+      bytes[0] === 0xff &&
+      bytes[1] === 0xd8 &&
+      bytes[2] === 0xff
+    );
+  if (mimeType === "image/png")
+    return (
+      bytes.length >= 8 &&
+      bytes[0] === 0x89 &&
+      bytes[1] === 0x50 &&
+      bytes[2] === 0x4e &&
+      bytes[3] === 0x47 &&
+      bytes[4] === 0x0d &&
+      bytes[5] === 0x0a &&
+      bytes[6] === 0x1a &&
+      bytes[7] === 0x0a
+    );
+  return (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  );
+}
+
+export function avatarDataUrlFromBytes(
+  mimeType: AvatarMimeType,
+  bytes: Uint8Array,
+) {
+  if (!bytes.length) throw new Error("头像图片不能为空");
+  if (bytes.length > MAX_AVATAR_BYTES)
+    throw new Error("头像图片不能超过 512 KB");
+  if (!hasAvatarSignature(mimeType, bytes))
+    throw new Error("头像图片内容与格式不匹配");
+  return `data:${mimeType};base64,${bytesToBase64(bytes)}`;
+}
+
+export function validateAvatarDataUrl(value: unknown) {
+  if (typeof value !== "string")
+    throw new Error("头像必须是 JPEG、PNG 或 WebP 图片");
+  // The encoded-length check prevents a large allocation before decoding.
+  if (value.length > Math.ceil(MAX_AVATAR_BYTES / 3) * 4 + 64)
+    throw new Error("头像图片不能超过 512 KB");
+  const match = value.match(
+    /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/,
+  );
+  if (!match || match[2].length % 4 !== 0)
+    throw new Error("头像必须是 JPEG、PNG 或 WebP 的 Base64 图片");
+  let binary: string;
+  try {
+    binary = atob(match[2]);
+  } catch {
+    throw new Error("头像 Base64 数据无效");
+  }
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  const mimeType = match[1] as AvatarMimeType;
+  if (bytesToBase64(bytes) !== match[2])
+    throw new Error("头像 Base64 数据无效");
+  return avatarDataUrlFromBytes(mimeType, bytes);
+}
+
 export async function authTokenDigest(value: string) {
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -45,7 +125,7 @@ export async function authTokenDigest(value: string) {
 
 async function derivePassword(
   password: string,
-  salt: Uint8Array,
+  salt: Uint8Array<ArrayBuffer>,
   iterations = PASSWORD_ITERATIONS,
 ) {
   const material = await crypto.subtle.importKey(
@@ -105,7 +185,7 @@ export async function sessionUser(token: string): Promise<AuthUser | null> {
   const db = getDbBinding();
   const row = await db
     .prepare(
-      `SELECT u.id,u.username,u.display_name displayName,u.email
+      `SELECT u.id,u.username,u.display_name displayName,u.email,u.avatar_url avatarUrl
        FROM app_sessions s JOIN app_users u ON u.id=s.user_id
        WHERE s.token_hash=? AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND u.disabled=0`,
     )
@@ -115,6 +195,7 @@ export async function sessionUser(token: string): Promise<AuthUser | null> {
       username: string;
       displayName: string;
       email: string | null;
+      avatarUrl: string | null;
     }>();
   if (!row) return null;
   await db
@@ -129,6 +210,7 @@ export async function sessionUser(token: string): Promise<AuthUser | null> {
     username: row.username,
     displayName: row.displayName,
     email: row.email,
+    avatarUrl: row.avatarUrl,
     provider: "local",
   };
 }
