@@ -15,6 +15,10 @@ android {
         versionName = "1.1.0"
     }
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     signingConfigs {
         if (!releaseKeyPath.isNullOrBlank()) {
             create("release") {
