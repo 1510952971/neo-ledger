@@ -35,10 +35,14 @@ public final class MainActivity extends Activity {
     private EditText extraPackages;
     private Switch wechat;
     private Switch alipay;
+    private Switch marketApps;
     private TextView permissionState;
+    private TextView accessibilityState;
+    private TextView updateState;
     private TextView sendState;
     private TextView capturedState;
     private TextView queueState;
+    private java.io.File downloadedApk;
 
     private final BroadcastReceiver statusReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) { refreshStatus(); }
@@ -70,6 +74,7 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         refreshStatus();
+        if (downloadedApk != null && canInstallPackages()) installDownloadedApk();
     }
 
     private View buildView() {
@@ -88,6 +93,24 @@ public final class MainActivity extends Activity {
         subtitle.setPadding(0, dp(4), 0, dp(20));
         root.addView(subtitle);
 
+        section(root, "应用更新");
+        updateState = text("当前版本：v" + BuildConfig.VERSION_NAME, 13, "#657066");
+        updateState.setLineSpacing(0, 1.2f);
+        root.addView(updateState, topMargin(4));
+        Button update = button("检查新版 APK", false);
+        update.setOnClickListener(view -> checkForAppUpdate());
+        root.addView(update, topMargin(8));
+
+        TextView quickHint = text("推荐流程：网页生成安卓配置 → 一键粘贴 → 开启通知权限 → 发送测试账单", 13, "#657066");
+        quickHint.setLineSpacing(0, 1.2f);
+        root.addView(quickHint, matchWrap());
+        Button quickStart = button("一键粘贴配置并开启通知权限", true);
+        quickStart.setOnClickListener(view -> {
+            if (pasteConfiguration())
+                startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
+        });
+        root.addView(quickStart, topMargin(10));
+
         permissionState = text("", 14, "#657066");
         permissionState.setPadding(dp(14), dp(12), dp(14), dp(12));
         root.addView(permissionState, matchWrap());
@@ -95,6 +118,19 @@ public final class MainActivity extends Activity {
         Button permission = button("开启通知读取权限", false);
         permission.setOnClickListener(view -> startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)));
         root.addView(permission, topMargin(10));
+
+        section(root, "付款完成界面识别");
+        TextView accessibilityHint = text(
+                "仅读取当前前台支付 App 的可见界面；必须出现支付成功结果和明确金额才会记账。不会点击支付、不会替你付款。",
+                13, "#657066");
+        accessibilityHint.setLineSpacing(0, 1.2f);
+        root.addView(accessibilityHint, topMargin(4));
+        accessibilityState = text("无障碍支付识别：未开启", 14, "#B44040");
+        accessibilityState.setPadding(dp(14), dp(12), dp(14), dp(12));
+        root.addView(accessibilityState, topMargin(8));
+        Button accessibility = button("开启无障碍支付识别", false);
+        accessibility.setOnClickListener(view -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        root.addView(accessibility, topMargin(8));
 
         Button background = button("厂商自启动 / 后台设置", false);
         background.setOnClickListener(view -> openAutostartSettings());
@@ -108,7 +144,7 @@ public final class MainActivity extends Activity {
         Button paste = button("从 Neo Ledger 粘贴配置", false);
         paste.setOnClickListener(view -> pasteConfiguration());
         root.addView(paste, topMargin(8));
-        endpoint = field("Neo Ledger 地址，例如 http://192.168.1.95:3000", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        endpoint = field("Neo Ledger 地址，例如 http://电脑局域网地址:3000", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         root.addView(endpoint, topMargin(10));
         token = field("自动记账密钥", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         token.setTransformationMethod(PasswordTransformationMethod.getInstance());
@@ -119,8 +155,10 @@ public final class MainActivity extends Activity {
         section(root, "监听来源");
         wechat = toggle("微信支付通知");
         alipay = toggle("支付宝通知");
+        marketApps = toggle("淘宝 / 京东 / 美团 / 拼多多等支付");
         root.addView(wechat, topMargin(4));
         root.addView(alipay, topMargin(2));
+        root.addView(marketApps, topMargin(2));
         extraPackages = field("其他应用包名，用逗号分隔（可选）", InputType.TYPE_CLASS_TEXT);
         root.addView(extraPackages, topMargin(10));
 
@@ -135,7 +173,7 @@ public final class MainActivity extends Activity {
             HttpSender.send(this,
                     "支付宝支付，自动记账连接测试消费0.01元",
                     "android-companion-test",
-                    "android-test-" + System.currentTimeMillis(),
+                    "android-companion-test-ledger-" + store.ledgerId(),
                     (ok, message) -> {
                         sendState.setText(message);
                         sendState.setTextColor(color(ok ? "#247A55" : "#B44040"));
@@ -166,7 +204,7 @@ public final class MainActivity extends Activity {
         root.addView(capturedState);
 
         TextView note = text(
-                "保持 Neo Ledger 服务正在运行。局域网地址仅适合同一 Wi-Fi；外网必须使用 HTTPS 或可信 VPN。应用只处理已选择来源中同时包含金额和支付关键词的通知，密钥仅加密保存在本机。",
+                "保持 Neo Ledger 服务正在运行。局域网地址仅适合同一 Wi-Fi；外网必须使用 HTTPS 或可信 VPN。通知模式只处理金额和支付关键词；无障碍模式只处理当前支付 App 的支付完成界面，密钥仅加密保存在本机。",
                 13,
                 "#657066");
         note.setLineSpacing(0, 1.25f);
@@ -176,11 +214,12 @@ public final class MainActivity extends Activity {
     }
 
     private void load() {
-        endpoint.setText(store.endpoint().replaceAll("/api/external/quick-sync$", ""));
+        endpoint.setText(EndpointNormalizer.baseUrl(store.endpoint()));
         token.setText(store.token());
         ledgerId.setText(String.valueOf(store.ledgerId()));
         wechat.setChecked(store.wechatEnabled());
         alipay.setChecked(store.alipayEnabled());
+        marketApps.setChecked(store.marketAppsEnabled());
         extraPackages.setText(store.extraPackages());
         refreshStatus();
     }
@@ -194,7 +233,8 @@ public final class MainActivity extends Activity {
         }
         try {
             int ledger = Integer.parseInt(ledgerId.getText().toString().trim());
-            store.save(url, secret, ledger, wechat.isChecked(), alipay.isChecked(), extraPackages.getText().toString());
+            store.save(url, secret, ledger, wechat.isChecked(), alipay.isChecked(),
+                    marketApps.isChecked(), extraPackages.getText().toString());
             if (toast) Toast.makeText(this, "配置已保存", Toast.LENGTH_SHORT).show();
             refreshStatus();
             return true;
@@ -209,6 +249,12 @@ public final class MainActivity extends Activity {
         permissionState.setText(granted ? "通知读取权限：已开启" : "通知读取权限：未开启");
         permissionState.setTextColor(color(granted ? "#247A55" : "#B44040"));
         permissionState.setBackgroundColor(color(granted ? "#E5F5EC" : "#FBE9E7"));
+        if (accessibilityState != null) {
+            boolean enabled = accessibilityRecognitionGranted();
+            accessibilityState.setText(enabled ? "无障碍支付识别：已开启" : "无障碍支付识别：未开启");
+            accessibilityState.setTextColor(color(enabled ? "#247A55" : "#B44040"));
+            accessibilityState.setBackgroundColor(color(enabled ? "#E5F5EC" : "#FBE9E7"));
+        }
         if (sendState != null) sendState.setText("发送状态：" + store.lastStatus());
         if (queueState != null) queueState.setText("待发送：" + new PendingEventStore(this).count() + " 条");
         if (capturedState != null) capturedState.setText("最近捕获：" + store.lastCaptured());
@@ -217,6 +263,75 @@ public final class MainActivity extends Activity {
     private boolean notificationAccessGranted() {
         String enabled = Settings.Secure.getString(getContentResolver(), "enabled_notification_listeners");
         return enabled != null && enabled.contains(getPackageName());
+    }
+
+    private boolean accessibilityRecognitionGranted() {
+        String enabled = Settings.Secure.getString(
+                getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        if (enabled == null) return false;
+        ComponentName expected = new ComponentName(this, NeoPaymentAccessibilityService.class);
+        for (String value : enabled.split(":")) {
+            if (expected.equals(ComponentName.unflattenFromString(value))) return true;
+        }
+        return false;
+    }
+
+    private void checkForAppUpdate() {
+        updateState.setText("正在检查 GitHub 最新版本…");
+        AppUpdater.check(this, result -> {
+            if (!result.ok) {
+                updateState.setText(result.message);
+                return;
+            }
+            if (!result.available || result.release == null) {
+                updateState.setText("当前版本：v" + BuildConfig.VERSION_NAME + "（已是最新版）");
+                Toast.makeText(this, "当前已是最新版", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            updateState.setText("发现新版：v" + result.version);
+            String notes = result.release.notes == null ? "" : result.release.notes.trim();
+            if (notes.length() > 800) notes = notes.substring(0, 800) + "…";
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle("发现 Neo Ledger 新版")
+                    .setMessage("v" + result.version + (notes.isEmpty() ? "" : "\n\n" + notes))
+                    .setNegativeButton("稍后", null)
+                    .setPositiveButton("下载并安装", (dialog, which) -> downloadAppUpdate(result.release))
+                    .show();
+        });
+    }
+
+    private void downloadAppUpdate(AppUpdater.Release release) {
+        updateState.setText("正在下载 v" + release.version + "…");
+        AppUpdater.download(this, release, result -> {
+            if (!result.ok || result.apk == null) {
+                updateState.setText(result.message);
+                return;
+            }
+            downloadedApk = result.apk;
+            updateState.setText("v" + release.version + " 已下载，准备安装");
+            installDownloadedApk();
+        });
+    }
+
+    private void installDownloadedApk() {
+        if (downloadedApk == null) return;
+        java.io.File apk = downloadedApk;
+        try {
+            downloadedApk = null;
+            AppUpdater.install(this, apk);
+        } catch (SecurityException error) {
+            downloadedApk = apk;
+            updateState.setText(error.getMessage());
+            Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
+        } catch (Exception error) {
+            downloadedApk = apk;
+            updateState.setText("安装更新失败：" + error.getMessage());
+            Toast.makeText(this, "安装更新失败：" + error.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private boolean canInstallPackages() {
+        return Build.VERSION.SDK_INT < 26 || getPackageManager().canRequestPackageInstalls();
     }
 
     private void openBatterySettings() {
@@ -255,7 +370,7 @@ public final class MainActivity extends Activity {
                 Uri.parse("package:" + getPackageName())));
     }
 
-    private void pasteConfiguration() {
+    private boolean pasteConfiguration() {
         try {
             ClipboardManager clipboard = getSystemService(ClipboardManager.class);
             ClipData clip = clipboard == null ? null : clipboard.getPrimaryClip();
@@ -269,10 +384,12 @@ public final class MainActivity extends Activity {
             if (saveConfig(false)) {
                 clipboard.setPrimaryClip(ClipData.newPlainText("", ""));
                 Toast.makeText(this, "配置已粘贴并保存，剪贴板中的密钥已清除", Toast.LENGTH_SHORT).show();
+                return true;
             }
         } catch (Exception error) {
             Toast.makeText(this, "粘贴失败：" + error.getMessage(), Toast.LENGTH_LONG).show();
         }
+        return false;
     }
 
     private void section(LinearLayout root, String value) {

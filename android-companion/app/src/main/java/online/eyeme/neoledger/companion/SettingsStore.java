@@ -26,16 +26,15 @@ final class SettingsStore {
         preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
-    void save(String endpoint, String token, int ledgerId, boolean wechat, boolean alipay, String extraPackages) throws Exception {
-        String normalized = endpoint.trim().replaceAll("/+$", "");
-        if (!normalized.endsWith("/api/external/quick-sync"))
-            normalized += "/api/external/quick-sync";
+    void save(String endpoint, String token, int ledgerId, boolean wechat, boolean alipay,
+              boolean marketApps, String extraPackages) throws Exception {
         preferences.edit()
-                .putString("endpoint", normalized)
+                .putString("endpoint", EndpointNormalizer.transactionEndpoint(endpoint))
                 .putString(TOKEN, encrypt(token.trim()))
                 .putInt("ledger_id", Math.max(1, ledgerId))
                 .putBoolean("wechat", wechat)
                 .putBoolean("alipay", alipay)
+                .putBoolean("market_apps", marketApps)
                 .putString("extra_packages", extraPackages.trim())
                 .apply();
     }
@@ -44,6 +43,7 @@ final class SettingsStore {
     int ledgerId() { return preferences.getInt("ledger_id", 1); }
     boolean wechatEnabled() { return preferences.getBoolean("wechat", true); }
     boolean alipayEnabled() { return preferences.getBoolean("alipay", true); }
+    boolean marketAppsEnabled() { return preferences.getBoolean("market_apps", true); }
     String extraPackages() { return preferences.getString("extra_packages", ""); }
     boolean configured() { return !endpoint().isEmpty() && !token().isEmpty(); }
     String lastStatus() { return preferences.getString("last_status", "尚未发送通知"); }
@@ -73,18 +73,6 @@ final class SettingsStore {
 
     void listenerConnected() {
         preferences.edit().putLong("listener_connected_at", System.currentTimeMillis()).apply();
-    }
-
-    synchronized boolean claimNotification(String fingerprint) {
-        long now = System.currentTimeMillis();
-        String previous = preferences.getString("last_notification_fingerprint", "");
-        long previousAt = preferences.getLong("last_notification_at", 0);
-        if (fingerprint.equals(previous) && now - previousAt < 20_000) return false;
-        preferences.edit()
-                .putString("last_notification_fingerprint", fingerprint)
-                .putLong("last_notification_at", now)
-                .apply();
-        return true;
     }
 
     private SecretKey key() throws Exception {

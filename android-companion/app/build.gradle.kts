@@ -5,18 +5,31 @@ plugins {
 android {
     namespace = "online.eyeme.neoledger.companion"
     compileSdk = 35
+    val releaseKeyPath = System.getenv("ANDROID_KEYSTORE_PATH")
 
     defaultConfig {
         applicationId = "online.eyeme.neoledger.companion"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
+    }
+
+    signingConfigs {
+        if (!releaseKeyPath.isNullOrBlank()) {
+            create("release") {
+                storeFile = file(releaseKeyPath)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = true
+            if (!releaseKeyPath.isNullOrBlank()) signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

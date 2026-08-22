@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Neo Ledger 自动记账</string>
+    <string name="payment_accessibility_description">只识别已配置支付 App 当前可见的支付完成界面，不会点击、输入或发起支付。</string>
+</resources>

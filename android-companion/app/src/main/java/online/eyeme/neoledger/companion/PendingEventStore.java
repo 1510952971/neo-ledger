@@ -11,6 +11,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 final class PendingEventStore extends SQLiteOpenHelper {
+    private static final int DATABASE_VERSION = 2;
+    private static final long SEEN_RETENTION_MILLIS = 7L * 24 * 60 * 60 * 1000;
+    private static final int MAX_SEEN_EVENTS = 500;
+
     static final class Event {
         final String id;
         final String text;
@@ -28,22 +32,95 @@ final class PendingEventStore extends SQLiteOpenHelper {
     }
 
     PendingEventStore(Context context) {
-        super(context.getApplicationContext(), "neo_pending_events.db", null, 1);
+        super(context.getApplicationContext(), "neo_pending_events.db", null, DATABASE_VERSION);
     }
 
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE pending_events(id TEXT PRIMARY KEY,text TEXT NOT NULL,source TEXT NOT NULL,occurred_at TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,next_attempt INTEGER NOT NULL DEFAULT 0,last_error TEXT NOT NULL DEFAULT '')");
+        db.execSQL("CREATE TABLE seen_notifications(fingerprint TEXT PRIMARY KEY,seen_at INTEGER NOT NULL)");
     }
 
-    @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {}
+    @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+        if (oldVersion < 2)
+            db.execSQL("CREATE TABLE IF NOT EXISTS seen_notifications(fingerprint TEXT PRIMARY KEY,seen_at INTEGER NOT NULL)");
+    }
 
-    void enqueue(String id, String text, String source, long occurredAtMillis) {
-        ContentValues values = new ContentValues();
-        values.put("id", id);
-        values.put("text", text);
-        values.put("source", source);
-        values.put("occurred_at", Instant.ofEpochMilli(occurredAtMillis).toString());
-        getWritableDatabase().insertWithOnConflict("pending_events", null, values, SQLiteDatabase.CONFLICT_IGNORE);
+    /**
+     * Claims and queues a notification atomically. This is persistent, unlike
+     * a single last-seen value, so notification updates and process restarts
+     * cannot create duplicate ledger events or lose a claim between the two
+     * operations.
+     */
+    synchronized boolean enqueueIfNew(
+            String fingerprint,
+            String id,
+            String text,
+            String source,
+            String packageName,
+            String amount,
+            String alternateMode,
+            long occurredAtMillis,
+            long now) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            db.delete(
+                    "seen_notifications",
+                    "seen_at<?",
+                    new String[]{String.valueOf(now - SEEN_RETENTION_MILLIS)});
+            if (hasRecentAlternateMode(db, packageName, amount, alternateMode, now)) {
+                db.setTransactionSuccessful();
+                return false;
+            }
+            ContentValues values = new ContentValues();
+            values.put("fingerprint", fingerprint);
+            values.put("seen_at", now);
+            long inserted = db.insertWithOnConflict(
+                    "seen_notifications", null, values, SQLiteDatabase.CONFLICT_IGNORE);
+            if (inserted == -1) {
+                db.setTransactionSuccessful();
+                return false;
+            }
+            ContentValues event = new ContentValues();
+            event.put("id", id);
+            event.put("text", text);
+            event.put("source", source);
+            event.put("occurred_at", Instant.ofEpochMilli(occurredAtMillis).toString());
+            event.put("attempts", 0);
+            event.put("next_attempt", 0);
+            event.put("last_error", "");
+            long queued = db.insertWithOnConflict(
+                    "pending_events", null, event, SQLiteDatabase.CONFLICT_IGNORE);
+            if (queued == -1) {
+                return false;
+            }
+            db.execSQL(
+                    "DELETE FROM seen_notifications WHERE fingerprint NOT IN " +
+                            "(SELECT fingerprint FROM seen_notifications ORDER BY seen_at DESC LIMIT ?)",
+                    new Object[]{MAX_SEEN_EVENTS});
+            db.setTransactionSuccessful();
+            return true;
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    private boolean hasRecentAlternateMode(
+            SQLiteDatabase db, String packageName, String amount, String alternateMode, long now) {
+        if (packageName == null || packageName.isEmpty() || amount == null || amount.isEmpty()
+                || alternateMode == null || alternateMode.isEmpty()) return false;
+        String prefix = packageName + "|" + alternateMode + "|amount=" + amount + "|";
+        try (Cursor cursor = db.query(
+                "seen_notifications",
+                new String[]{"fingerprint"},
+                "seen_at>?",
+                new String[]{String.valueOf(now - 120_000L)},
+                null, null, null, null)) {
+            while (cursor.moveToNext()) {
+                if (cursor.getString(0).startsWith(prefix)) return true;
+            }
+        }
+        return false;
     }
 
     List<Event> ready(int limit) {

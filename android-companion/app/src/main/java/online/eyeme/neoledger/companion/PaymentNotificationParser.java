@@ -2,7 +2,6 @@ package online.eyeme.neoledger.companion;
 
 import java.util.Arrays;
 import java.util.HashSet;
-import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -23,6 +22,7 @@ final class PaymentNotificationParser {
     static boolean acceptsPackage(String packageName, SettingsStore store) {
         if (WECHAT.equals(packageName)) return store.wechatEnabled();
         if (ALIPAY.equals(packageName)) return store.alipayEnabled();
+        if (PaymentAppCatalog.isMarketApp(packageName)) return store.marketAppsEnabled();
         Set<String> extra = new HashSet<>();
         Arrays.stream(store.extraPackages().split("[,\\s]+"))
                 .map(String::trim)
@@ -46,9 +46,7 @@ final class PaymentNotificationParser {
     }
 
     static String source(String packageName) {
-        if (WECHAT.equals(packageName)) return "微信";
-        if (ALIPAY.equals(packageName)) return "支付宝";
-        return packageName.toLowerCase(Locale.ROOT);
+        return PaymentAppCatalog.source(packageName);
     }
 
     private PaymentNotificationParser() {}

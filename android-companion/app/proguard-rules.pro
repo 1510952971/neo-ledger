@@ -1,1 +1,3 @@
 -keep class online.eyeme.neoledger.companion.NeoNotificationListener { *; }
+-keep class online.eyeme.neoledger.companion.NeoPaymentAccessibilityService { *; }
+-keep class online.eyeme.neoledger.companion.NeoApkFileProvider { *; }

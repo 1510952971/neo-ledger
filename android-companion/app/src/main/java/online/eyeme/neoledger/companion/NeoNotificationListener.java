@@ -28,12 +28,24 @@ public final class NeoNotificationListener extends NotificationListenerService {
         String text = notificationText(value.extras);
         if (!PaymentNotificationParser.isPayment(text)) return;
         String source = PaymentNotificationParser.source(notification.getPackageName());
-        String fingerprint = notification.getKey() + "|" + PaymentNotificationParser.amountFingerprint(text);
-        if (!store.claimNotification(fingerprint)) return;
-        String externalId = "android:" + digest(notification.getPackageName() + "|" + notification.getKey() + "|" + text);
+        String fingerprint = NotificationEventIdentity.fingerprint(
+                notification.getPackageName(), notification.getKey(), text);
+        // Do not include the changing notification text in the identity:
+        // payment apps often update the same notification after posting it.
+        String externalId = "android:" + digest(fingerprint);
         String payload = "【" + source + "】" + text;
         PendingEventStore queue = new PendingEventStore(this);
-        queue.enqueue(externalId, payload, "android-notification", notification.getPostTime());
+        String amount = PaymentNotificationParser.amountFingerprint(text);
+        if (!queue.enqueueIfNew(
+                fingerprint,
+                externalId,
+                payload,
+                "android-notification",
+                notification.getPackageName(),
+                amount,
+                "screen",
+                notification.getPostTime(),
+                System.currentTimeMillis())) return;
         store.captured(source + "：" + text, queue.count());
         sendBroadcast(new android.content.Intent(SettingsStore.ACTION_STATUS).setPackage(getPackageName()));
         SyncScheduler.schedule(this, true);
