@@ -47,6 +47,9 @@ public final class PaymentScreenParserTest {
         assertFalse(PaymentScreenParser.isPaymentCompleted(
                 PaymentAppCatalog.JD,
                 "照片 ¥35.50 元"));
+        assertFalse(PaymentScreenParser.isPaymentCompleted(
+                PaymentAppCatalog.DOUYIN,
+                "刚刚抢购成功 商品 ¥24.90 立即配送 详情"));
     }
 
     @Test

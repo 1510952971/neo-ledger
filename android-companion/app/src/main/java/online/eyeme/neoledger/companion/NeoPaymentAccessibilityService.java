@@ -6,9 +6,11 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.List;
 
 /**
  * Observes only the visible foreground UI of configured payment apps.
@@ -60,15 +62,16 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
 
     private void scan(String packageName, AccessibilityNodeInfo root,
                       java.util.List<CharSequence> eventText, SettingsStore store, String source) {
-        String text = visibleText(root);
-        if (text.isEmpty() && eventText != null) {
+        String text = visibleText(packageName, root);
+        if (eventText != null) {
             for (CharSequence value : eventText) {
                 if (value != null) text += " " + value;
             }
         }
 
         boolean completed = PaymentScreenParser.isPaymentCompleted(packageName, text);
-        store.recordAccessibilityScan(source, completed);
+        store.recordAccessibilityScan(source, completed,
+                PaymentScreenParser.rejectionReason(packageName, text));
         if (!completed) {
             sendBroadcast(new Intent(SettingsStore.ACTION_STATUS).setPackage(getPackageName()));
             return;
@@ -104,11 +107,33 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
         super.onDestroy();
     }
 
-    private String visibleText(AccessibilityNodeInfo root) {
-        if (root == null) return "";
+    private String visibleText(String packageName, AccessibilityNodeInfo fallbackRoot) {
         StringBuilder result = new StringBuilder();
-        collect(root, result, new int[]{0});
+        int[] count = new int[]{0};
+        try {
+            List<AccessibilityWindowInfo> windows = getWindows();
+            for (int pass = 0; pass < 2; pass++) {
+                for (AccessibilityWindowInfo window : windows) {
+                    if (window == null) continue;
+                    boolean priority = window.isActive() || window.isFocused();
+                    if ((pass == 0) != priority) continue;
+                    AccessibilityNodeInfo windowRoot = window.getRoot();
+                    if (!samePackage(packageName, windowRoot)) continue;
+                    collect(windowRoot, result, count);
+                    if (count[0] >= MAX_NODES || result.length() >= MAX_TEXT_LENGTH) break;
+                }
+                if (count[0] >= MAX_NODES || result.length() >= MAX_TEXT_LENGTH) break;
+            }
+        } catch (RuntimeException ignored) {
+            // Some Android builds expose getWindows only intermittently.
+        }
+        if (result.length() == 0 && fallbackRoot != null) collect(fallbackRoot, result, count);
         return result.toString();
+    }
+
+    private boolean samePackage(String packageName, AccessibilityNodeInfo root) {
+        return root != null && root.getPackageName() != null
+                && packageName.equals(root.getPackageName().toString());
     }
 
     private void collect(AccessibilityNodeInfo node, StringBuilder result, int[] count) {

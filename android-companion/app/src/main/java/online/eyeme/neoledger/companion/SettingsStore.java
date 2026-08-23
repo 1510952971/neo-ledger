@@ -69,11 +69,12 @@ final class SettingsStore {
                 .apply();
     }
 
-    void recordAccessibilityScan(String source, boolean completed) {
+    void recordAccessibilityScan(String source, boolean completed, String reason) {
+        String detail = completed ? "识别到支付完成页" : "收到界面但未判定为支付完成页（" + reason + "）";
         preferences.edit()
                 .putInt("accessibility_scan_count", preferences.getInt("accessibility_scan_count", 0) + 1)
                 .putString("last_accessibility_scan", (source == null ? "支付应用" : source)
-                        + (completed ? "：识别到支付完成页" : "：收到界面但未判定为支付完成页"))
+                        + "：" + detail)
                 .apply();
     }
 

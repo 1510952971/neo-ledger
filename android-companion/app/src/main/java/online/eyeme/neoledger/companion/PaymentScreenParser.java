@@ -40,6 +40,20 @@ final class PaymentScreenParser {
                 || normalized.contains("收款") || normalized.contains("购买成功"));
     }
 
+    static String rejectionReason(String packageName, String text) {
+        String normalized = normalize(text);
+        if (normalized.length() < 8) return "可见文本不足";
+        if (REJECT.matcher(normalized).find()) return "命中订单/历史等非完成页关键词";
+        if (!SUCCESS.matcher(normalized).find()) return "未检测到支付成功或购买成功文字";
+        if (PaymentNotificationParser.amountFingerprint(normalized).isEmpty()) return "未检测到明确金额";
+        if (!(normalized.contains("支付") || normalized.contains("付款")
+                || normalized.contains("交易") || normalized.contains("扣款")
+                || normalized.contains("收款") || normalized.contains("购买成功"))) {
+            return "缺少支付语义";
+        }
+        return "已识别";
+    }
+
     /** Returns a compact payload without forwarding unrelated screen content. */
     static String payload(String packageName, String text) {
         String normalized = normalize(text);
