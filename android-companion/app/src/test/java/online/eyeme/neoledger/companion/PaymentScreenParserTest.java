@@ -71,8 +71,9 @@ public final class PaymentScreenParserTest {
 
     @Test
     public void rejectsPurchaseSuccessWithoutPaymentSemantics() {
-        assertFalse(PaymentScreenParser.isPaymentCompleted(
-                PaymentAppCatalog.DOUYIN,
-                "购买成功 团购频道 限时秒杀已额外省2元 商品 ¥16.99 查看订单"));
+        String text = "购买成功 团购频道 限时秒杀已额外省2元 商品 ¥16.99 查看订单";
+        assertFalse(PaymentScreenParser.isPaymentCompleted(PaymentAppCatalog.DOUYIN, text));
+        assertEquals("仅购买成功页，未检测到支付成功语义",
+                PaymentScreenParser.rejectionReason(PaymentAppCatalog.DOUYIN, text));
     }
 }

@@ -31,11 +31,14 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
     private static final int MAX_TEXT_LENGTH = 8_000;
     private static final long ACTIVE_WINDOW_POLL_MS = 900L;
     private static final long SCREENSHOT_MIN_INTERVAL_MS = 1_100L;
+    private static final long COMPLETION_COOLDOWN_MS = 5_000L;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Executor screenshotExecutor = command -> handler.post(command);
     private TextRecognizer textRecognizer;
     private boolean screenshotInFlight;
     private long lastScreenshotAt;
+    private String lastCompletedPackage;
+    private long lastCompletedAt;
     private final Runnable activeWindowPoll = new Runnable() {
         @Override public void run() {
             scanActiveWindow();
@@ -57,7 +60,8 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
         if (event == null || event.getPackageName() == null) return;
         int type = event.getEventType();
         if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-                && type != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return;
+                && type != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                && type != AccessibilityEvent.TYPE_WINDOWS_CHANGED) return;
 
         String packageName = event.getPackageName().toString();
         SettingsStore store = new SettingsStore(this);
@@ -65,7 +69,7 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
 
         String source = PaymentAppCatalog.source(packageName);
         store.recordAccessibilityEvent(source, type);
-        scan(packageName, getRootInActiveWindow(), event.getText(), store, source);
+        scan(packageName, getRootInActiveWindow(), event.getText(), store, source, true);
     }
 
     private void scanActiveWindow() {
@@ -74,23 +78,28 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
         String packageName = root.getPackageName().toString();
         SettingsStore store = new SettingsStore(this);
         if (!store.configured() || !PaymentNotificationParser.acceptsPackage(packageName, store)) return;
-        scan(packageName, root, null, store, PaymentAppCatalog.source(packageName));
+        scan(packageName, root, null, store, PaymentAppCatalog.source(packageName), false);
     }
 
     private void scan(String packageName, AccessibilityNodeInfo root,
-                      java.util.List<CharSequence> eventText, SettingsStore store, String source) {
+                      java.util.List<CharSequence> eventText, SettingsStore store, String source,
+                      boolean eventTriggered) {
+        long now = System.currentTimeMillis();
+        if (packageName.equals(lastCompletedPackage)
+                && now - lastCompletedAt < COMPLETION_COOLDOWN_MS) return;
+
+        String earlyEventText = eventText(eventText);
+        // Capture before traversing the window tree. Some apps keep the payment
+        // result sheet visible for only one or two seconds before navigating on.
+        if (eventTriggered) requestOcr(packageName, source, earlyEventText);
+
         String text = visibleText(packageName, root);
-        if (eventText != null) {
-            for (CharSequence value : eventText) {
-                if (value != null) text += " " + value;
-            }
-        }
+        if (!earlyEventText.isEmpty()) text += " " + earlyEventText;
 
         boolean completed = PaymentScreenParser.isPaymentCompleted(packageName, text);
         store.recordAccessibilityScan(source, completed,
                 PaymentScreenParser.rejectionReason(packageName, text));
         if (!completed) {
-            requestOcr(packageName, source, text);
             sendBroadcast(new Intent(SettingsStore.ACTION_STATUS).setPackage(getPackageName()));
             return;
         }
@@ -100,6 +109,9 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
 
     private void enqueueCompleted(String packageName, String source, String text,
                                   SettingsStore store) {
+
+        lastCompletedPackage = packageName;
+        lastCompletedAt = System.currentTimeMillis();
 
         String fingerprint = PaymentScreenParser.identity(packageName, text);
         String externalId = "android-screen:" + digest(fingerprint);
@@ -261,6 +273,14 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
         if (value == null) return;
         String text = value.toString().replaceAll("\\s+", " ").trim();
         if (!text.isEmpty()) result.append(' ').append(text);
+    }
+
+    private String eventText(List<CharSequence> values) {
+        StringBuilder result = new StringBuilder();
+        if (values != null) {
+            for (CharSequence value : values) append(result, value);
+        }
+        return result.toString().trim();
     }
 
     private String digest(String value) {

@@ -46,6 +46,7 @@ final class PaymentScreenParser {
         if (REJECT.matcher(normalized).find()) return "命中订单/历史等非完成页关键词";
         if (!SUCCESS.matcher(normalized).find()) return "未检测到支付成功或购买成功文字";
         if (amountFingerprint(normalized).isEmpty()) return "未检测到明确金额";
+        if (normalized.contains("购买成功")) return "仅购买成功页，未检测到支付成功语义";
         if (!(normalized.contains("支付") || normalized.contains("付款")
                 || normalized.contains("交易") || normalized.contains("扣款")
                 || normalized.contains("收款"))) {
