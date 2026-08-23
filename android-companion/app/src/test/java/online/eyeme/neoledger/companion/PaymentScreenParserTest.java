@@ -23,7 +23,7 @@ public final class PaymentScreenParserTest {
                 "支付成功 ¥18.88 立减优惠 -¥0.02 支付方式 抖音月付 支付时间 2026-08-23 15:56 6抖音支付积分 领取 附近神券 活动"));
         assertTrue(PaymentScreenParser.isPaymentCompleted(
                 PaymentAppCatalog.DOUYIN,
-                "购买成功 团购频道 限时秒杀已额外省2元 渝八两 鸡公煲米饭套餐 ¥16.99 查看订单"));
+                "购买成功 支付成功 团购频道 限时秒杀已额外省2元 渝八两 鸡公煲米饭套餐 ¥16.99 查看订单"));
     }
 
     @Test
@@ -61,5 +61,18 @@ public final class PaymentScreenParserTest {
                 PaymentAppCatalog.MEITUAN,
                 "支付成功 ¥26.00 元 交易号：TX202608210001 支付方式：微信");
         assertEquals(first, second);
+    }
+
+    @Test
+    public void prefersAmountNearPaymentSuccessOverBackgroundProductPrice() {
+        assertEquals("19.88", PaymentScreenParser.amountFingerprint(
+                "商品 ¥19.90 详情 支付成功 ¥19.88 立减优惠 -¥0.02 支付方式 抖音月付"));
+    }
+
+    @Test
+    public void rejectsPurchaseSuccessWithoutPaymentSemantics() {
+        assertFalse(PaymentScreenParser.isPaymentCompleted(
+                PaymentAppCatalog.DOUYIN,
+                "购买成功 团购频道 限时秒杀已额外省2元 商品 ¥16.99 查看订单"));
     }
 }

@@ -34,10 +34,10 @@ final class PaymentScreenParser {
         return normalized.length() >= 8
                 && !REJECT.matcher(normalized).find()
                 && SUCCESS.matcher(normalized).find()
-                && !PaymentNotificationParser.amountFingerprint(normalized).isEmpty()
+                && !amountFingerprint(normalized).isEmpty()
                 && (normalized.contains("支付") || normalized.contains("付款")
                 || normalized.contains("交易") || normalized.contains("扣款")
-                || normalized.contains("收款") || normalized.contains("购买成功"));
+                || normalized.contains("收款"));
     }
 
     static String rejectionReason(String packageName, String text) {
@@ -45,20 +45,37 @@ final class PaymentScreenParser {
         if (normalized.length() < 8) return "可见文本不足";
         if (REJECT.matcher(normalized).find()) return "命中订单/历史等非完成页关键词";
         if (!SUCCESS.matcher(normalized).find()) return "未检测到支付成功或购买成功文字";
-        if (PaymentNotificationParser.amountFingerprint(normalized).isEmpty()) return "未检测到明确金额";
+        if (amountFingerprint(normalized).isEmpty()) return "未检测到明确金额";
         if (!(normalized.contains("支付") || normalized.contains("付款")
                 || normalized.contains("交易") || normalized.contains("扣款")
-                || normalized.contains("收款") || normalized.contains("购买成功"))) {
+                || normalized.contains("收款"))) {
             return "缺少支付语义";
         }
         return "已识别";
+    }
+
+    /**
+     * Prefer an amount close to the success marker. Payment overlays often
+     * leave the product price visible behind them, so the first amount in the
+     * complete screen is not necessarily the amount that was paid.
+     */
+    static String amountFingerprint(String text) {
+        String normalized = normalize(text);
+        Matcher success = SUCCESS.matcher(normalized);
+        if (success.find()) {
+            int end = Math.min(normalized.length(), success.end() + 420);
+            String nearby = normalized.substring(success.start(), end);
+            String amount = PaymentNotificationParser.amountFingerprint(nearby);
+            if (!amount.isEmpty()) return amount;
+        }
+        return PaymentNotificationParser.amountFingerprint(normalized);
     }
 
     /** Returns a compact payload without forwarding unrelated screen content. */
     static String payload(String packageName, String text) {
         String normalized = normalize(text);
         String source = PaymentAppCatalog.source(packageName);
-        String amount = PaymentNotificationParser.amountFingerprint(normalized);
+        String amount = amountFingerprint(normalized);
         StringBuilder result = new StringBuilder("【").append(source)
                 .append("】支付成功，金额 ¥").append(amount).append("元");
         Matcher id = TRANSACTION_ID.matcher(normalized);
@@ -71,7 +88,7 @@ final class PaymentScreenParser {
     /** Stable across accessibility re-layouts, but distinguishes real payments when possible. */
     static String identity(String packageName, String text) {
         String normalized = normalize(text);
-        String amount = PaymentNotificationParser.amountFingerprint(normalized);
+        String amount = amountFingerprint(normalized);
         Matcher id = TRANSACTION_ID.matcher(normalized);
         if (id.find()) return packageName + "|screen|amount=" + amount + "|transaction=" + id.group(1);
         Matcher time = TIME.matcher(normalized);
