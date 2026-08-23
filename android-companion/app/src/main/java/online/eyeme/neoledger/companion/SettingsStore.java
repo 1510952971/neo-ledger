@@ -61,6 +61,30 @@ final class SettingsStore {
     String lastCaptured() { return preferences.getString("last_captured", "尚未捕获支付通知"); }
     long listenerConnectedAt() { return preferences.getLong("listener_connected_at", 0); }
 
+    void recordAccessibilityEvent(String source, int eventType) {
+        preferences.edit()
+                .putInt("accessibility_event_count", preferences.getInt("accessibility_event_count", 0) + 1)
+                .putString("last_accessibility_source", source == null ? "支付应用" : source)
+                .putLong("last_accessibility_event_at", System.currentTimeMillis())
+                .apply();
+    }
+
+    void recordAccessibilityScan(String source, boolean completed) {
+        preferences.edit()
+                .putInt("accessibility_scan_count", preferences.getInt("accessibility_scan_count", 0) + 1)
+                .putString("last_accessibility_scan", (source == null ? "支付应用" : source)
+                        + (completed ? "：识别到支付完成页" : "：收到界面但未判定为支付完成页"))
+                .apply();
+    }
+
+    String accessibilitySummary() {
+        int events = preferences.getInt("accessibility_event_count", 0);
+        if (events == 0) return "无障碍事件：尚未收到已配置支付 App 的界面事件";
+        String source = preferences.getString("last_accessibility_source", "支付应用");
+        String scan = preferences.getString("last_accessibility_scan", "尚未完成界面解析");
+        return "无障碍事件：已收到 " + events + " 次，最近为 " + source + "；" + scan;
+    }
+
     String token() {
         try {
             String value = preferences.getString(TOKEN, "");

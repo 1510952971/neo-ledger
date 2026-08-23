@@ -27,17 +27,24 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
         SettingsStore store = new SettingsStore(this);
         if (!store.configured() || !PaymentNotificationParser.acceptsPackage(packageName, store)) return;
 
+        String source = PaymentAppCatalog.source(packageName);
+        store.recordAccessibilityEvent(source, type);
+
         String text = visibleText(getRootInActiveWindow());
         if (text.isEmpty() && event.getText() != null) {
             for (CharSequence value : event.getText()) {
                 if (value != null) text += " " + value;
             }
         }
-        if (!PaymentScreenParser.isPaymentCompleted(packageName, text)) return;
+        boolean completed = PaymentScreenParser.isPaymentCompleted(packageName, text);
+        store.recordAccessibilityScan(source, completed);
+        if (!completed) {
+            sendBroadcast(new Intent(SettingsStore.ACTION_STATUS).setPackage(getPackageName()));
+            return;
+        }
 
         String fingerprint = PaymentScreenParser.identity(packageName, text);
         String externalId = "android-screen:" + digest(fingerprint);
-        String source = PaymentAppCatalog.source(packageName);
         PendingEventStore queue = new PendingEventStore(this);
         String amount = PaymentNotificationParser.amountFingerprint(text);
         long occurredAt = System.currentTimeMillis();

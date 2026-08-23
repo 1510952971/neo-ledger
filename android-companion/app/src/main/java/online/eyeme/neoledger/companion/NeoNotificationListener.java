@@ -36,6 +36,12 @@ public final class NeoNotificationListener extends NotificationListenerService {
         String payload = "【" + source + "】" + text;
         PendingEventStore queue = new PendingEventStore(this);
         String amount = PaymentNotificationParser.amountFingerprint(text);
+        long now = System.currentTimeMillis();
+        long postedAt = notification.getPostTime();
+        // Some payment apps reuse an old notification object. Keep its post
+        // time only when it is close to the capture time; otherwise record
+        // the actual observation time instead of an unrelated old timestamp.
+        long occurredAt = Math.abs(now - postedAt) <= 5L * 60 * 1000 ? postedAt : now;
         PendingEventStore.EnqueueResult queued = queue.enqueueIfNew(
                 fingerprint,
                 externalId,
@@ -44,8 +50,8 @@ public final class NeoNotificationListener extends NotificationListenerService {
                 notification.getPackageName(),
                 amount,
                 "notification",
-                notification.getPostTime(),
-                System.currentTimeMillis());
+                occurredAt,
+                now);
         store.recordCandidate(source, queued == PendingEventStore.EnqueueResult.QUEUED, queue.count());
         sendBroadcast(new android.content.Intent(SettingsStore.ACTION_STATUS).setPackage(getPackageName()));
         if (queued == PendingEventStore.EnqueueResult.QUEUED) SyncScheduler.schedule(this, true);

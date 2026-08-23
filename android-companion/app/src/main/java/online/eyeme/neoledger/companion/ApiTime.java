@@ -6,9 +6,10 @@ import java.time.format.DateTimeFormatter;
 
 /** Formats integration timestamps with an explicit numeric ISO 8601 offset. */
 final class ApiTime {
+    private static final ZoneId APP_ZONE = ZoneId.of("Asia/Shanghai");
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter
             .ofPattern("yyyy-MM-dd'T'HH:mm:ssxxx")
-            .withZone(ZoneId.systemDefault());
+            .withZone(APP_ZONE);
 
     static String now() {
         return FORMATTER.format(Instant.now());

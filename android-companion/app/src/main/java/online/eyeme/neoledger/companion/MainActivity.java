@@ -38,6 +38,7 @@ public final class MainActivity extends Activity {
     private Switch marketApps;
     private TextView permissionState;
     private TextView accessibilityState;
+    private TextView accessibilityDebugState;
     private TextView updateState;
     private TextView sendState;
     private TextView deliveryState;
@@ -130,6 +131,9 @@ public final class MainActivity extends Activity {
         accessibilityState = text("无障碍支付识别：未开启", 14, "#B44040");
         accessibilityState.setPadding(dp(14), dp(12), dp(14), dp(12));
         root.addView(accessibilityState, topMargin(8));
+        accessibilityDebugState = text("无障碍事件：尚未收到已配置支付 App 的界面事件", 13, "#657066");
+        accessibilityDebugState.setLineSpacing(0, 1.2f);
+        root.addView(accessibilityDebugState, topMargin(6));
         Button accessibility = button("开启无障碍支付识别", false);
         accessibility.setOnClickListener(view -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
         root.addView(accessibility, topMargin(8));
@@ -264,6 +268,7 @@ public final class MainActivity extends Activity {
             accessibilityState.setTextColor(color(enabled ? "#247A55" : "#B44040"));
             accessibilityState.setBackgroundColor(color(enabled ? "#E5F5EC" : "#FBE9E7"));
         }
+        if (accessibilityDebugState != null) accessibilityDebugState.setText(store.accessibilitySummary());
         if (sendState != null) sendState.setText("发送状态：" + store.lastStatus());
         int pending = new PendingEventStore(this).count();
         if (queueState != null) queueState.setText("待发送：" + pending + " 条");
