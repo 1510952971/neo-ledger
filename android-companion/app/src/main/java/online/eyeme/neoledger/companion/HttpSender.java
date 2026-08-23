@@ -14,7 +14,6 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -38,7 +37,7 @@ final class HttpSender {
     static void send(Context context, String text, String source, String externalId, Callback callback) {
         Context app = context.getApplicationContext();
         EXECUTOR.execute(() -> {
-            Result result = sendNow(app, text, source, externalId, Instant.now().toString());
+            Result result = sendNow(app, text, source, externalId, ApiTime.now());
             new SettingsStore(app).status(result.message);
             app.sendBroadcast(new Intent(SettingsStore.ACTION_STATUS).setPackage(app.getPackageName()));
             if (callback != null) {
@@ -57,7 +56,7 @@ final class HttpSender {
                     .put("text", text)
                     .put("source", source)
                     .put("externalId", externalId)
-                    .put("time", occurredAt);
+                    .put("time", ApiTime.normalize(occurredAt));
             connection = (HttpURLConnection) new URL(store.endpoint()).openConnection();
             connection.setRequestMethod("POST");
             connection.setConnectTimeout(10_000);

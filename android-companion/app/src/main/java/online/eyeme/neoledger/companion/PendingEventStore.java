@@ -6,7 +6,6 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -85,7 +84,7 @@ final class PendingEventStore extends SQLiteOpenHelper {
             event.put("id", id);
             event.put("text", text);
             event.put("source", source);
-            event.put("occurred_at", Instant.ofEpochMilli(occurredAtMillis).toString());
+            event.put("occurred_at", ApiTime.fromEpochMillis(occurredAtMillis));
             event.put("attempts", 0);
             event.put("next_attempt", 0);
             event.put("last_error", "");

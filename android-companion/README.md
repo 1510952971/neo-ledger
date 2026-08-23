@@ -1,6 +1,6 @@
 # Neo Ledger Android 自动记账伴侣
 
-当前伴侣版本为 `1.1.0`，与 Web `1.1.x` 通过仓库根目录的 `release-compatibility.json` 绑定校验；两者不要求版本号相同，但发布时不得绕过该兼容性门禁。
+当前伴侣版本为 `1.1.1`，与 Web `1.1.x` 通过仓库根目录的 `release-compatibility.json` 绑定校验；两者不要求版本号相同，但发布时不得绕过该兼容性门禁。
 
 这个伴侣应用支持两种 Android 自动记账模式：通知模式监听微信、支付宝及常见购物/外卖 App 的支付通知；付款完成界面模式通过 Android 无障碍服务读取当前前台支付 App 的可见界面。只有出现明确的支付完成结果和金额才会记账，并把紧凑的支付信息发送到 Neo Ledger 的版本化接口 `/api/v1/transactions`。它不会点击、输入或发起支付；账单列表、历史记录、订单详情、照片和支付前确认页都会被忽略。
 
@@ -43,8 +43,8 @@ APK 输出到 `app/build/outputs/apk/debug/app-debug.apk`。
 发布 Android 正式版时使用 `android-v` 标签，例如：
 
 ```bash
-git tag android-v1.1.0
-git push origin android-v1.1.0
+git tag android-v1.1.1
+git push origin android-v1.1.1
 ```
 
 GitHub Actions 会使用仓库 Secrets 中的固定签名密钥构建 Release APK，上传 APK 和 SHA-256 校验文件。伴侣 App 的“应用更新”只查找 `android-v*` 正式 Release。
