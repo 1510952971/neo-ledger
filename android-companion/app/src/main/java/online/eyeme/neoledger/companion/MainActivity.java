@@ -157,7 +157,7 @@ public final class MainActivity extends Activity {
         section(root, "监听来源");
         wechat = toggle("微信支付通知");
         alipay = toggle("支付宝通知");
-        marketApps = toggle("淘宝 / 京东 / 美团 / 拼多多等支付");
+        marketApps = toggle("抖音 / 淘宝 / 京东 / 美团 / 拼多多等支付");
         root.addView(wechat, topMargin(4));
         root.addView(alipay, topMargin(2));
         root.addView(marketApps, topMargin(2));

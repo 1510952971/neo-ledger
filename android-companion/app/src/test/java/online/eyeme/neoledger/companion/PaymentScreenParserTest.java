@@ -15,6 +15,9 @@ public final class PaymentScreenParserTest {
         assertTrue(PaymentScreenParser.isPaymentCompleted(
                 PaymentAppCatalog.MEITUAN,
                 "付款成功，金额 26.00 元，收款方：美团外卖"));
+        assertTrue(PaymentScreenParser.isPaymentCompleted(
+                PaymentAppCatalog.DOUYIN,
+                "支付成功，实付 ¥7.90 元，商户：抖音商城"));
     }
 
     @Test
