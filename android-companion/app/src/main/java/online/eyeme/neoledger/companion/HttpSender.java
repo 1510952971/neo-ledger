@@ -35,9 +35,14 @@ final class HttpSender {
     private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor();
 
     static void send(Context context, String text, String source, String externalId, Callback callback) {
+        sendNowAsync(context, text, source, externalId, ApiTime.now(), callback);
+    }
+
+    static void sendNowAsync(
+            Context context, String text, String source, String externalId, String occurredAt, Callback callback) {
         Context app = context.getApplicationContext();
         EXECUTOR.execute(() -> {
-            Result result = sendNow(app, text, source, externalId, ApiTime.now());
+            Result result = sendNow(app, text, source, externalId, occurredAt);
             new SettingsStore(app).status(result.message);
             app.sendBroadcast(new Intent(SettingsStore.ACTION_STATUS).setPackage(app.getPackageName()));
             if (callback != null) {
@@ -71,8 +76,14 @@ final class HttpSender {
             }
             int status = connection.getResponseCode();
             String response = read(status >= 400 ? connection.getErrorStream() : connection.getInputStream());
-            if (status >= 200 && status < 300)
-                return new Result(true, false, "已入账：" + source);
+            if (status >= 200 && status < 300) {
+                boolean duplicate = false;
+                try { duplicate = new JSONObject(response).optBoolean("duplicate", false); }
+                catch (Exception ignored) {}
+                return new Result(true, false, duplicate
+                        ? "已确认：重复事件未再次入账"
+                        : "已入账：" + source);
+            }
             boolean retryable = status == 408 || status == 429 || status >= 500;
             String detail = response.length() > 180 ? response.substring(0, 180) : response;
             return new Result(false, retryable, "服务器返回 " + status + (detail.isEmpty() ? "" : "：" + detail));

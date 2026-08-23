@@ -169,11 +169,13 @@ public final class MainActivity extends Activity {
         Button test = button("发送 ¥0.01 测试账单", false);
         test.setOnClickListener(view -> {
             if (!saveConfig(false)) return;
+            SettingsStore.TestEvent testEvent = store.testEvent();
             sendState.setText("正在发送测试账单…");
-            HttpSender.send(this,
+            HttpSender.sendNowAsync(this,
                     "支付宝支付，自动记账连接测试消费0.01元",
                     "android-companion-test",
-                    "android-companion-test-ledger-" + store.ledgerId(),
+                    testEvent.id,
+                    testEvent.occurredAt,
                     (ok, message) -> {
                         sendState.setText(message);
                         sendState.setTextColor(color(ok ? "#247A55" : "#B44040"));

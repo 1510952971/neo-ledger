@@ -8,6 +8,7 @@ import android.util.Base64;
 
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
+import java.util.UUID;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -19,6 +20,16 @@ final class SettingsStore {
     private static final String PREFS = "neo_companion";
     private static final String KEY_ALIAS = "neo_ledger_companion_token";
     private static final String TOKEN = "token_encrypted";
+
+    static final class TestEvent {
+        final String id;
+        final String occurredAt;
+
+        TestEvent(String id, String occurredAt) {
+            this.id = id;
+            this.occurredAt = occurredAt;
+        }
+    }
 
     private final SharedPreferences preferences;
 
@@ -73,6 +84,30 @@ final class SettingsStore {
 
     void listenerConnected() {
         preferences.edit().putLong("listener_connected_at", System.currentTimeMillis()).apply();
+    }
+
+    /**
+     * Reuses one test event for the current endpoint and ledger. Repeating the
+     * test therefore exercises idempotent retries instead of adding another
+     * ¥0.01 entry or causing an idempotency conflict because its time changed.
+     */
+    TestEvent testEvent() {
+        String scope = endpoint() + "|" + ledgerId();
+        String savedScope = preferences.getString("test_event_scope", "");
+        String id = preferences.getString("test_event_id", "");
+        String occurredAt = preferences.getString("test_event_time", "");
+        if (scope.equals(savedScope) && !id.isEmpty() && !occurredAt.isEmpty())
+            return new TestEvent(id, occurredAt);
+
+        TestEvent event = new TestEvent(
+                "android-companion-test:" + UUID.randomUUID(),
+                ApiTime.now());
+        preferences.edit()
+                .putString("test_event_scope", scope)
+                .putString("test_event_id", event.id)
+                .putString("test_event_time", event.occurredAt)
+                .apply();
+        return event;
     }
 
     private SecretKey key() throws Exception {
