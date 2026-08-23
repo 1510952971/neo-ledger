@@ -4,6 +4,9 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertEquals;
 
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+
 import org.junit.Test;
 
 public final class PaymentScreenParserTest {
@@ -75,5 +78,32 @@ public final class PaymentScreenParserTest {
         assertFalse(PaymentScreenParser.isPaymentCompleted(PaymentAppCatalog.DOUYIN, text));
         assertEquals("仅购买成功页，未检测到支付成功语义",
                 PaymentScreenParser.rejectionReason(PaymentAppCatalog.DOUYIN, text));
+    }
+
+    @Test
+    public void acceptsCurrentDouyinPaymentSheetOverOrderBackground() {
+        long now = LocalDateTime.of(2026, 8, 23, 17, 39, 30)
+                .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+        String text = "历史订单 商品详情 刚刚抢购成功 15元鸭脖口味任选 "
+                + "支付成功 ¥12.89 立减优惠 -¥0.01 支付方式 抖音月付 "
+                + "支付时间 2026-08-23 17:39 6抖音支付积分 领取积分 完成";
+
+        assertTrue(PaymentScreenParser.isPaymentCompleted(
+                PaymentAppCatalog.DOUYIN, text, now));
+        assertEquals("已识别", PaymentScreenParser.rejectionReason(
+                PaymentAppCatalog.DOUYIN, text, now));
+    }
+
+    @Test
+    public void rejectsOldDouyinOrderDetailEvenWithPaymentMetadata() {
+        long now = LocalDateTime.of(2026, 8, 23, 17, 39, 30)
+                .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+        String text = "订单详情 支付成功 ¥12.89 支付方式 抖音月付 "
+                + "支付时间 2026-08-22 17:39 查看历史订单";
+
+        assertFalse(PaymentScreenParser.isPaymentCompleted(
+                PaymentAppCatalog.DOUYIN, text, now));
+        assertEquals("命中订单/历史等非完成页关键词", PaymentScreenParser.rejectionReason(
+                PaymentAppCatalog.DOUYIN, text, now));
     }
 }

@@ -1,6 +1,9 @@
 package online.eyeme.neoledger.companion;
 
 import java.util.Locale;
+import java.time.DateTimeException;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -11,6 +14,10 @@ import java.util.regex.Pattern;
  * list, or an amount by itself as a completed payment.
  */
 final class PaymentScreenParser {
+    private static final Pattern PAYMENT_SUCCESS = Pattern.compile(
+            "支付成功|付款成功|交易成功|扣款成功|收款成功|支付完成|付款完成|成功支付",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern PURCHASE_SUCCESS = Pattern.compile("购买成功", Pattern.CASE_INSENSITIVE);
     private static final Pattern SUCCESS = Pattern.compile(
             "支付成功|付款成功|交易成功|扣款成功|收款成功|支付完成|付款完成|成功支付|购买成功",
             Pattern.CASE_INSENSITIVE);
@@ -26,31 +33,52 @@ final class PaymentScreenParser {
             Pattern.CASE_INSENSITIVE);
     private static final Pattern TIME = Pattern.compile(
             "(?:20\\d{2}[-/]\\d{1,2}[-/]\\d{1,2}\\s*)?\\d{1,2}:\\d{2}");
+    private static final Pattern PAYMENT_METADATA = Pattern.compile(
+            "支付方式|付款方式|支付时间|付款时间|交易时间|抖音月付|支付宝|微信支付|花呗|银行卡|云闪付",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern PAYMENT_DATE_TIME = Pattern.compile(
+            "(?:支付时间|付款时间|交易时间)\\s*[:：]?\\s*(20\\d{2})[-/](\\d{1,2})[-/](\\d{1,2})\\s+(\\d{1,2}):(\\d{2})",
+            Pattern.CASE_INSENSITIVE);
+    private static final long PAYMENT_TIME_TOLERANCE_MILLIS = 10L * 60L * 1000L;
+    private static final int NEARBY_REJECT_DISTANCE = 120;
 
     private PaymentScreenParser() {}
 
     static boolean isPaymentCompleted(String packageName, String text) {
-        String normalized = normalize(text);
-        return normalized.length() >= 8
-                && !REJECT.matcher(normalized).find()
-                && SUCCESS.matcher(normalized).find()
-                && !amountFingerprint(normalized).isEmpty()
-                && (normalized.contains("支付") || normalized.contains("付款")
-                || normalized.contains("交易") || normalized.contains("扣款")
-                || normalized.contains("收款"));
+        return isPaymentCompleted(packageName, text, System.currentTimeMillis());
+    }
+
+    static boolean isPaymentCompleted(String packageName, String text, long nowMillis) {
+        return "已识别".equals(decisionReason(packageName, text, nowMillis));
     }
 
     static String rejectionReason(String packageName, String text) {
+        return decisionReason(packageName, text, System.currentTimeMillis());
+    }
+
+    static String rejectionReason(String packageName, String text, long nowMillis) {
+        return decisionReason(packageName, text, nowMillis);
+    }
+
+    private static String decisionReason(String packageName, String text, long nowMillis) {
         String normalized = normalize(text);
         if (normalized.length() < 8) return "可见文本不足";
-        if (REJECT.matcher(normalized).find()) return "命中订单/历史等非完成页关键词";
-        if (!SUCCESS.matcher(normalized).find()) return "未检测到支付成功或购买成功文字";
+
+        Matcher paymentSuccess = PAYMENT_SUCCESS.matcher(normalized);
+        if (!paymentSuccess.find()) {
+            if (PURCHASE_SUCCESS.matcher(normalized).find()) {
+                return "仅购买成功页，未检测到支付成功语义";
+            }
+            return "未检测到支付成功或购买成功文字";
+        }
+
         if (amountFingerprint(normalized).isEmpty()) return "未检测到明确金额";
-        if (normalized.contains("购买成功")) return "仅购买成功页，未检测到支付成功语义";
-        if (!(normalized.contains("支付") || normalized.contains("付款")
-                || normalized.contains("交易") || normalized.contains("扣款")
-                || normalized.contains("收款"))) {
-            return "缺少支付语义";
+
+        String successContext = successContext(normalized, paymentSuccess.start(), paymentSuccess.end());
+        if (hasNearbyReject(normalized, paymentSuccess.start(), paymentSuccess.end())) {
+            boolean currentPaymentSheet = PAYMENT_METADATA.matcher(successContext).find()
+                    && hasFreshPaymentTime(normalized, nowMillis);
+            if (!currentPaymentSheet) return "命中订单/历史等非完成页关键词";
         }
         return "已识别";
     }
@@ -62,7 +90,7 @@ final class PaymentScreenParser {
      */
     static String amountFingerprint(String text) {
         String normalized = normalize(text);
-        Matcher success = SUCCESS.matcher(normalized);
+        Matcher success = PAYMENT_SUCCESS.matcher(normalized);
         if (success.find()) {
             int end = Math.min(normalized.length(), success.end() + 420);
             String nearby = normalized.substring(success.start(), end);
@@ -70,6 +98,58 @@ final class PaymentScreenParser {
             if (!amount.isEmpty()) return amount;
         }
         return PaymentNotificationParser.amountFingerprint(normalized);
+    }
+
+    /**
+     * Only reject order/history words that belong to the result area. A transient
+     * payment sheet is rendered over the merchant page, whose still-visible
+     * accessibility nodes can contain unrelated words such as "订单详情".
+     */
+    private static boolean hasNearbyReject(String text, int successStart, int successEnd) {
+        Matcher reject = REJECT.matcher(text);
+        while (reject.find()) {
+            int distance;
+            if (reject.end() < successStart) {
+                distance = successStart - reject.end();
+            } else if (reject.start() > successEnd) {
+                distance = reject.start() - successEnd;
+            } else {
+                distance = 0;
+            }
+            if (distance <= NEARBY_REJECT_DISTANCE) return true;
+        }
+        return false;
+    }
+
+    private static String successContext(String text, int successStart, int successEnd) {
+        int start = Math.max(0, successStart - 40);
+        int end = Math.min(text.length(), successEnd + 520);
+        return text.substring(start, end);
+    }
+
+    /**
+     * A nearby order/history word may be part of the merchant page behind a
+     * payment sheet. It is only overridden when the sheet exposes a payment
+     * timestamp matching the current event, preventing old order details from
+     * being imported when the user merely views them.
+     */
+    private static boolean hasFreshPaymentTime(String text, long nowMillis) {
+        Matcher time = PAYMENT_DATE_TIME.matcher(text);
+        while (time.find()) {
+            try {
+                LocalDateTime captured = LocalDateTime.of(
+                        Integer.parseInt(time.group(1)),
+                        Integer.parseInt(time.group(2)),
+                        Integer.parseInt(time.group(3)),
+                        Integer.parseInt(time.group(4)),
+                        Integer.parseInt(time.group(5)));
+                long capturedMillis = captured.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+                if (Math.abs(nowMillis - capturedMillis) <= PAYMENT_TIME_TOLERANCE_MILLIS) return true;
+            } catch (DateTimeException | NumberFormatException ignored) {
+                // Keep scanning in case another visible timestamp is valid.
+            }
+        }
+        return false;
     }
 
     /** Returns a compact payload without forwarding unrelated screen content. */
