@@ -13,4 +13,12 @@ public final class PaymentAppCatalogTest {
         assertEquals("抖音", PaymentAppCatalog.source(PaymentAppCatalog.DOUYIN));
         assertEquals("抖音", PaymentAppCatalog.source(PaymentAppCatalog.DOUYIN_LITE));
     }
+
+    @Test
+    public void recognizesXiaohongshuAndXianyuAsMarketApps() {
+        assertTrue(PaymentAppCatalog.isMarketApp(PaymentAppCatalog.XIAOHONGSHU));
+        assertTrue(PaymentAppCatalog.isMarketApp(PaymentAppCatalog.XIANYU));
+        assertEquals("小红书", PaymentAppCatalog.source(PaymentAppCatalog.XIAOHONGSHU));
+        assertEquals("闲鱼", PaymentAppCatalog.source(PaymentAppCatalog.XIANYU));
+    }
 }

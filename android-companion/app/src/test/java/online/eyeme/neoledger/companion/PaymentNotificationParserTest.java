@@ -15,6 +15,8 @@ public final class PaymentNotificationParserTest {
         assertTrue(PaymentNotificationParser.isPayment("微信支付成功，金额 ¥12.00"));
         assertTrue(PaymentNotificationParser.isPayment("支付宝提醒：你有一笔 26.80 元的支出"));
         assertTrue(PaymentNotificationParser.isPayment("抖音支付：支付成功 ¥7.90"));
+        assertTrue(PaymentNotificationParser.isPayment("小红书支付成功，实付 ¥18.88"));
+        assertTrue(PaymentNotificationParser.isPayment("闲鱼交易成功，付款 12.50 元"));
     }
 
     @Test

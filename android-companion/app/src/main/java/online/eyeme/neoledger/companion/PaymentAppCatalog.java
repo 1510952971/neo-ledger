@@ -12,6 +12,8 @@ final class PaymentAppCatalog {
     static final String UNIONPAY = "com.unionpay";
     static final String DOUYIN = "com.ss.android.ugc.aweme";
     static final String DOUYIN_LITE = "com.ss.android.ugc.aweme.lite";
+    static final String XIAOHONGSHU = "com.xingin.xhs";
+    static final String XIANYU = "com.taobao.idlefish";
 
     private PaymentAppCatalog() {}
 
@@ -23,7 +25,9 @@ final class PaymentAppCatalog {
                 || ELEME.equals(packageName)
                 || UNIONPAY.equals(packageName)
                 || DOUYIN.equals(packageName)
-                || DOUYIN_LITE.equals(packageName);
+                || DOUYIN_LITE.equals(packageName)
+                || XIAOHONGSHU.equals(packageName)
+                || XIANYU.equals(packageName);
     }
 
     static String source(String packageName) {
@@ -36,6 +40,8 @@ final class PaymentAppCatalog {
         if (ELEME.equals(packageName)) return "饿了么";
         if (UNIONPAY.equals(packageName)) return "云闪付";
         if (DOUYIN.equals(packageName) || DOUYIN_LITE.equals(packageName)) return "抖音";
+        if (XIAOHONGSHU.equals(packageName)) return "小红书";
+        if (XIANYU.equals(packageName)) return "闲鱼";
         return packageName == null ? "未知支付应用" : packageName.toLowerCase(Locale.ROOT);
     }
 }

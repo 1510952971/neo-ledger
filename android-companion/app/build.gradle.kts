@@ -11,8 +11,8 @@ android {
         applicationId = "online.eyeme.neoledger.companion"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.1.4"
+        versionCode = 7
+        versionName = "1.1.5"
     }
 
     buildFeatures {
