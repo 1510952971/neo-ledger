@@ -82,7 +82,7 @@ final class SettingsStore {
         if (events == 0) return "无障碍事件：尚未收到已配置支付 App 的界面事件";
         String source = preferences.getString("last_accessibility_source", "支付应用");
         String scan = preferences.getString("last_accessibility_scan", "尚未完成界面解析");
-        return "无障碍事件：已收到 " + events + " 次，最近为 " + source + "；" + scan;
+        return "无障碍事件：已收到 " + events + " 次，最近事件为 " + source + "；最近扫描：" + scan;
     }
 
     String token() {

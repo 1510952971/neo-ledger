@@ -2,6 +2,8 @@ package online.eyeme.neoledger.companion;
 
 import android.accessibilityservice.AccessibilityService;
 import android.content.Intent;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
@@ -15,6 +17,21 @@ import java.security.MessageDigest;
 public final class NeoPaymentAccessibilityService extends AccessibilityService {
     private static final int MAX_NODES = 240;
     private static final int MAX_TEXT_LENGTH = 8_000;
+    private static final long ACTIVE_WINDOW_POLL_MS = 900L;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable activeWindowPoll = new Runnable() {
+        @Override public void run() {
+            scanActiveWindow();
+            handler.postDelayed(this, ACTIVE_WINDOW_POLL_MS);
+        }
+    };
+
+    @Override
+    protected void onServiceConnected() {
+        super.onServiceConnected();
+        handler.removeCallbacks(activeWindowPoll);
+        handler.post(activeWindowPoll);
+    }
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
@@ -29,13 +46,27 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
 
         String source = PaymentAppCatalog.source(packageName);
         store.recordAccessibilityEvent(source, type);
+        scan(packageName, getRootInActiveWindow(), event.getText(), store, source);
+    }
 
-        String text = visibleText(getRootInActiveWindow());
-        if (text.isEmpty() && event.getText() != null) {
-            for (CharSequence value : event.getText()) {
+    private void scanActiveWindow() {
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null || root.getPackageName() == null) return;
+        String packageName = root.getPackageName().toString();
+        SettingsStore store = new SettingsStore(this);
+        if (!store.configured() || !PaymentNotificationParser.acceptsPackage(packageName, store)) return;
+        scan(packageName, root, null, store, PaymentAppCatalog.source(packageName));
+    }
+
+    private void scan(String packageName, AccessibilityNodeInfo root,
+                      java.util.List<CharSequence> eventText, SettingsStore store, String source) {
+        String text = visibleText(root);
+        if (text.isEmpty() && eventText != null) {
+            for (CharSequence value : eventText) {
                 if (value != null) text += " " + value;
             }
         }
+
         boolean completed = PaymentScreenParser.isPaymentCompleted(packageName, text);
         store.recordAccessibilityScan(source, completed);
         if (!completed) {
@@ -66,6 +97,12 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
 
     @Override
     public void onInterrupt() {}
+
+    @Override
+    public void onDestroy() {
+        handler.removeCallbacks(activeWindowPoll);
+        super.onDestroy();
+    }
 
     private String visibleText(AccessibilityNodeInfo root) {
         if (root == null) return "";
