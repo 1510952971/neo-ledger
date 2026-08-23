@@ -12,7 +12,7 @@ import java.util.regex.Pattern;
  */
 final class PaymentScreenParser {
     private static final Pattern SUCCESS = Pattern.compile(
-            "支付成功|付款成功|交易成功|扣款成功|收款成功|支付完成|付款完成|成功支付",
+            "支付成功|付款成功|交易成功|扣款成功|收款成功|支付完成|付款完成|成功支付|购买成功",
             Pattern.CASE_INSENSITIVE);
     private static final Pattern REJECT = Pattern.compile(
             "立即支付|去支付|确认支付|待支付|待付款|账单|交易记录|交易明细|收支记录|付款记录|消费记录|历史订单|历史记录|订单列表|订单详情|账单详情|相册|照片|图片|截图|退款申请|退款中|支付失败|交易失败|余额不足|验证码",
@@ -37,7 +37,7 @@ final class PaymentScreenParser {
                 && !PaymentNotificationParser.amountFingerprint(normalized).isEmpty()
                 && (normalized.contains("支付") || normalized.contains("付款")
                 || normalized.contains("交易") || normalized.contains("扣款")
-                || normalized.contains("收款"));
+                || normalized.contains("收款") || normalized.contains("购买成功"));
     }
 
     /** Returns a compact payload without forwarding unrelated screen content. */

@@ -21,6 +21,9 @@ public final class PaymentScreenParserTest {
         assertTrue(PaymentScreenParser.isPaymentCompleted(
                 PaymentAppCatalog.DOUYIN,
                 "支付成功 ¥18.88 立减优惠 -¥0.02 支付方式 抖音月付 支付时间 2026-08-23 15:56 6抖音支付积分 领取 附近神券 活动"));
+        assertTrue(PaymentScreenParser.isPaymentCompleted(
+                PaymentAppCatalog.DOUYIN,
+                "购买成功 团购频道 限时秒杀已额外省2元 渝八两 鸡公煲米饭套餐 ¥16.99 查看订单"));
     }
 
     @Test
