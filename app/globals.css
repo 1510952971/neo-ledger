@@ -1076,7 +1076,7 @@ fieldset { padding: 0; border: 0; }
   border: 1px solid color-mix(in srgb, var(--theme-text) 10%, transparent);
   border-radius: 999px;
   color: var(--theme-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   white-space: nowrap;
 }
@@ -1124,7 +1124,7 @@ fieldset { padding: 0; border: 0; }
 }
 .tablet-context-label {
   color: var(--theme-muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .tablet-context-hint {
   margin-top: 14px !important;
@@ -1148,7 +1148,7 @@ fieldset { padding: 0; border: 0; }
 }
 .tablet-context-metrics span {
   color: var(--theme-muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .tablet-context-metrics strong {
   color: var(--theme-text);
