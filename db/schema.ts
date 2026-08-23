@@ -75,6 +75,7 @@ export const digitalAssets = sqliteTable("digital_assets", {
   lifespanMonths: integer("lifespan_months").notNull(),
   residualRateBps: integer("residual_rate_bps").notNull().default(0),
   heatLevel: text("heat_level", { enum: ["高", "中", "低"] }),
+  updatedAt: text("updated_at").notNull(),
   createdAt: text("created_at")
     .notNull()
     .default(sql`CURRENT_TIMESTAMP`),

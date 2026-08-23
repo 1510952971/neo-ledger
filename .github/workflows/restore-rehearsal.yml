@@ -1,0 +1,38 @@
+name: Monthly Restore Rehearsal
+
+on:
+  schedule:
+    # Run on the first day of every month at 03:17 UTC. The job is also
+    # manually dispatchable so an incident commander can rehearse immediately.
+    - cron: "17 3 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: neo-ledger-restore-rehearsal
+  cancel-in-progress: false
+
+jobs:
+  restore-rehearsal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run isolated API backup and restore rehearsal
+        run: |
+          set -o pipefail
+          npm run test:api 2>&1 | tee restore-rehearsal.log
+      - name: Upload rehearsal evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: neo-ledger-restore-rehearsal-${{ github.run_id }}
+          path: restore-rehearsal.log
+          retention-days: 90

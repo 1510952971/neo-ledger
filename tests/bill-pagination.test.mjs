@@ -6,6 +6,7 @@ import {
   COLLECTION_PAGE_SIZE,
   paginateBills,
 } from "../app/bill-pagination.js";
+import { collectionPageOptions } from "../app/collection-pagination-core.js";
 
 test("shows at most twenty bills on each page", () => {
   const rows = Array.from({ length: 45 }, (_, index) => index + 1);
@@ -57,4 +58,12 @@ test("keeps every addable management collection to ten rows per page", () => {
     assert.deepEqual(second.rows, rows.slice(10, 20), name);
     assert.equal(second.totalPages, 3, name);
   }
+});
+
+test("large page counts keep the page selector bounded", () => {
+  const options = collectionPageOptions(25_000, 50_000);
+  assert.ok(options.length <= 200);
+  assert.ok(options.includes(1));
+  assert.ok(options.includes(25_000));
+  assert.ok(options.includes(50_000));
 });

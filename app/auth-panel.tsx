@@ -1,7 +1,11 @@
 "use client";
 
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
+import { fetchClientJson } from "./client-api.ts";
+import { passwordStrengthHint } from "./auth-core.js";
 
 export type ClientAuthUser = {
   username: string;
@@ -15,6 +19,8 @@ type AuthStatus = {
   providers: { wechat: boolean; alipay: boolean };
   linkedProviders: Array<"wechat" | "alipay">;
   passwordEnabled: boolean;
+  mfaEnabled: boolean;
+  recoveryCodesRemaining: number;
   user: { email: string | null } | null;
 };
 
@@ -27,6 +33,7 @@ export function AuthPanel({
   hasUsers: boolean;
   onUserChange?: (user: ClientAuthUser) => void;
 }) {
+  const router = useRouter();
   const [mode, setMode] = useState<"login" | "register">(
     hasUsers ? "login" : "register",
   );
@@ -38,7 +45,14 @@ export function AuthPanel({
   const [codeSending, setCodeSending] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [registerEmail, setRegisterEmail] = useState("");
+  const [passwordHint, setPasswordHint] = useState("");
+  const [resetPasswordHint, setResetPasswordHint] = useState("");
   const [avatarPending, setAvatarPending] = useState(false);
+  const [mfaSetup, setMfaSetup] = useState<{ secret: string; uri: string } | null>(null);
+  const [mfaCode, setMfaCode] = useState("");
+  const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
+  const [sessionList, setSessionList] = useState<Array<{ id: string; displayName: string; userAgent: string | null; lastUsedAt: string; current: boolean }>>([]);
+  const [passkeys, setPasskeys] = useState<Array<{ id: string; label: string; deviceType: string; backedUp: boolean; createdAt: string; lastUsedAt: string | null }>>([]);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const deleteFormRef = useRef<HTMLFormElement>(null);
   const avatarUrl = user?.avatarUrl ?? null;
@@ -46,6 +60,8 @@ export function AuthPanel({
     providers: { wechat: false, alipay: false },
     linkedProviders: [],
     passwordEnabled: true,
+    mfaEnabled: false,
+    recoveryCodesRemaining: 0,
     user: user ? { email: user.email ?? null } : null,
   });
 
@@ -55,19 +71,15 @@ export function AuthPanel({
       setError(query.get("auth_error") ?? "");
       setNotice(query.get("auth_notice") ?? "");
     });
-    fetch("/api/auth", { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("读取账号状态失败");
-        return (await response.json()) as AuthStatus;
+    fetchClientJson<AuthStatus>("/api/auth", { cache: "no-store" })
+      .then(({ response, data }) => {
+        if (!response.ok || !data) throw new Error("读取账号状态失败");
+        return data;
       })
       .then(setStatus)
       .catch(() => undefined);
-    fetch("/api/auth/email-code", { cache: "no-store" })
-      .then(async (response) =>
-        response.ok
-          ? ((await response.json()) as { configured: boolean }).configured
-          : false,
-      )
+    fetchClientJson<{ configured?: boolean }>("/api/auth/email-code", { cache: "no-store" })
+      .then(({ response, data }) => response.ok && Boolean(data?.configured))
       .then(setMailerReady)
       .catch(() => setMailerReady(false));
   }, []);
@@ -104,15 +116,12 @@ export function AuthPanel({
     setError("");
     setNotice("");
     try {
-      const response = await fetch("/api/auth/email-code", {
+      const { response, data } = await fetchClientJson<{ error?: string }>("/api/auth/email-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, purpose }),
       });
-      const result = (await response.json()) as {
-        error?: string;
-      };
-      if (!response.ok) throw new Error(result.error || "验证码发送失败");
+      if (!response.ok) throw new Error(data?.error || "验证码发送失败");
       setCodeCooldown(60);
       setNotice("验证码已发送，10 分钟内有效，记得看看垃圾邮件箱");
     } catch (codeError) {
@@ -172,7 +181,7 @@ export function AuthPanel({
     setError("");
     setNotice("");
     try {
-      const response = await fetch("/api/auth/reset-password", {
+      const { response, data } = await fetchClientJson<{ error?: string }>("/api/auth/reset-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -181,8 +190,7 @@ export function AuthPanel({
           newPassword: form.get("newPassword"),
         }),
       });
-      const result = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(result.error || "重置密码失败");
+      if (!response.ok) throw new Error(data?.error || "重置密码失败");
       setResetOpen(false);
       setMode("login");
       setNotice("密码已重置，请用新密码登录");
@@ -207,7 +215,7 @@ export function AuthPanel({
       return;
     }
     try {
-      const response = await fetch("/api/auth", {
+      const { response, data } = await fetchClientJson<{ error?: string }>("/api/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -217,11 +225,11 @@ export function AuthPanel({
           displayName: form.get("displayName"),
           password: form.get("password"),
           code: form.get("code"),
+          mfaCode: form.get("mfaCode"),
         }),
       });
-      const result = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(result.error || "登录失败");
-      window.location.href = "/";
+      if (!response.ok) throw new Error(data?.error || "登录失败");
+      router.refresh();
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "登录失败");
     } finally {
@@ -245,7 +253,7 @@ export function AuthPanel({
       return;
     }
     try {
-      const response = await fetch("/api/auth", {
+      const { response, data } = await fetchClientJson<{ error?: string; email?: string }>("/api/auth", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -255,15 +263,11 @@ export function AuthPanel({
           newPassword: form.get("newPassword"),
         }),
       });
-      const result = (await response.json()) as {
-        error?: string;
-        email?: string;
-      };
-      if (!response.ok) throw new Error(result.error || "绑定邮箱失败");
+      if (!response.ok) throw new Error(data?.error || "绑定邮箱失败");
       setStatus((current) => ({
         ...current,
         passwordEnabled: true,
-        user: { email: result.email ?? null },
+        user: { email: data?.email ?? null },
       }));
       setNotice(status.user?.email ? "邮箱已更新" : "邮箱绑定成功，现在可以用邮箱登录");
     } catch (bindError) {
@@ -311,17 +315,13 @@ export function AuthPanel({
     setError("");
     setNotice("");
     try {
-      const response = await fetch("/api/auth", {
+      const { response, data } = await fetchClientJson<{ error?: string; avatarUrl?: string | null }>("/api/auth", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ avatarUrl: nextAvatarUrl }),
       });
-      const result = (await response.json()) as {
-        error?: string;
-        avatarUrl?: string | null;
-      };
-      if (!response.ok) throw new Error(result.error || "头像更新失败");
-      const savedAvatarUrl = result.avatarUrl ?? null;
+      if (!response.ok) throw new Error(data?.error || "头像更新失败");
+      const savedAvatarUrl = data?.avatarUrl ?? null;
       onUserChange?.({ ...user, avatarUrl: savedAvatarUrl });
       setNotice(savedAvatarUrl ? "头像已更新" : "已恢复默认头像");
     } catch (avatarError) {
@@ -385,15 +385,15 @@ export function AuthPanel({
 
   async function logout() {
     if (user?.provider === "chatgpt") {
-      window.location.href = "/signout-with-chatgpt?return_to=%2F";
+      router.push("/signout-with-chatgpt?return_to=%2F");
       return;
     }
     setPending(true);
     setError("");
     try {
-      const response = await fetch("/api/auth", { method: "DELETE" });
-      if (!response.ok) throw new Error("退出失败");
-      window.location.href = "/";
+      const { response, data } = await fetchClientJson<{ error?: string }>("/api/auth", { method: "DELETE" });
+      if (!response.ok) throw new Error(data?.error || "退出失败");
+      router.push("/");
     } catch (logoutError) {
       setError(logoutError instanceof Error ? logoutError.message : "退出失败");
       setPending(false);
@@ -407,7 +407,7 @@ export function AuthPanel({
     setError("");
     setNotice("");
     try {
-      const response = await fetch("/api/auth?action=delete-account", {
+      const { response, data } = await fetchClientJson<{ error?: string }>("/api/auth?action=delete-account", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -415,11 +415,257 @@ export function AuthPanel({
           confirmation: form.get("confirmation"),
         }),
       });
-      const result = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(result.error || "注销账号失败");
-      window.location.href = "/";
+      if (!response.ok) throw new Error(data?.error || "注销账号失败");
+      router.push("/");
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "注销账号失败");
+      setPending(false);
+    }
+  }
+
+  async function beginMfa() {
+    setPending(true);
+    setError("");
+    try {
+      const { response, data } = await fetchClientJson<{ error?: string; secret?: string; uri?: string }>("/api/auth/mfa", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "begin" }),
+      });
+      if (!response.ok || !data?.secret || !data.uri) throw new Error(data?.error || "生成二次验证密钥失败");
+      setMfaSetup({ secret: data.secret, uri: data.uri });
+      setMfaCode("");
+    } catch (mfaError) {
+      setError(mfaError instanceof Error ? mfaError.message : "生成二次验证密钥失败");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function confirmMfa() {
+    setPending(true);
+    setError("");
+    try {
+      const { response, data } = await fetchClientJson<{ error?: string; recoveryCodes?: string[]; recoveryCodesRemaining?: number }>("/api/auth/mfa", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "enable", code: mfaCode }),
+      });
+      if (!response.ok) throw new Error(data?.error || "启用二次验证失败");
+      setRecoveryCodes(data?.recoveryCodes ?? []);
+      setStatus((current) => ({
+        ...current,
+        mfaEnabled: true,
+        recoveryCodesRemaining: data?.recoveryCodesRemaining ?? 0,
+      }));
+      setMfaSetup(null);
+      setMfaCode("");
+      setNotice("二次验证已启用。下次登录需要输入验证器验证码。");
+    } catch (mfaError) {
+      setError(mfaError instanceof Error ? mfaError.message : "启用二次验证失败");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function regenerateRecoveryCodes() {
+    setPending(true);
+    setError("");
+    try {
+      const { response, data } = await fetchClientJson<{ error?: string; recoveryCodes?: string[]; recoveryCodesRemaining?: number }>("/api/auth/mfa", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "regenerate-recovery", code: mfaCode }),
+      });
+      if (!response.ok || !data?.recoveryCodes)
+        throw new Error(data?.error || "重新生成恢复码失败");
+      const nextRecoveryCodes = data.recoveryCodes;
+      setRecoveryCodes(nextRecoveryCodes);
+      setStatus((current) => ({
+        ...current,
+        recoveryCodesRemaining: data.recoveryCodesRemaining ?? nextRecoveryCodes.length,
+      }));
+      setMfaCode("");
+      setNotice("新的恢复码已生成，旧恢复码已全部失效。");
+    } catch (mfaError) {
+      setError(mfaError instanceof Error ? mfaError.message : "重新生成恢复码失败");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function copyRecoveryCodes() {
+    const text = recoveryCodes.join("\n");
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+      else {
+        const input = document.createElement("textarea");
+        input.value = text;
+        input.style.position = "fixed";
+        input.style.opacity = "0";
+        document.body.append(input);
+        input.select();
+        const copied = document.execCommand("copy");
+        input.remove();
+        if (!copied) throw new Error("copy unavailable");
+      }
+      setNotice("恢复码已复制。");
+    } catch {
+      setError("浏览器未允许复制，请改用下载文本文件。");
+    }
+  }
+
+  function downloadRecoveryCodes() {
+    const blob = new Blob(
+      [`Neo Ledger 二次验证恢复码\n生成时间：${new Date().toLocaleString("zh-CN")}\n\n${recoveryCodes.join("\n")}\n`],
+      { type: "text/plain;charset=utf-8" },
+    );
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "neo-ledger-mfa-recovery-codes.txt";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function disableMfa() {
+    setPending(true);
+    setError("");
+    try {
+      const { response, data } = await fetchClientJson<{ error?: string }>("/api/auth/mfa", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: mfaCode }),
+      });
+      if (!response.ok) throw new Error(data?.error || "关闭二次验证失败");
+      setStatus((current) => ({
+        ...current,
+        mfaEnabled: false,
+        recoveryCodesRemaining: 0,
+      }));
+      setRecoveryCodes([]);
+      setMfaCode("");
+      setNotice("二次验证已关闭。");
+    } catch (mfaError) {
+      setError(mfaError instanceof Error ? mfaError.message : "关闭二次验证失败");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function loadSessions() {
+    try {
+      const { response, data } = await fetchClientJson<{ sessions?: typeof sessionList }>("/api/security/sessions", { cache: "no-store" });
+      if (response.ok) setSessionList(data?.sessions ?? []);
+    } catch {
+      // Device management is optional UI; the server remains the source of truth.
+    }
+  }
+
+  async function revokeOtherSessions() {
+    setPending(true);
+    try {
+      const { response, data } = await fetchClientJson<{ error?: string }>("/api/security/sessions", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allExceptCurrent: true }),
+      });
+      if (!response.ok) throw new Error(data?.error || "注销其他设备失败");
+      await loadSessions();
+      setNotice("其他设备已注销。");
+    } catch (sessionError) {
+      setError(sessionError instanceof Error ? sessionError.message : "注销其他设备失败");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function loadPasskeys() {
+    try {
+      const { response, data } = await fetchClientJson<typeof passkeys>("/api/auth/passkeys", { cache: "no-store" });
+      if (response.ok && Array.isArray(data)) setPasskeys(data);
+    } catch {
+      // The control remains usable for a later retry.
+    }
+  }
+
+  async function addPasskey() {
+    setPending(true);
+    setError("");
+    setNotice("");
+    try {
+      if (!window.PublicKeyCredential) throw new Error("当前浏览器不支持 Passkey");
+      const { response: begin, data: challengeData } = await fetchClientJson<{ error?: string; challengeId?: string; options?: Parameters<typeof startRegistration>[0]["optionsJSON"] }>("/api/auth/passkeys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "begin-registration" }),
+      });
+      const challenge = challengeData ?? {};
+      if (!begin.ok || !challenge.challengeId || !challenge.options)
+        throw new Error(challenge.error || "无法开始 Passkey 注册");
+      const response = await startRegistration({ optionsJSON: challenge.options });
+      const { response: finish, data: resultData } = await fetchClientJson<{ error?: string }>("/api/auth/passkeys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "finish-registration", challengeId: challenge.challengeId, label: "当前设备", response }),
+      });
+      const result = resultData ?? {};
+      if (!finish.ok) throw new Error(result.error || "Passkey 注册失败");
+      await loadPasskeys();
+      setNotice("Passkey 已添加，可用于免密码登录。");
+    } catch (passkeyError) {
+      setError(passkeyError instanceof Error ? passkeyError.message : "Passkey 注册失败");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function removePasskey(id: string) {
+    setPending(true);
+    setError("");
+    try {
+      const { response, data: resultData } = await fetchClientJson<{ error?: string }>("/api/auth/passkeys", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      const result = resultData ?? {};
+      if (!response.ok) throw new Error(result.error || "撤销 Passkey 失败");
+      await loadPasskeys();
+      setNotice("Passkey 已撤销。");
+    } catch (passkeyError) {
+      setError(passkeyError instanceof Error ? passkeyError.message : "撤销 Passkey 失败");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function loginWithPasskey() {
+    setPending(true);
+    setError("");
+    try {
+      if (!window.PublicKeyCredential) throw new Error("当前浏览器不支持 Passkey");
+      const { response: begin, data: challengeData } = await fetchClientJson<{ error?: string; challengeId?: string; options?: Parameters<typeof startAuthentication>[0]["optionsJSON"] }>("/api/auth/passkeys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "begin-authentication" }),
+      });
+      const challenge = challengeData ?? {};
+      if (!begin.ok || !challenge.challengeId || !challenge.options)
+        throw new Error(challenge.error || "无法开始 Passkey 登录");
+      const response = await startAuthentication({ optionsJSON: challenge.options });
+      const { response: finish, data: resultData } = await fetchClientJson<{ error?: string }>("/api/auth/passkeys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "finish-authentication", challengeId: challenge.challengeId, response }),
+      });
+      const result = resultData ?? {};
+      if (!finish.ok) throw new Error(result.error || "Passkey 登录失败");
+      router.refresh();
+    } catch (passkeyError) {
+      setError(passkeyError instanceof Error ? passkeyError.message : "Passkey 登录失败");
       setPending(false);
     }
   }
@@ -526,7 +772,54 @@ export function AuthPanel({
               <button className="auth-email-submit" disabled={pending}>
                 {status.user?.email ? "更换邮箱" : "绑定邮箱"}
               </button>
-            </form>
+              </form>
+            <section className="auth-security-section" aria-labelledby="auth-security-title">
+              <p className="eyebrow" id="auth-security-title">LOGIN SECURITY</p>
+              <h3>{status.mfaEnabled ? "二次验证已开启" : "增强登录安全"}</h3>
+              <p>二次验证使用验证器应用生成的一次性验证码，不会把密钥发送给第三方。</p>
+              {!status.mfaEnabled && !mfaSetup && (
+                <button type="button" onClick={() => void beginMfa()} disabled={pending}>设置验证器二次验证</button>
+              )}
+              {mfaSetup && (
+                <div className="mfa-setup">
+                  <p>在 1Password、Microsoft Authenticator 或其他验证器中添加此地址：</p>
+                  <code>{mfaSetup.uri}</code>
+                  <p>手动密钥：<strong>{mfaSetup.secret}</strong></p>
+                  <input value={mfaCode} onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" placeholder="输入 6 位验证码" aria-label="二次验证验证码" />
+                  <button type="button" onClick={() => void confirmMfa()} disabled={pending || mfaCode.length !== 6}>确认开启</button>
+                </div>
+              )}
+              {status.mfaEnabled && (
+                <div className="mfa-disable">
+                  <p>可用恢复码：{status.recoveryCodesRemaining} 个</p>
+                  <input value={mfaCode} onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" placeholder="输入验证码以关闭" aria-label="关闭二次验证验证码" />
+                  <button type="button" onClick={() => void regenerateRecoveryCodes()} disabled={pending || mfaCode.length !== 6}>重新生成恢复码</button>
+                  <button type="button" onClick={() => void disableMfa()} disabled={pending || mfaCode.length !== 6}>关闭二次验证</button>
+                </div>
+              )}
+              {recoveryCodes.length > 0 && (
+                <div className="mfa-recovery" role="status">
+                  <strong>恢复码仅显示这一次</strong>
+                  <ul>{recoveryCodes.map((code) => <li key={code}><code>{code}</code></li>)}</ul>
+                  <div>
+                    <button type="button" onClick={() => void copyRecoveryCodes()}>复制恢复码</button>
+                    <button type="button" onClick={downloadRecoveryCodes}>下载文本文件</button>
+                    <button type="button" onClick={() => setRecoveryCodes([])}>我已保存</button>
+                  </div>
+                </div>
+              )}
+              <div className="passkey-management">
+                <strong>Passkey</strong>
+                <button type="button" onClick={() => void addPasskey()} disabled={pending}>添加当前设备</button>
+                <button type="button" onClick={() => void loadPasskeys()} disabled={pending}>刷新列表</button>
+                {passkeys.length > 0 && <ul>{passkeys.map((item) => <li key={item.id}><span>{item.label} · {item.backedUp ? "已同步" : "仅此设备"}</span><button type="button" onClick={() => void removePasskey(item.id)} disabled={pending}>撤销</button></li>)}</ul>}
+              </div>
+              <div className="session-management">
+                <button type="button" onClick={() => void loadSessions()}>刷新设备会话</button>
+                <button type="button" onClick={() => void revokeOtherSessions()} disabled={pending}>注销其他设备</button>
+                {sessionList.length > 0 && <ul>{sessionList.map((item) => <li key={item.id}>{item.current ? "当前设备" : item.displayName} · 最近使用 {new Date(item.lastUsedAt).toLocaleString("zh-CN")}</li>)}</ul>}
+              </div>
+            </section>
             <div className="auth-divider"><span>第三方账号</span></div>
             {oauthButtons(true)}
           </>
@@ -541,8 +834,7 @@ export function AuthPanel({
         >
           退出登录
         </button>
-        {user.provider === "local" && (
-          <>
+        <>
             <button
               type="button"
               className="auth-delete-toggle"
@@ -561,18 +853,28 @@ export function AuthPanel({
                 onSubmit={deleteAccount}
               >
                 <strong>确认注销账号</strong>
-                <p>账号和邮箱将被释放，当前设备会立即退出。</p>
-                <label>
-                  <span>当前密码</span>
-                  <input
-                    name="currentPassword"
-                    type="password"
-                    autoComplete="current-password"
-                    minLength={8}
-                    maxLength={72}
-                    required
-                  />
-                </label>
+                <p>账号和关联财务数据将被删除，当前设备会立即退出。</p>
+                {status.passwordEnabled ? (
+                  <label>
+                    <span>当前密码</span>
+                    <input
+                      name="currentPassword"
+                      type="password"
+                      autoComplete="current-password"
+                      minLength={8}
+                      maxLength={72}
+                      required
+                    />
+                  </label>
+                ) : (
+                  <p>当前账号没有本地密码，将使用当前登录会话确认注销。</p>
+                )}
+                {status.mfaEnabled && !status.passwordEnabled && (
+                  <label>
+                    <span>二次验证码</span>
+                    <input name="mfaCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" required />
+                  </label>
+                )}
                 <label>
                   <span>输入“删除账号”确认</span>
                   <input name="confirmation" required autoComplete="off" />
@@ -582,8 +884,7 @@ export function AuthPanel({
                 </button>
               </form>
             )}
-          </>
-        )}
+        </>
       </section>
     );
 
@@ -630,6 +931,18 @@ export function AuthPanel({
             />
           </label>
         )}
+        {mode === "login" && (
+          <label>
+            <span>二次验证码或恢复码（如已开启）</span>
+            <input
+              name="mfaCode"
+              autoComplete="one-time-code"
+              autoCapitalize="characters"
+              maxLength={14}
+              placeholder={status.mfaEnabled ? "6 位验证码或恢复码" : "未开启可留空"}
+            />
+          </label>
+        )}
         <label>
           <span>{mode === "register" ? "账号" : "账号或邮箱"}</span>
           <input
@@ -673,7 +986,11 @@ export function AuthPanel({
             maxLength={72}
             required
             placeholder="至少 8 位"
+            onInput={(event) => setPasswordHint(mode === "register" ? passwordStrengthHint(event.currentTarget.value) : "")}
           />
+          {mode === "register" && passwordHint && (
+            <p className="auth-password-hint" aria-live="polite">{passwordHint}</p>
+          )}
         </label>
         {mode === "register" && (
           <label>
@@ -694,17 +1011,20 @@ export function AuthPanel({
           {pending ? "处理中…" : mode === "register" ? "创建账号" : "登录"}
         </button>
         {mode === "login" && (
-          <button
-            type="button"
-            className="auth-forgot"
-            onClick={() => {
-              setResetOpen(true);
-              setError("");
-              setNotice("");
-            }}
-          >
-            忘记密码？
-          </button>
+          <div className="auth-login-alternatives">
+            <button type="button" onClick={() => void loginWithPasskey()} disabled={pending}>使用 Passkey 登录</button>
+            <button
+              type="button"
+              className="auth-forgot"
+              onClick={() => {
+                setResetOpen(true);
+                setError("");
+                setNotice("");
+              }}
+            >
+              忘记密码？
+            </button>
+          </div>
         )}
       </form>
       {resetOpen && (
@@ -732,7 +1052,11 @@ export function AuthPanel({
               maxLength={72}
               required
               placeholder="至少 8 位"
+              onInput={(event) => setResetPasswordHint(passwordStrengthHint(event.currentTarget.value))}
             />
+            {resetPasswordHint && (
+              <p className="auth-password-hint" aria-live="polite">{resetPasswordHint}</p>
+            )}
           </label>
           <label>
             <span>确认新密码</span>

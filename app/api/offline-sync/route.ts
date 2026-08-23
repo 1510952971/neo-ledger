@@ -2,17 +2,28 @@ import { NextResponse } from "next/server";
 import { ensureDb, evaluateAchievements, getDbBinding } from "../../../db";
 import { accessErrorResponse, claimAndRequireLedger } from "../../api-security";
 import { localDateTimeToUtc } from "../../time-money.js";
+import { MAX_PROTOCOL_BODY_BYTES, readJsonWithLimit } from "../../request-limits";
 import {
   isSplitMode,
   transactionAccountDelta,
 } from "../../split-core.js";
+
+function privateJson(body: unknown) {
+  const headers = new Headers({
+    "Cache-Control": "no-store, private, max-age=0",
+    Pragma: "no-cache",
+    "X-Content-Type-Options": "nosniff",
+  });
+  return NextResponse.json(body, { headers });
+}
+
 const moods = ["悦己", "刚需", "冲动"];
 export async function POST(request: Request) {
   try {
     await ensureDb();
-    const body = (await request.json()) as {
+    const body = await readJsonWithLimit<{
       items?: Record<string, unknown>[];
-    };
+    }>(request, MAX_PROTOCOL_BODY_BYTES);
     const items = (body.items || []).slice(0, 50),
       db = getDbBinding(),
       synced: string[] = [];
@@ -132,8 +143,8 @@ export async function POST(request: Request) {
       synced.push(offlineId);
       await evaluateAchievements(ledgerId);
     }
-    return NextResponse.json({ ok: true, synced, truncated: Math.max(0, (body.items?.length ?? 0) - items.length) });
+    return privateJson({ ok: true, synced, truncated: Math.max(0, (body.items?.length ?? 0) - items.length) });
   } catch (error) {
-    return accessErrorResponse(error, "离线同步失败");
+    return accessErrorResponse(error, "离线同步失败", request);
   }
 }

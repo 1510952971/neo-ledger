@@ -1,0 +1,211 @@
+export type BadgeTier = "普通" | "稀有" | "史诗" | "隐藏";
+export type BadgeDefinition = {
+  code: string;
+  icon: string;
+  name: string;
+  desc: string;
+  tier: BadgeTier;
+};
+export const badgeTierRank: Record<BadgeTier, number> = {
+  普通: 1,
+  稀有: 2,
+  史诗: 3,
+  隐藏: 4,
+};
+export const badgeTierClass: Record<BadgeTier, string> = {
+  普通: "common",
+  稀有: "rare",
+  史诗: "epic",
+  隐藏: "hidden",
+};
+export const badgeDefinitions: BadgeDefinition[] = [
+  {
+    code: "first_spark",
+    icon: "✍️",
+    name: "第一笔星火",
+    desc: "完成账本中的第一笔记录",
+    tier: "普通",
+  },
+  {
+    code: "income_scout",
+    icon: "🧧",
+    name: "开源侦察兵",
+    desc: "记录人生第一笔收入",
+    tier: "普通",
+  },
+  {
+    code: "account_architect",
+    icon: "🏦",
+    name: "账户建筑师",
+    desc: "建立至少 3 个资金账户",
+    tier: "普通",
+  },
+  {
+    code: "seven_day_scribe",
+    icon: "🗓️",
+    name: "七日记账官",
+    desc: "近 30 天内有 7 天完成记账",
+    tier: "普通",
+  },
+  {
+    code: "positive_month",
+    icon: "🌱",
+    name: "月度正循环",
+    desc: "本月收入高于支出",
+    tier: "普通",
+  },
+  {
+    code: "dream_planter",
+    icon: "🌟",
+    name: "心愿播种者",
+    desc: "建立第一个心愿储蓄目标",
+    tier: "普通",
+  },
+  {
+    code: "coffee_knight",
+    icon: "☕",
+    name: "咖啡断奶骑士",
+    desc: "连续 7 天咖啡支出为 0",
+    tier: "稀有",
+  },
+  {
+    code: "ledger_regular",
+    icon: "📚",
+    name: "账本常驻民",
+    desc: "累计完成 50 笔收支记录",
+    tier: "稀有",
+  },
+  {
+    code: "century_club",
+    icon: "💯",
+    name: "百笔俱乐部",
+    desc: "累计完成 100 笔收支记录",
+    tier: "稀有",
+  },
+  {
+    code: "income_diversifier",
+    icon: "🌈",
+    name: "收入多栖玩家",
+    desc: "点亮至少 3 种收入来源",
+    tier: "稀有",
+  },
+  {
+    code: "budget_guardian",
+    icon: "🧭",
+    name: "预算守门人",
+    desc: "本月有消费且总支出未超预算",
+    tier: "稀有",
+  },
+  {
+    code: "mindful_week",
+    icon: "🧘",
+    name: "清醒消费一周",
+    desc: "近 7 天有记账且零冲动消费",
+    tier: "稀有",
+  },
+  {
+    code: "category_explorer",
+    icon: "🗺️",
+    name: "消费地图家",
+    desc: "记录过至少 5 个支出分类",
+    tier: "稀有",
+  },
+  {
+    code: "side_hustle_starter",
+    icon: "💼",
+    name: "副业启航者",
+    desc: "记录第一笔副业收入",
+    tier: "稀有",
+  },
+  {
+    code: "investor_awakened",
+    icon: "📈",
+    name: "投资意识觉醒",
+    desc: "建立第一个投资账户",
+    tier: "稀有",
+  },
+  {
+    code: "digital_curator",
+    icon: "🏛️",
+    name: "资产典藏家",
+    desc: "统一管理至少 3 件实物或虚拟资产",
+    tier: "稀有",
+  },
+  {
+    code: "frugal_week",
+    icon: "🪶",
+    name: "轻盈消费周",
+    desc: "近 7 天有记账且支出不超过 ¥100",
+    tier: "稀有",
+  },
+  {
+    code: "temptation_fighter",
+    icon: "🛡️",
+    name: "抗住诱惑反击者",
+    desc: "月过半且冲动消费为 0",
+    tier: "史诗",
+  },
+  {
+    code: "full_revive",
+    icon: "🔥",
+    name: "满血复活",
+    desc: "近 30 天每天都完成记账",
+    tier: "史诗",
+  },
+  {
+    code: "savings_pilot",
+    icon: "🚀",
+    name: "储蓄率飞行员",
+    desc: "本月储蓄率达到 20%",
+    tier: "史诗",
+  },
+  {
+    code: "super_saver",
+    icon: "💎",
+    name: "半数收入守护者",
+    desc: "本月储蓄率达到 50%",
+    tier: "史诗",
+  },
+  {
+    code: "debt_tamer",
+    icon: "🕊️",
+    name: "负债驯服者",
+    desc: "成功清偿至少一个负债账户",
+    tier: "史诗",
+  },
+  {
+    code: "wish_fulfilled",
+    icon: "🎆",
+    name: "心愿兑现家",
+    desc: "完成至少一个心愿储蓄目标",
+    tier: "史诗",
+  },
+  {
+    code: "ledger_legend",
+    icon: "🏛️",
+    name: "账本编年史",
+    desc: "累计完成 365 笔收支记录",
+    tier: "史诗",
+  },
+  {
+    code: "debt_free_hidden",
+    icon: "🪽",
+    name: "无债之翼",
+    desc: "将名下所有负债账户全部清零",
+    tier: "隐藏",
+  },
+  {
+    code: "dawn_bookkeeper",
+    icon: "🌅",
+    name: "破晓记账人",
+    desc: "在清晨 05:00–08:00 完成一笔记录",
+    tier: "隐藏",
+  },
+  {
+    code: "midnight_witness",
+    icon: "🌌",
+    name: "午夜账本见证者",
+    desc: "在午夜 00:00–05:00 完成一笔记录",
+    tier: "隐藏",
+  },
+];

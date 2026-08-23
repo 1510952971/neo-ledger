@@ -1,8 +1,18 @@
 import { NextResponse } from "next/server";
 import { ensureDb, getDbBinding } from "../../../../db";
 import { accessErrorResponse, requestOwnerId } from "../../../api-security";
+import { requireSameOrigin } from "../../../auth";
+import { MAX_PROTOCOL_BODY_BYTES, readJsonWithLimit } from "../../../request-limits";
 
 const MAX_PACKAGE_LENGTH = 8_000_000;
+
+function privateJson(body: unknown, init: ResponseInit = {}) {
+  const headers = new Headers(init.headers);
+  headers.set("Cache-Control", "no-store, private, max-age=0");
+  headers.set("Pragma", "no-cache");
+  headers.set("X-Content-Type-Options", "nosniff");
+  return NextResponse.json(body, { ...init, headers });
+}
 
 const text = (value: unknown, limit: number) =>
   String(value ?? "").trim().slice(0, limit);
@@ -32,8 +42,8 @@ export async function GET(request: Request) {
         )
         .bind(id, ownerId, room)
         .first<{ id: string; payload: string; createdAt: string }>();
-      if (!row) return NextResponse.json({ error: "同步包不存在或已过期" }, { status: 404 });
-      return NextResponse.json(row);
+      if (!row) return privateJson({ error: "同步包不存在或已过期" }, { status: 404 });
+      return privateJson(row);
     }
     const rows = await db
       .prepare(
@@ -41,19 +51,20 @@ export async function GET(request: Request) {
       )
       .bind(ownerId, room)
       .all<{ id: string; size: number; createdAt: string }>();
-    return NextResponse.json({ packages: rows.results });
+    return privateJson({ packages: rows.results });
   } catch (error) {
-    return accessErrorResponse(error, "读取局域网同步包失败");
+    return accessErrorResponse(error, "读取局域网同步包失败", request);
   }
 }
 
 export async function POST(request: Request) {
   try {
+    requireSameOrigin(request);
     await ensureDb();
-    const body = (await request.json()) as {
+    const body = await readJsonWithLimit<{
       room?: string;
       payload?: string;
-    };
+    }>(request, MAX_PROTOCOL_BODY_BYTES);
     const room = text(body.room || "neo-home", 64);
     const payload = String(body.payload || "");
     if (!room || !payload || payload.length > MAX_PACKAGE_LENGTH)
@@ -73,14 +84,15 @@ export async function POST(request: Request) {
       )
       .bind(id, ownerId, room, payload)
       .run();
-    return NextResponse.json({ ok: true, id, expiresInMinutes: 15 }, { status: 201 });
+    return privateJson({ ok: true, id, expiresInMinutes: 15 }, { status: 201 });
   } catch (error) {
-    return accessErrorResponse(error, "上传局域网同步包失败");
+    return accessErrorResponse(error, "上传局域网同步包失败", request);
   }
 }
 
 export async function DELETE(request: Request) {
   try {
+    requireSameOrigin(request);
     await ensureDb();
     const url = new URL(request.url);
     const id = text(url.searchParams.get("id"), 100);
@@ -92,8 +104,8 @@ export async function DELETE(request: Request) {
       )
       .bind(id, ownerId)
       .run();
-    return NextResponse.json({ ok: true });
+    return privateJson({ ok: true });
   } catch (error) {
-    return accessErrorResponse(error, "清理局域网同步包失败");
+    return accessErrorResponse(error, "清理局域网同步包失败", request);
   }
 }

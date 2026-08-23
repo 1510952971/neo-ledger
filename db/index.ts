@@ -12,7 +12,9 @@ import {
   SCHEDULED_OCCURRENCES_TABLE_SQL,
 } from "./transfer-schema.js";
 
-const SCHEMA_VERSION = "28";
+export const DB_SCHEMA_VERSION = "32";
+const SCHEMA_VERSION = DB_SCHEMA_VERSION;
+let ensuredDbBinding: ReturnType<typeof getDbBinding> | null = null;
 
 export const FX_TO_CNY = { CNY: 1, USD: 7.2, JPY: 0.0462, EUR: 7.85 } as const;
 
@@ -29,6 +31,7 @@ export type DigitalAssetRow = {
   lifespanMonths: number;
   residualRateBps: number;
   heatLevel: "高" | "中" | "低" | null;
+  updatedAt: string;
   createdAt: string;
 };
 
@@ -48,19 +51,251 @@ export function getDb() {
   return drizzle(getDbBinding(), { schema });
 }
 
+async function runIdempotentAlter(binding: ReturnType<typeof getDbBinding>, sql: string) {
+  try {
+    await binding.prepare(sql).run();
+  } catch (error) {
+    if (!/duplicate column name/i.test(String(error))) throw error;
+  }
+}
+
+async function runMigrationBatch(
+  binding: ReturnType<typeof getDbBinding>,
+  statements: Array<{ run(): Promise<unknown> }>,
+) {
+  for (const statement of statements) {
+    try {
+      await statement.run();
+    } catch (error) {
+      const message = String(error);
+      if (!/already exists|duplicate column name|duplicate index/i.test(message))
+        throw error;
+    }
+  }
+}
+
+async function tableExists(binding: ReturnType<typeof getDbBinding>, table: string) {
+  const row = await binding
+    .prepare("SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name=?")
+    .bind(table)
+    .first<{ present: number }>();
+  return Boolean(row);
+}
+
+async function tableHasColumn(
+  binding: ReturnType<typeof getDbBinding>,
+  table: string,
+  column: string,
+) {
+  const rows: { results: Array<{ name: string }> } = await binding
+    .prepare(`PRAGMA table_info(${table})`)
+    .all<{ name: string }>();
+  return rows.results.some((item) => item.name === column);
+}
+
+async function ensureTransactionRevisions(binding: ReturnType<typeof getDbBinding>) {
+  await binding.batch([
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS ledger_revisions(ledger_id INTEGER PRIMARY KEY,revision INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+    ),
+    binding.prepare(
+      "INSERT OR IGNORE INTO ledger_revisions(ledger_id,revision,updated_at) SELECT ledger_id,0,CURRENT_TIMESTAMP FROM transactions GROUP BY ledger_id",
+    ),
+    binding.prepare(
+      "CREATE TRIGGER IF NOT EXISTS transactions_revision_insert AFTER INSERT ON transactions BEGIN INSERT INTO ledger_revisions(ledger_id,revision,updated_at) VALUES(NEW.ledger_id,1,CURRENT_TIMESTAMP) ON CONFLICT(ledger_id) DO UPDATE SET revision=revision+1,updated_at=CURRENT_TIMESTAMP; END",
+    ),
+    binding.prepare(
+      "CREATE TRIGGER IF NOT EXISTS transactions_revision_update AFTER UPDATE ON transactions WHEN OLD.ledger_id=NEW.ledger_id BEGIN INSERT INTO ledger_revisions(ledger_id,revision,updated_at) VALUES(NEW.ledger_id,1,CURRENT_TIMESTAMP) ON CONFLICT(ledger_id) DO UPDATE SET revision=revision+1,updated_at=CURRENT_TIMESTAMP; END",
+    ),
+    binding.prepare(
+      "CREATE TRIGGER IF NOT EXISTS transactions_revision_move AFTER UPDATE ON transactions WHEN OLD.ledger_id<>NEW.ledger_id BEGIN INSERT INTO ledger_revisions(ledger_id,revision,updated_at) VALUES(OLD.ledger_id,1,CURRENT_TIMESTAMP) ON CONFLICT(ledger_id) DO UPDATE SET revision=revision+1,updated_at=CURRENT_TIMESTAMP; INSERT INTO ledger_revisions(ledger_id,revision,updated_at) VALUES(NEW.ledger_id,1,CURRENT_TIMESTAMP) ON CONFLICT(ledger_id) DO UPDATE SET revision=revision+1,updated_at=CURRENT_TIMESTAMP; END",
+    ),
+    binding.prepare(
+      "CREATE TRIGGER IF NOT EXISTS transactions_revision_delete AFTER DELETE ON transactions BEGIN INSERT INTO ledger_revisions(ledger_id,revision,updated_at) VALUES(OLD.ledger_id,1,CURRENT_TIMESTAMP) ON CONFLICT(ledger_id) DO UPDATE SET revision=revision+1,updated_at=CURRENT_TIMESTAMP; END",
+    ),
+  ]);
+}
+
 export async function ensureDb() {
   const binding = getDbBinding();
+  if (ensuredDbBinding === binding) return;
   await binding
     .prepare(
       "CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
     )
     .run();
+  // Restore snapshots are additive and do not alter the main schema version,
+  // so old self-hosted databases can receive the safety net without a
+  // destructive migration.
+  await binding.batch([
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS restore_snapshots(id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,checksum TEXT NOT NULL,total_bytes INTEGER NOT NULL,chunk_count INTEGER NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+    ),
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS restore_snapshot_chunks(snapshot_id TEXT NOT NULL,chunk_index INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(snapshot_id,chunk_index))",
+    ),
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS restore_snapshot_commits(snapshot_id TEXT PRIMARY KEY,committed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+    ),
+    binding.prepare(
+      "CREATE INDEX IF NOT EXISTS restore_snapshot_commits_created_idx ON restore_snapshot_commits(committed_at DESC)",
+    ),
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS restore_snapshot_commit_migrations(id INTEGER PRIMARY KEY CHECK(id=1),migrated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+    ),
+    binding.prepare(
+      "CREATE INDEX IF NOT EXISTS restore_snapshots_owner_idx ON restore_snapshots(owner_id,created_at DESC)",
+    ),
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS restore_locks(owner_id TEXT PRIMARY KEY,lock_id TEXT NOT NULL,expires_at INTEGER NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+    ),
+    binding.prepare(
+      "CREATE INDEX IF NOT EXISTS restore_locks_expiry_idx ON restore_locks(expires_at)",
+    ),
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS trusted_auth_nonces(nonce TEXT PRIMARY KEY,expires_at INTEGER NOT NULL)",
+    ),
+    binding.prepare(
+      "CREATE INDEX IF NOT EXISTS trusted_auth_nonces_expiry_idx ON trusted_auth_nonces(expires_at)",
+    ),
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS audit_events(id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,event_type TEXT NOT NULL,subject_type TEXT,subject_id TEXT,request_id TEXT,metadata_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+    ),
+    binding.prepare(
+      "CREATE INDEX IF NOT EXISTS audit_events_owner_created_idx ON audit_events(owner_id,created_at DESC)",
+    ),
+    binding.prepare(
+      "CREATE TRIGGER IF NOT EXISTS audit_events_append_only_update BEFORE UPDATE ON audit_events BEGIN SELECT RAISE(ABORT,'audit_events are append-only'); END",
+    ),
+    binding.prepare(
+      "CREATE TRIGGER IF NOT EXISTS audit_events_append_only_delete BEFORE DELETE ON audit_events BEGIN SELECT RAISE(ABORT,'audit_events are append-only'); END",
+    ),
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS app_session_devices(id TEXT PRIMARY KEY,token_hash TEXT NOT NULL UNIQUE,user_id TEXT NOT NULL,display_name TEXT NOT NULL DEFAULT '浏览器',user_agent TEXT,ip_address TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,last_used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,expires_at TEXT NOT NULL,revoked_at TEXT)",
+    ),
+    binding.prepare(
+      "CREATE INDEX IF NOT EXISTS app_session_devices_user_idx ON app_session_devices(user_id,created_at DESC)",
+    ),
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS user_mfa(user_id TEXT PRIMARY KEY,secret TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,last_used_step INTEGER)",
+    ),
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS user_mfa_recovery_codes(user_id TEXT NOT NULL,code_hash TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,used_at TEXT,PRIMARY KEY(user_id,code_hash))",
+    ),
+    binding.prepare(
+      "CREATE INDEX IF NOT EXISTS user_mfa_recovery_available_idx ON user_mfa_recovery_codes(user_id,used_at)",
+    ),
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS transaction_reconciliation(transaction_id INTEGER PRIMARY KEY,ledger_id INTEGER NOT NULL,status TEXT NOT NULL CHECK(status IN ('unreconciled','reconciled','exception')) DEFAULT 'unreconciled',note TEXT,reconciled_by TEXT,reconciled_at TEXT,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+    ),
+    binding.prepare(
+      "CREATE INDEX IF NOT EXISTS transaction_reconciliation_ledger_idx ON transaction_reconciliation(ledger_id,status)",
+    ),
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS automation_rules(id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,ledger_id INTEGER NOT NULL,name TEXT NOT NULL,priority INTEGER NOT NULL DEFAULT 100,enabled INTEGER NOT NULL DEFAULT 0,conditions_json TEXT NOT NULL,actions_json TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+    ),
+    binding.prepare(
+      "CREATE INDEX IF NOT EXISTS automation_rules_ledger_idx ON automation_rules(owner_id,ledger_id,enabled,priority)",
+    ),
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS import_batches(id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,ledger_id INTEGER NOT NULL,source_label TEXT NOT NULL DEFAULT '账单导入',imported_count INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'importing',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,completed_at TEXT,undone_at TEXT)",
+    ),
+    binding.prepare(
+      "CREATE INDEX IF NOT EXISTS import_batches_owner_idx ON import_batches(owner_id,ledger_id,created_at DESC)",
+    ),
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS import_batch_items(batch_id TEXT NOT NULL,transaction_id INTEGER NOT NULL,offline_id TEXT NOT NULL,imported_updated_at TEXT NOT NULL,PRIMARY KEY(batch_id,transaction_id))",
+    ),
+    binding.prepare(
+      "CREATE INDEX IF NOT EXISTS import_batch_items_transaction_idx ON import_batch_items(transaction_id)",
+    ),
+  ]);
   const version = await binding
     .prepare("SELECT value FROM app_meta WHERE key = 'schema_version'")
     .first<{ value: string }>();
-  if (version?.value === SCHEMA_VERSION) return;
+  if (version?.value === SCHEMA_VERSION) {
+    await ensureTransactionRevisions(binding);
+    ensuredDbBinding = binding;
+    return;
+  }
+  if (version?.value === "31") {
+    await runIdempotentAlter(binding, "ALTER TABLE import_batches ADD COLUMN undo_started_at TEXT");
+    await runIdempotentAlter(binding, "ALTER TABLE import_batches ADD COLUMN undo_lock_id TEXT");
+    await binding.prepare("UPDATE app_meta SET value='32' WHERE key='schema_version'").run();
+    return ensureDb();
+  }
+  if (version?.value === "30") {
+    await runIdempotentAlter(binding, "ALTER TABLE digital_assets ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''");
+    await binding.prepare("UPDATE digital_assets SET updated_at=created_at WHERE updated_at=''").run();
+    await binding.prepare("CREATE INDEX IF NOT EXISTS digital_assets_ledger_updated_idx ON digital_assets(ledger_id,updated_at,id)").run();
+    await binding.prepare("UPDATE app_meta SET value='31' WHERE key='schema_version'").run();
+    return ensureDb();
+  }
+  if (version?.value === "29") {
+    await runMigrationBatch(binding, [
+      binding.prepare(
+        "CREATE INDEX IF NOT EXISTS transactions_ledger_occurred_idx ON transactions(ledger_id,occurred_at DESC,id DESC)",
+      ),
+      binding.prepare(
+        "CREATE INDEX IF NOT EXISTS accounts_ledger_id_idx ON accounts(ledger_id,id)",
+      ),
+      binding.prepare(
+        "CREATE INDEX IF NOT EXISTS members_ledger_id_idx ON members(ledger_id,id)",
+      ),
+      binding.prepare(
+        "CREATE INDEX IF NOT EXISTS subscriptions_ledger_charge_idx ON subscriptions(ledger_id,next_charge_date,id)",
+      ),
+      binding.prepare(
+        "CREATE INDEX IF NOT EXISTS installments_ledger_id_idx ON installments(ledger_id,id)",
+      ),
+      binding.prepare(
+        "CREATE INDEX IF NOT EXISTS savings_goals_ledger_id_idx ON savings_goals(ledger_id,id)",
+      ),
+      binding.prepare(
+        "CREATE INDEX IF NOT EXISTS category_budgets_ledger_category_idx ON category_budgets(ledger_id,category)",
+      ),
+      binding.prepare(
+        "CREATE INDEX IF NOT EXISTS expense_categories_ledger_order_idx ON expense_categories(ledger_id,is_active,sort_order,id)",
+      ),
+      binding.prepare(
+        "CREATE INDEX IF NOT EXISTS income_categories_ledger_order_idx ON income_categories(ledger_id,is_active,sort_order,id)",
+      ),
+      binding.prepare(
+        "CREATE INDEX IF NOT EXISTS pending_transactions_ledger_status_idx ON pending_transactions(ledger_id,status,id)",
+      ),
+      binding.prepare(
+        "CREATE INDEX IF NOT EXISTS system_notifications_ledger_created_idx ON system_notifications(ledger_id,created_at DESC,id DESC)",
+      ),
+      binding.prepare(
+        "CREATE INDEX IF NOT EXISTS achievements_ledger_idx ON achievements(ledger_id,unlocked_at DESC)",
+      ),
+      binding.prepare(
+        "CREATE INDEX IF NOT EXISTS side_hustle_deductions_ledger_idx ON side_hustle_deductions(ledger_id,transaction_id)",
+      ),
+      binding.prepare("UPDATE app_meta SET value='30' WHERE key='schema_version'"),
+    ]);
+    return ensureDb();
+  }
+  if (version?.value === "28") {
+    await runMigrationBatch(binding, [
+      binding.prepare(
+        "CREATE TABLE IF NOT EXISTS user_passkeys(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,label TEXT NOT NULL,public_key TEXT NOT NULL,counter INTEGER NOT NULL DEFAULT 0,device_type TEXT NOT NULL,backed_up INTEGER NOT NULL DEFAULT 0,transports TEXT NOT NULL DEFAULT '[]',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,last_used_at TEXT)",
+      ),
+      binding.prepare(
+        "CREATE INDEX IF NOT EXISTS user_passkeys_user_idx ON user_passkeys(user_id,created_at DESC)",
+      ),
+      binding.prepare(
+        "CREATE TABLE IF NOT EXISTS webauthn_challenges(id TEXT PRIMARY KEY,user_id TEXT,purpose TEXT NOT NULL CHECK(purpose IN ('registration','authentication')),challenge TEXT NOT NULL,expires_at INTEGER NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+      ),
+      binding.prepare(
+        "CREATE INDEX IF NOT EXISTS webauthn_challenges_expiry_idx ON webauthn_challenges(expires_at)",
+      ),
+      binding.prepare("UPDATE app_meta SET value='29' WHERE key='schema_version'"),
+    ]);
+    return ensureDb();
+  }
   if (version?.value === "26") {
-    await binding.batch([
+    await runMigrationBatch(binding, [
       binding.prepare(
         "CREATE TABLE integration_events(owner_id TEXT NOT NULL,external_id TEXT NOT NULL,payload_hash TEXT NOT NULL,transaction_id INTEGER,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(owner_id,external_id))",
       ),
@@ -80,7 +315,7 @@ export async function ensureDb() {
     return ensureDb();
   }
   if (version?.value === "27") {
-    await binding.batch([
+    await runMigrationBatch(binding, [
       binding.prepare(
         "CREATE TABLE nearby_packages(id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,room TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,expires_at TEXT NOT NULL,consumed_at TEXT)",
       ),
@@ -92,7 +327,7 @@ export async function ensureDb() {
     return ensureDb();
   }
   if (version?.value === "25") {
-    await binding.batch([
+    await runMigrationBatch(binding, [
       binding.prepare("ALTER TABLE app_users ADD COLUMN avatar_url TEXT"),
       binding.prepare(
         "UPDATE app_meta SET value='26' WHERE key='schema_version'",
@@ -101,7 +336,7 @@ export async function ensureDb() {
     return ensureDb();
   }
   if (version?.value === "24") {
-    await binding.batch([
+    await runMigrationBatch(binding, [
       binding.prepare(
         "ALTER TABLE app_users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0",
       ),
@@ -122,7 +357,7 @@ export async function ensureDb() {
     return ensureDb();
   }
   if (version?.value === "23") {
-    await binding.batch([
+    await runMigrationBatch(binding, [
       binding.prepare(
         "ALTER TABLE app_users ADD COLUMN email TEXT COLLATE NOCASE",
       ),
@@ -148,7 +383,7 @@ export async function ensureDb() {
     return ensureDb();
   }
   if (version?.value === "22") {
-    await binding.batch([
+    await runMigrationBatch(binding, [
       binding.prepare(
         "CREATE TABLE app_users(id TEXT PRIMARY KEY,username TEXT NOT NULL COLLATE NOCASE UNIQUE,display_name TEXT NOT NULL,password_hash TEXT NOT NULL,password_salt TEXT NOT NULL,password_iterations INTEGER NOT NULL,disabled INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
       ),
@@ -165,7 +400,7 @@ export async function ensureDb() {
     return ensureDb();
   }
   if (version?.value === "21") {
-    await binding.batch([
+    await runMigrationBatch(binding, [
       binding.prepare(
         "ALTER TABLE digital_assets ADD COLUMN currency TEXT NOT NULL DEFAULT 'CNY'",
       ),
@@ -201,7 +436,7 @@ export async function ensureDb() {
     return ensureDb();
   }
   if (version?.value === "19") {
-    await binding.batch([
+    await runMigrationBatch(binding, [
       binding.prepare("ALTER TABLE sync_tombstones ADD COLUMN owner_id TEXT"),
       binding.prepare("UPDATE sync_tombstones SET owner_id=(SELECT owner_id FROM ledgers WHERE ledgers.id=sync_tombstones.ledger_id) WHERE owner_id IS NULL"),
       binding.prepare("CREATE INDEX sync_tombstones_owner_idx ON sync_tombstones(owner_id,deleted_at)"),
@@ -211,7 +446,7 @@ export async function ensureDb() {
     return ensureDb();
   }
   if (version?.value === "18") {
-    await binding.batch([
+    await runMigrationBatch(binding, [
       binding.prepare("ALTER TABLE ledgers ADD COLUMN owner_id TEXT"),
       binding.prepare("ALTER TABLE ledgers ADD COLUMN uuid TEXT"),
       binding.prepare("ALTER TABLE ledgers ADD COLUMN updated_at TEXT"),
@@ -262,19 +497,28 @@ export async function ensureDb() {
     return ensureDb();
   }
   if (version?.value === "17") {
-    await binding.batch([
-      binding.prepare("ALTER TABLE subscriptions RENAME TO subscriptions_v17"),
-      binding.prepare(
-        "CREATE TABLE subscriptions(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,amount INTEGER NOT NULL,account_id INTEGER NOT NULL REFERENCES accounts(id),cycle TEXT NOT NULL CHECK(cycle IN ('每月','每季','每年')),category TEXT NOT NULL DEFAULT '娱乐',next_charge_date TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,ledger_id INTEGER NOT NULL DEFAULT 1,category_dynamic TEXT)",
-      ),
-      binding.prepare(
-        "INSERT INTO subscriptions(id,name,amount,account_id,cycle,category,next_charge_date,created_at,ledger_id,category_dynamic) SELECT id,name,amount,account_id,cycle,category,next_charge_date,created_at,ledger_id,category_dynamic FROM subscriptions_v17",
-      ),
-      binding.prepare("DROP TABLE subscriptions_v17"),
-      binding
-        .prepare("UPDATE app_meta SET value=? WHERE key='schema_version'")
-        .bind("18"),
-    ]);
+    const oldTableExists = await tableExists(binding, "subscriptions_v17");
+    const currentTableExists = await tableExists(binding, "subscriptions");
+    if (currentTableExists && !oldTableExists && !(await tableHasColumn(binding, "subscriptions", "category_dynamic"))) {
+      await binding.prepare("ALTER TABLE subscriptions RENAME TO subscriptions_v17").run();
+    }
+    await binding
+      .prepare(
+        "CREATE TABLE IF NOT EXISTS subscriptions(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,amount INTEGER NOT NULL,account_id INTEGER NOT NULL REFERENCES accounts(id),cycle TEXT NOT NULL CHECK(cycle IN ('每月','每季','每年')),category TEXT NOT NULL DEFAULT '娱乐',next_charge_date TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,ledger_id INTEGER NOT NULL DEFAULT 1,category_dynamic TEXT)",
+      )
+      .run();
+    if (await tableExists(binding, "subscriptions_v17")) {
+      await binding
+        .prepare(
+          "INSERT OR IGNORE INTO subscriptions(id,name,amount,account_id,cycle,category,next_charge_date,created_at,ledger_id,category_dynamic) SELECT id,name,amount,account_id,cycle,category,next_charge_date,created_at,ledger_id,category_dynamic FROM subscriptions_v17",
+        )
+        .run();
+      await binding.prepare("DROP TABLE IF EXISTS subscriptions_v17").run();
+    }
+    await binding
+      .prepare("UPDATE app_meta SET value=? WHERE key='schema_version'")
+      .bind("18")
+      .run();
     return ensureDb();
   }
   if (version?.value === "16") {
@@ -661,23 +905,10 @@ export async function ensureDb() {
     binding.prepare(
       "INSERT INTO category_budgets (category,amount) VALUES ('餐饮',0),('交通',0),('购物',0),('咖啡',30000),('娱乐',50000)",
     ),
+    // Fresh installations start blank. A single zero-balance account gives
+    // first-run users a valid target without presenting invented wealth.
     binding.prepare(
-      "INSERT INTO accounts (name,type,current_balance,icon,initial_balance) VALUES ('微信钱包','资产',286530,'💚',286530)",
-    ),
-    binding.prepare(
-      "INSERT INTO accounts (name,type,current_balance,icon,initial_balance) VALUES ('支付宝','资产',168800,'💙',168800)",
-    ),
-    binding.prepare(
-      "INSERT INTO accounts (name,type,current_balance,icon,initial_balance) VALUES ('招商银行卡','资产',1258000,'💳',1258000)",
-    ),
-    binding.prepare(
-      "INSERT INTO accounts (name,type,current_balance,bill_day,repayment_day,icon) VALUES ('花呗','负债',0,1,10,'🌸')",
-    ),
-    binding.prepare(
-      "INSERT INTO accounts (name,type,current_balance,bill_day,repayment_day,icon) VALUES ('分期乐/信用卡','负债',0,20,5,'💠')",
-    ),
-    binding.prepare(
-      "INSERT INTO accounts (name,type,current_balance,icon,is_investment,initial_balance) VALUES ('招商银行理财卡/基金账户','资产',3000000,'📈',1,3000000)",
+      "INSERT INTO accounts (name,type,current_balance,icon,initial_balance) VALUES ('现金账户','资产',0,'💰',0)",
     ),
     binding
       .prepare("INSERT OR REPLACE INTO app_meta VALUES ('schema_version',?)")

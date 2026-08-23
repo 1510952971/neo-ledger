@@ -1,6 +1,6 @@
 # Neo Ledger
 
-Neo Ledger 是一个本地优先的个人账本，支持多账本、账户与信用卡、储蓄目标、订阅和分期，以及微信、支付宝、美团、京东、银行卡等账单导入。
+Neo Ledger 是一个数据自主、自托管优先的个人账本，支持多账本、账户与信用卡、储蓄目标、订阅和分期，以及微信、支付宝、美团、京东、银行卡等账单导入。当前浏览器端离线能力主要覆盖待提交流水；完整账本仍由本地/自托管数据库提供，不能把它描述成完整 local-first 副本。
 
 ## 使用文档
 
@@ -36,6 +36,10 @@ npm run dev
 
 ### 邮箱验证与找回密码
 
+账号面板提供验证器应用的 TOTP 二次验证、设备会话列表和远程注销。屏幕隐私锁只负责临时防窥，不替代账号认证、磁盘加密或端到端加密。
+
+如果通过身份感知反向代理部署，不能只转发 `oai-authenticated-user-*` 请求头。必须同时配置 `NEO_TRUSTED_AUTH_SECRET`、`NEO_TRUSTED_AUTH_AUDIENCE` 和 `NEO_TRUSTED_PROXY_IPS`，由代理对邮箱、受众、时间戳和 nonce 做 HMAC-SHA-256 签名；普通自托管保持 `NEO_TRUSTED_AUTH_HEADERS=false`。
+
 只要填了邮箱，注册、绑定/更换邮箱、重置密码三个场景都会走验证码：验证码 6 位、10 分钟有效、一码一用，输错 5 次作废，同一邮箱 60 秒内只能再发一次、每小时最多 5 封。验证码在数据库里只存哈希。重置密码成功后会注销该账号的全部登录会话。
 
 发信走 Resend 的 HTTP API（Cloudflare Workers 运行时没有 TCP，发不了传统 SMTP）。邮箱验证和密码重置需要在 `.env.local` 里配置：
@@ -69,11 +73,17 @@ ALIPAY_PUBLIC_KEY=
 
 ### 自动记账连接
 
-登录后打开“数据中心 → 自动记账连接”，生成当前账号专用密钥。快捷指令、通知转发工具、Bark 或 NAS 向 `/api/external/quick-sync` 发送 `POST` 请求即可入账，密钥放在 `Authorization: Bearer <密钥>` 请求头中。页面可以直接复制快捷指令和通知转发模板。
+登录后打开“数据中心 → 自动记账连接”，生成当前账号专用密钥。快捷指令、通知转发工具、Bark 或 NAS 向 `/api/v1/transactions` 发送 `POST` 请求即可入账，密钥放在 `Authorization: Bearer <密钥>` 请求头中，每个业务事件必须提供稳定且唯一的幂等 ID，推荐使用 `Idempotency-Key` 请求头，也兼容请求体中的 `externalId`。页面可以直接复制快捷指令和通知转发模板。
 
-Android 手机和平板可使用仓库中的 `android-companion`：它通过系统通知访问权限监听微信和支付宝支付通知，断网时先保存在本机队列，恢复后自动发送。生成密钥后点击“复制安卓配置”，再在伴侣应用中一键粘贴即可。iOS 不允许第三方 App 读取其他 App 的通知，因此 iPhone/iPad 使用快捷指令或共享入口发送到同一接口。
+外部 API 的 OpenAPI 3.1 文档由实例自身发布在 `/api/openapi.json`，包含认证、64KB 正文上限、字段约束、统一错误码和响应头。旧 `/api/external/quick-sync` 在 2026-12-31 前保留兼容，响应会携带 `Deprecation`、`Sunset` 和 `Link`；新集成不得再使用旧路径。
+
+Android 手机和平板可使用仓库中的 `android-companion`：它通过系统通知权限监听支付通知，也可开启 Android 无障碍服务识别当前前台支付 App 的付款完成界面。只有明确支付成功结果和金额才会记账，账单列表、历史记录、照片和支付前页面会被忽略；服务不会点击或发起支付。断网时先保存在本机队列，恢复后自动发送。在“自动记账连接”点击“生成并复制安卓配置”，再在伴侣应用完成配置并分别开启所需权限即可。iOS 不允许第三方 App 读取其他 App 的通知，因此 iPhone/iPad 使用快捷指令或共享入口发送到同一接口。
 
 ### NAS / Docker
+
+Docker Compose 默认使用 `DEPLOYMENT_MODE=self_hosted` 并监听容器网络。直接在电脑运行的 `local` 模式默认只监听 `127.0.0.1`；需要局域网访问时必须显式设置 `NEO_ENABLE_LAN=true`，并确认系统防火墙没有把端口暴露到公网。
+
+`cloud` 模式采用失败即关闭的启动门禁，必须同时配置：`NEO_HSTS=true`、`NEO_ALLOWED_HOSTS`、白名单内的 HTTPS `AUTH_PUBLIC_ORIGIN`、`RESEND_API_KEY`、有效的 `MAIL_FROM` 和 `NEO_WEBDAV_ALLOWED_HOSTS`。两个白名单只写逗号分隔的完整主机名，不含协议、端口、路径或通配符。配置不完整时容器拒绝启动，Worker 返回 503，健康接口在 `configurationIssues` 中给出不含密钥的错误码。
 
 NAS 安装 Docker 后，在项目目录运行：
 
@@ -132,14 +142,14 @@ WebDAV 地址与用户名保存在浏览器本地；应用密码和本地同步�
 
 ## 发布版本
 
-先更新 `package.json` 与 `app/app-version.ts` 中的版本，再提交并创建同名标签：
+先更新 `package.json`、`app/app-version.ts` 与 `release-compatibility.json` 中的版本，再提交并创建同名标签。Android 伴侣可以独立发版，但其 `versionName` 必须与兼容性清单一致，且清单中的最低 Web 版本不能高于本次发布版本：
 
 ```bash
 git tag v1.1.0
 git push origin main --tags
 ```
 
-GitHub Actions 会运行完整构建和测试，通过后自动创建 Release。程序只会把最新的非草稿、非预发布 Release 视为可安装版本。
+GitHub Actions 会运行完整构建和测试，并先进入 `release-approval` 环境；仓库管理员必须在 GitHub 中为该环境配置必需审阅者，确认外部 GA/RC 证据后才会创建 Release。程序只会把最新的非草稿、非预发布 Release 视为可安装版本。
 
 ## 验证
 
@@ -147,3 +157,5 @@ GitHub Actions 会运行完整构建和测试，通过后自动创建 Release。
 npm run lint
 npm test
 ```
+
+公开托管前请先阅读 [安全响应策略](SECURITY.md)、[运维与灾备手册](docs/OPERATIONS_RUNBOOK.md)、[隐私政策草案](docs/PRIVACY_POLICY_DRAFT.md) 和 [服务条款草案](docs/TERMS_DRAFT.md)，并完成真实域名、真机、渗透测试和法务审阅。通过代码测试不等于已经取得金融或隐私合规资质。

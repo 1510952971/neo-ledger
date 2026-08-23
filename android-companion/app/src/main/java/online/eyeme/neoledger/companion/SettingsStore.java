@@ -39,6 +39,7 @@ final class SettingsStore {
 
     void save(String endpoint, String token, int ledgerId, boolean wechat, boolean alipay,
               boolean marketApps, String extraPackages) throws Exception {
+        EndpointNormalizer.validateBaseUrl(endpoint);
         preferences.edit()
                 .putString("endpoint", EndpointNormalizer.transactionEndpoint(endpoint))
                 .putString(TOKEN, encrypt(token.trim()))
@@ -51,6 +52,13 @@ final class SettingsStore {
     }
 
     String endpoint() { return preferences.getString("endpoint", ""); }
+    String deviceId() {
+        String existing = preferences.getString("device_id", "");
+        if (!existing.isEmpty()) return existing;
+        String created = "android-" + UUID.randomUUID();
+        preferences.edit().putString("device_id", created).apply();
+        return created;
+    }
     int ledgerId() { return preferences.getInt("ledger_id", 1); }
     boolean wechatEnabled() { return preferences.getBoolean("wechat", true); }
     boolean alipayEnabled() { return preferences.getBoolean("alipay", true); }

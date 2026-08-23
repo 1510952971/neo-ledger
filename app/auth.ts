@@ -21,6 +21,26 @@ export type AuthUser = {
   provider: "local" | "chatgpt";
 };
 
+export class AuthRateLimitError extends Error {
+  status = 429;
+  retryAfter: number;
+
+  constructor(message: string, retryAfter: number) {
+    super(message);
+    this.name = "AuthRateLimitError";
+    this.retryAfter = Math.max(1, Math.ceil(retryAfter));
+  }
+}
+
+export class AuthOriginError extends Error {
+  status = 403;
+
+  constructor(message = "登录请求来源无效") {
+    super(message);
+    this.name = "AuthOriginError";
+  }
+}
+
 const bytesToHex = (bytes: Uint8Array) =>
   [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
 
@@ -187,7 +207,14 @@ export async function sessionUser(token: string): Promise<AuthUser | null> {
     .prepare(
       `SELECT u.id,u.username,u.display_name displayName,u.email,u.avatar_url avatarUrl
        FROM app_sessions s JOIN app_users u ON u.id=s.user_id
-       WHERE s.token_hash=? AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND u.disabled=0`,
+       WHERE s.token_hash=? AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         AND s.last_used_at>strftime('%Y-%m-%dT%H:%M:%fZ','now','-14 days')
+         AND NOT EXISTS (
+           SELECT 1 FROM app_session_devices d
+           WHERE d.token_hash=s.token_hash
+             AND (d.revoked_at IS NOT NULL OR d.expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+         )
+         AND u.disabled=0`,
     )
     .bind(tokenHash)
     .first<{
@@ -198,12 +225,18 @@ export async function sessionUser(token: string): Promise<AuthUser | null> {
       avatarUrl: string | null;
     }>();
   if (!row) return null;
-  await db
-    .prepare(
-      "UPDATE app_sessions SET last_used_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE token_hash=?",
-    )
-    .bind(tokenHash)
-    .run();
+  await db.batch([
+    db
+      .prepare(
+        "UPDATE app_sessions SET last_used_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE token_hash=?",
+      )
+      .bind(tokenHash),
+    db
+      .prepare(
+        "UPDATE app_session_devices SET last_used_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE token_hash=? AND revoked_at IS NULL",
+      )
+      .bind(tokenHash),
+  ]);
   return {
     id: row.id,
     ownerId: `user:${row.id}`,
@@ -227,17 +260,34 @@ export async function createSession(userId: string, request: Request) {
   await ensureDb();
   const token = `nls_${bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)))}`;
   const tokenHash = await authTokenDigest(token);
-  await getDbBinding()
-    .prepare(
-      `INSERT INTO app_sessions(token_hash,user_id,expires_at)
-       VALUES(?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now','+30 days'))`,
-    )
-    .bind(tokenHash, userId)
-    .run();
+  const deviceId = crypto.randomUUID();
+  const db = getDbBinding();
+  const userAgent = (request.headers.get("user-agent") ?? "").slice(0, 300) || null;
+  const ipAddress = (
+    request.headers.get("cf-connecting-ip") ??
+    request.headers.get("x-real-ip") ??
+    request.headers.get("x-forwarded-for")?.split(",")[0] ??
+    ""
+  ).trim().slice(0, 80) || null;
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO app_sessions(token_hash,user_id,expires_at)
+         VALUES(?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now','+30 days'))`,
+      )
+      .bind(tokenHash, userId),
+    db
+      .prepare(
+        `INSERT INTO app_session_devices(id,token_hash,user_id,display_name,user_agent,ip_address,expires_at)
+         VALUES(?,?,?,'浏览器',?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now','+30 days'))`,
+      )
+      .bind(deviceId, tokenHash, userId, userAgent, ipAddress),
+  ]);
   const secure =
     new URL(request.url).protocol === "https:" ||
     request.headers.get("x-forwarded-proto") === "https";
   return {
+    id: deviceId,
     token,
     cookie: sessionCookie(token, { secure, maxAge: SESSION_SECONDS }),
   };
@@ -250,10 +300,13 @@ export async function revokeRequestSession(request: Request) {
   );
   if (token) {
     await ensureDb();
-    await getDbBinding()
-      .prepare("DELETE FROM app_sessions WHERE token_hash=?")
-      .bind(await authTokenDigest(token))
-      .run();
+    const tokenHash = await authTokenDigest(token);
+    await getDbBinding().batch([
+      getDbBinding().prepare("DELETE FROM app_sessions WHERE token_hash=?").bind(tokenHash),
+      getDbBinding()
+        .prepare("UPDATE app_session_devices SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE token_hash=?")
+        .bind(tokenHash),
+    ]);
   }
   const secure =
     new URL(request.url).protocol === "https:" ||
@@ -264,10 +317,10 @@ export async function revokeRequestSession(request: Request) {
 export function requireSameOrigin(request: Request) {
   const origin = request.headers.get("origin");
   if (origin && origin !== new URL(request.url).origin)
-    throw new Error("登录请求来源无效");
+    throw new AuthOriginError();
   const fetchSite = request.headers.get("sec-fetch-site");
   if (fetchSite && !["same-origin", "same-site", "none"].includes(fetchSite))
-    throw new Error("登录请求来源无效");
+    throw new AuthOriginError();
 }
 
 export async function enforceAuthRateLimit(request: Request, scope: string) {
@@ -279,6 +332,14 @@ export async function enforceAuthRateLimit(request: Request, scope: string) {
   ).slice(0, 80);
   const windowStart = Math.floor(Date.now() / 900_000);
   const db = getDbBinding();
+  // 认证限流桶按 15 分钟计数；保留 24 小时足够支持排障与当前窗口重试，
+  // 并明确限定 auth 前缀，避免误删使用“分钟窗口”的集成令牌限流桶。
+  await db
+    .prepare(
+      "DELETE FROM api_rate_limits WHERE owner_id LIKE 'auth:%' AND scope LIKE 'auth:%' AND window_start<?",
+    )
+    .bind(windowStart - 96)
+    .run();
   await db
     .prepare(
       `INSERT INTO api_rate_limits(owner_id,scope,window_start,count)
@@ -293,8 +354,13 @@ export async function enforceAuthRateLimit(request: Request, scope: string) {
     )
     .bind(`auth:${ip}`, `auth:${scope}`, windowStart)
     .first<{ count: number }>();
-  if (Number(row?.count ?? 0) > (scope === "register" ? 5 : 12))
-    throw new Error("尝试次数过多，请稍后再试");
+  if (Number(row?.count ?? 0) > (scope === "register" ? 5 : 12)) {
+    const windowEndsAt = (windowStart + 900_000) / 1000;
+    throw new AuthRateLimitError(
+      "尝试次数过多，请稍后再试",
+      windowEndsAt - Date.now() / 1000,
+    );
+  }
 }
 
 export async function adoptOrProvisionVault(
@@ -319,10 +385,15 @@ export async function adoptOrProvisionVault(
       db
         .prepare(
           `INSERT OR IGNORE INTO user_preferences(owner_id,theme,lock_enabled,pin_hash,pin_salt,pin_iterations)
-           SELECT ?,theme,lock_enabled,pin_hash,pin_salt,pin_iterations FROM user_preferences WHERE owner_id='local'`,
+          SELECT ?,theme,lock_enabled,pin_hash,pin_salt,pin_iterations FROM user_preferences WHERE owner_id='local'`,
+       )
+       .bind(ownerId),
+      db
+        .prepare(
+          "UPDATE restore_snapshots SET owner_id=? WHERE owner_id IS NULL OR owner_id='local'",
         )
         .bind(ownerId),
-    ]);
+   ]);
   }
   const owned = await db
     .prepare("SELECT id FROM ledgers WHERE owner_id=? ORDER BY id LIMIT 1")

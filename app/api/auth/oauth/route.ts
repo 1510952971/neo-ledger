@@ -20,6 +20,6 @@ export async function GET(request: Request) {
     response.headers.set("Cache-Control", "no-store");
     return response;
   } catch (error) {
-    return accessErrorResponse(error, "第三方登录启动失败");
+    return accessErrorResponse(error, "第三方登录启动失败", request);
   }
 }

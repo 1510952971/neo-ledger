@@ -1,7 +1,7 @@
 import vinext from "vinext";
 import { defineConfig } from "vite";
-import hostingConfig from "./.openai/hosting.json";
-import { sites } from "./build/sites-vite-plugin";
+import hostingConfig from "./.openai/hosting.json" with { type: "json" };
+import { sites } from "./build/sites-vite-plugin.ts";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
@@ -19,6 +19,9 @@ const localBindingConfig = {
     NEO_GITHUB_REPOSITORY:
       process.env.NEO_GITHUB_REPOSITORY ?? "1510952971/neo-ledger",
     AUTH_PUBLIC_ORIGIN: process.env.AUTH_PUBLIC_ORIGIN ?? "",
+    NEO_TRUSTED_AUTH_HEADERS: process.env.NEO_TRUSTED_AUTH_HEADERS ?? "false",
+    NEO_HSTS: process.env.NEO_HSTS ?? "false",
+    DEPLOYMENT_MODE: process.env.DEPLOYMENT_MODE ?? "local",
     WECHAT_APP_ID: process.env.WECHAT_APP_ID ?? "",
     WECHAT_APP_SECRET: process.env.WECHAT_APP_SECRET ?? "",
     ALIPAY_APP_ID: process.env.ALIPAY_APP_ID ?? "",

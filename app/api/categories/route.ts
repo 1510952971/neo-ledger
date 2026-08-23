@@ -1,45 +1,54 @@
 import { NextResponse } from "next/server";
 import { ensureDb, getDbBinding } from "../../../db";
-import { accessErrorResponse, claimAndRequireLedger } from "../../api-security";
+import { ApiAccessError, accessErrorResponse, claimAndRequireLedger, guardedApiResponse } from "../../api-security";
+import {
+  readExpenseCategoryCreateInput,
+  readExpenseCategoryUpdateInput,
+} from "../../internal-api-contract";
+import { MAX_CATEGORY_COUNT } from "../../category-limits";
 
 export const dynamic = "force-dynamic";
 
-function cleanName(value: unknown) {
-  const name = String(value || "").trim().slice(0, 12);
-  if (!name) throw new Error("请输入分类名称");
-  return name;
+function privateJson(body: unknown, init: ResponseInit = {}) {
+  const headers = new Headers(init.headers);
+  headers.set("Cache-Control", "no-store, private, max-age=0");
+  headers.set("Pragma", "no-cache");
+  headers.set("X-Content-Type-Options", "nosniff");
+  return NextResponse.json(body, { ...init, headers });
 }
 
 export async function GET(request: Request) {
-  await ensureDb();
-  const ledgerId = Number(new URL(request.url).searchParams.get("ledger") || 1);
-  await claimAndRequireLedger(request, ledgerId);
-  const rows = await getDbBinding()
-    .prepare(
-      "SELECT id,ledger_id ledgerId,name,icon,color,builtin_key builtinKey,is_system isSystem,is_active isActive,sort_order sortOrder,created_at createdAt FROM expense_categories WHERE ledger_id=? ORDER BY is_active DESC,sort_order,id",
-    )
-    .bind(ledgerId)
-    .all();
-  return NextResponse.json(rows.results);
+  return guardedApiResponse(request, "读取支出分类失败", async () => {
+    await ensureDb();
+    const ledgerId = Number(new URL(request.url).searchParams.get("ledger") || 1);
+    await claimAndRequireLedger(request, ledgerId);
+    const db = getDbBinding();
+    const total = await db.prepare("SELECT COUNT(*) count FROM expense_categories WHERE ledger_id=?").bind(ledgerId).first<{ count: number }>();
+    const rows = await db
+      .prepare(
+        "SELECT id,ledger_id ledgerId,name,icon,color,builtin_key builtinKey,is_system isSystem,is_active isActive,sort_order sortOrder,created_at createdAt FROM expense_categories WHERE ledger_id=? ORDER BY is_active DESC,sort_order,id LIMIT ?",
+      )
+      .bind(ledgerId, MAX_CATEGORY_COUNT)
+      .all();
+    const response = privateJson(rows.results);
+    const totalCount = Number(total?.count ?? 0);
+    response.headers.set("X-Total-Count", String(totalCount));
+    response.headers.set("X-Has-More", totalCount > MAX_CATEGORY_COUNT ? "1" : "0");
+    return response;
+  });
 }
 
 export async function POST(request: Request) {
   try {
     await ensureDb();
-    const body = (await request.json()) as {
-      ledgerId?: number;
-      name?: string;
-      icon?: string;
-      color?: string;
-    };
-    const ledgerId = Number(body.ledgerId || 1);
+    const body = await readExpenseCategoryCreateInput(request);
+    const ledgerId = body.ledgerId;
     await claimAndRequireLedger(request, ledgerId);
-    const name = cleanName(body.name);
-    const icon = String(body.icon || "📦").trim().slice(0, 8) || "📦";
-    const color = /^#[0-9a-f]{6}$/i.test(String(body.color))
-      ? String(body.color)
-      : "#8f91b8";
+    const { name, icon, color } = body;
     const db = getDbBinding();
+    const count = await db.prepare("SELECT COUNT(*) count FROM expense_categories WHERE ledger_id=?").bind(ledgerId).first<{ count: number }>();
+    if (Number(count?.count ?? 0) >= MAX_CATEGORY_COUNT)
+      throw new ApiAccessError("支出分类最多 " + MAX_CATEGORY_COUNT + " 个", 409);
     const exists = await db
       .prepare("SELECT id FROM expense_categories WHERE ledger_id=? AND name=?")
       .bind(ledgerId, name)
@@ -63,34 +72,23 @@ export async function POST(request: Request) {
       )
       .bind(ledgerId, name)
       .run();
-    return NextResponse.json(
+    return privateJson(
       { id: Number(result.meta.last_row_id) },
       { status: 201 },
     );
   } catch (error) {
-    return accessErrorResponse(error, "添加失败");
+    return accessErrorResponse(error, "添加失败", request);
   }
 }
 
 export async function PUT(request: Request) {
   try {
     await ensureDb();
-    const body = (await request.json()) as {
-      id?: number;
-      ledgerId?: number;
-      name?: string;
-      icon?: string;
-      color?: string;
-      isActive?: boolean;
-    };
-    const id = Number(body.id);
-    const ledgerId = Number(body.ledgerId || 1);
+    const body = await readExpenseCategoryUpdateInput(request);
+    const id = body.id;
+    const ledgerId = body.ledgerId;
     await claimAndRequireLedger(request, ledgerId);
-    const name = cleanName(body.name);
-    const icon = String(body.icon || "📦").trim().slice(0, 8) || "📦";
-    const color = /^#[0-9a-f]{6}$/i.test(String(body.color))
-      ? String(body.color)
-      : "#8f91b8";
+    const { name, icon, color } = body;
     const db = getDbBinding();
     const current = await db
       .prepare(
@@ -128,9 +126,9 @@ export async function PUT(request: Request) {
         )
         .bind(name, ledgerId, current.name),
     ]);
-    return NextResponse.json({ ok: true });
+    return privateJson({ ok: true });
   } catch (error) {
-    return accessErrorResponse(error, "修改失败");
+    return accessErrorResponse(error, "修改失败", request);
   }
 }
 
@@ -169,7 +167,7 @@ export async function DELETE(request: Request) {
           .prepare("DELETE FROM category_budgets WHERE ledger_id=? AND category=?")
           .bind(ledgerId, current.name),
       ]);
-      return NextResponse.json({ ok: true, removed: true });
+      return privateJson({ ok: true, removed: true });
     }
     await db
       .prepare(
@@ -177,8 +175,8 @@ export async function DELETE(request: Request) {
       )
       .bind(id, ledgerId)
       .run();
-    return NextResponse.json({ ok: true, removed: false });
+    return privateJson({ ok: true, removed: false });
   } catch (error) {
-    return accessErrorResponse(error, "删除失败");
+    return accessErrorResponse(error, "删除失败", request);
   }
 }

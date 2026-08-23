@@ -2,9 +2,19 @@ import { env } from "cloudflare:workers";
 import { NextResponse } from "next/server";
 import { ensureDb, getDbBinding } from "../../../../db";
 import { accessErrorResponse, requestOwnerId } from "../../../api-security";
+import { requireSameOrigin } from "../../../auth";
+import { MAX_PROTOCOL_BODY_BYTES, readJsonWithLimit } from "../../../request-limits";
 
 const text = (value: unknown, limit: number) =>
   String(value ?? "").trim().slice(0, limit);
+
+function privateJson(body: unknown, init: ResponseInit = {}) {
+  const headers = new Headers(init.headers);
+  headers.set("Cache-Control", "no-store, private, max-age=0");
+  headers.set("Pragma", "no-cache");
+  headers.set("X-Content-Type-Options", "nosniff");
+  return NextResponse.json(body, { ...init, headers });
+}
 
 function iceServers() {
   const raw = text(
@@ -69,7 +79,7 @@ export async function GET(request: Request) {
           .bind(ownerId, room, node)
           .all<{ nodeId: string; label: string; lastSeenAt: string }>()
       : { results: [] };
-    return NextResponse.json({
+    return privateJson({
       service: "_neo-ledger._tcp.local",
       protocol: "neo-ledger-p2p/2",
       signaling: new URL("/api/p2p/signals", request.url).toString(),
@@ -80,18 +90,19 @@ export async function GET(request: Request) {
       iceServers: iceServers(),
     });
   } catch (error) {
-    return accessErrorResponse(error, "发现附近设备失败");
+    return accessErrorResponse(error, "发现附近设备失败", request);
   }
 }
 
 export async function POST(request: Request) {
   try {
+    requireSameOrigin(request);
     await ensureDb();
-    const body = (await request.json()) as {
+    const body = await readJsonWithLimit<{
       room?: string;
       nodeId?: string;
       label?: string;
-    };
+    }>(request, MAX_PROTOCOL_BODY_BYTES);
     const room = text(body.room || "neo-home", 64);
     const nodeId = text(body.nodeId, 80);
     const label = text(body.label || nodeId, 60);
@@ -106,14 +117,15 @@ export async function POST(request: Request) {
       )
       .bind(ownerId, room, nodeId, label)
       .run();
-    return NextResponse.json({ ok: true, iceServers: iceServers() });
+    return privateJson({ ok: true, iceServers: iceServers() });
   } catch (error) {
-    return accessErrorResponse(error, "登记附近设备失败");
+    return accessErrorResponse(error, "登记附近设备失败", request);
   }
 }
 
 export async function DELETE(request: Request) {
   try {
+    requireSameOrigin(request);
     await ensureDb();
     const url = new URL(request.url);
     const room = text(url.searchParams.get("room") || "neo-home", 64);
@@ -126,8 +138,8 @@ export async function DELETE(request: Request) {
         )
         .bind(ownerId, room, nodeId)
         .run();
-    return NextResponse.json({ ok: true });
+    return privateJson({ ok: true });
   } catch (error) {
-    return accessErrorResponse(error, "移除附近设备失败");
+    return accessErrorResponse(error, "移除附近设备失败", request);
   }
 }

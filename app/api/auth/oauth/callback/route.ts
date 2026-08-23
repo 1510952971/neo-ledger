@@ -12,6 +12,7 @@ import {
   normalizeOauthProvider,
   oauthStateCookie,
   oauthStateCookieName,
+  safeOauthErrorMessage,
   safeReturnTo,
 } from "../../../../oauth-core.js";
 
@@ -54,7 +55,7 @@ export async function GET(request: Request) {
       url.searchParams.get("error_description") ||
       url.searchParams.get("error") ||
       url.searchParams.get("error_code");
-    if (platformError) throw new Error(`授权未完成：${platformError}`);
+    if (platformError) throw new Error("第三方授权未完成，请重试");
     const code =
       url.searchParams.get("code") || url.searchParams.get("auth_code") || "";
     const profile = await exchangeOauthCode(provider, code);
@@ -91,7 +92,7 @@ export async function GET(request: Request) {
     );
     return response;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "第三方登录失败";
+    const message = safeOauthErrorMessage(provider, error);
     const response = redirectResult(request, returnTo, "auth_error", message);
     if (provider)
       response.headers.set(

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ScrollbarManager } from "./scrollbar-manager";
@@ -13,6 +13,16 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
+  themeColor: "#d98261",
+  interactiveWidget: "resizes-content",
+};
+
 export const metadata: Metadata = {
   title: "小确幸财务舱｜全能资产账本",
   description: "管理资产、负债、还款预警与多维消费分析。",
@@ -26,7 +36,6 @@ export const metadata: Metadata = {
     statusBarStyle: "black-translucent",
     title: "NeoLedger",
   },
-  themeColor: "#d98261",
 };
 
 export default function RootLayout({

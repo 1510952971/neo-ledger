@@ -46,4 +46,21 @@ public final class EndpointNormalizerTest {
                 EndpointNormalizer.transactionEndpoint(
                         "https://ledger.example.com/api/v1/transactions-preview"));
     }
+
+    @Test
+    public void allowsPrivateHttpAndPublicHttps() {
+        EndpointNormalizer.validateBaseUrl("http://192.168.1.106:3000");
+        EndpointNormalizer.validateBaseUrl("http://neo-ledger.local:3000");
+        EndpointNormalizer.validateBaseUrl("https://ledger.example.com");
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void rejectsPublicHttp() {
+        EndpointNormalizer.validateBaseUrl("http://ledger.example.com");
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void rejectsCredentialsAndQueryParameters() {
+        EndpointNormalizer.validateBaseUrl("https://user:password@ledger.example.com/?token=secret");
+    }
 }

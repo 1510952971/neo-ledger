@@ -54,5 +54,5 @@ test("sidebar profile follows the signed-in account and renders its avatar", asy
   assert.doesNotMatch(source, /currentAuthUser\.displayName} · 已登录/);
   assert.match(css, /\.sidebar-profile \.avatar img\{[^}]*object-fit:cover/);
   assert.match(css, /\.sidebar-profile>div:last-child\{min-width:0\}/);
-  assert.match(css, /\.sidebar-profile strong\s*\{[^}]*font-size:\s*11px;/);
+  assert.match(css, /\.sidebar-profile strong\s*\{[^}]*font-size:\s*12px;/);
 });

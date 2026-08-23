@@ -3,12 +3,19 @@ import test from "node:test";
 import {
   normalizeEmail,
   normalizeUsername,
+  passwordStrengthHint,
   parseCookieValue,
   SESSION_COOKIE_NAME,
   sessionCookie,
   validateRegistrationInput,
   validateEmail,
 } from "../app/auth-core.js";
+import {
+  PASSWORD_DENYLIST_ENTRIES,
+  PASSWORD_DENYLIST,
+  PASSWORD_DENYLIST_SIZE,
+  PASSWORD_DENYLIST_VERSION,
+} from "../app/password-denylist.js";
 
 test("normalizes and validates local accounts", () => {
   assert.equal(normalizeUsername("  Peng.User  "), "peng.user");
@@ -89,6 +96,43 @@ test("rejects weak or ambiguous account input", () => {
       }),
     /8—72/,
   );
+  for (const password of ["12345678", "password123", "aaaaaaaa", "0123456789", "9876543210"]) {
+    assert.throws(
+      () =>
+        validateRegistrationInput({
+          username: "valid_user",
+          displayName: "用户",
+          password,
+        }),
+      /密码过于常见/,
+    );
+  }
+});
+
+test("provides client-safe password strength feedback", () => {
+  assert.equal(passwordStrengthHint(""), "");
+  assert.equal(passwordStrengthHint("short"), "至少 8 位");
+  assert.match(passwordStrengthHint("12345678"), /常见或可预测/);
+  assert.equal(passwordStrengthHint("correct-horse"), "密码强度：可用");
+  assert.equal(passwordStrengthHint("Correct-horse!2026"), "密码强度：较强");
+});
+
+test("uses a versioned offline password denylist", () => {
+  assert.match(PASSWORD_DENYLIST_VERSION, /^20\d\d-\d\d-[a-z0-9-]+$/u);
+  assert.equal(PASSWORD_DENYLIST_SIZE, PASSWORD_DENYLIST.size);
+  assert.equal(PASSWORD_DENYLIST_SIZE, PASSWORD_DENYLIST_ENTRIES.length);
+  assert.ok(PASSWORD_DENYLIST_SIZE >= 50);
+  for (const password of ["administrator", "welcome123", "qwertyui", "5201314520", "管理员管理员管理员"]) {
+    assert.throws(
+      () => validateRegistrationInput({ username: "denylist_user", displayName: "用户", password }),
+      /密码过于常见/,
+    );
+  }
+  assert.doesNotThrow(() => validateRegistrationInput({
+    username: "denylist_user",
+    displayName: "用户",
+    password: "Correct-horse!2026",
+  }));
 });
 
 test("session cookies are HttpOnly, scoped and removable", () => {

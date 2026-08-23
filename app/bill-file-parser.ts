@@ -6,6 +6,15 @@ import {
   parseGenericStatementText,
   parseTabularStatement,
 } from "./bill-import-core.js";
+import {
+  assertDocumentPageCount,
+  assertSpreadsheetShape,
+  MAX_OCR_PDF_PAGES,
+  MAX_PDF_PAGES,
+  MAX_PDF_TEXT_ITEMS_PER_PAGE,
+  MAX_SPREADSHEET_ROWS,
+  MAX_SPREADSHEET_SHEETS,
+} from "./document-limits.ts";
 
 export type ParsedStatementItem = {
   occurredAt: string;
@@ -84,7 +93,10 @@ async function parseSpreadsheet(bytes: Uint8Array, fileName: string) {
       cellFormula: false,
       cellHTML: false,
       dense: true,
+      sheetRows: MAX_SPREADSHEET_ROWS + 1,
     });
+    if (workbook.SheetNames.length > MAX_SPREADSHEET_SHEETS)
+      throw new Error(`表格不能超过 ${MAX_SPREADSHEET_SHEETS} 个工作表`);
     let lastError: unknown = null;
     const parsedSheets: ParsedStatement[] = [];
     for (const sheetName of workbook.SheetNames) {
@@ -94,6 +106,7 @@ async function parseSpreadsheet(bytes: Uint8Array, fileName: string) {
         raw: false,
         blankrows: false,
       });
+      assertSpreadsheetShape(workbook.SheetNames.length, rows.length);
       try {
         parsedSheets.push(parseTabularStatement(rows, fileName) as ParsedStatement);
       } catch (error) {
@@ -151,7 +164,11 @@ export async function readPdfTextItems(page: {
     while (true) {
       const chunk = await reader.read();
       if (chunk.done) break;
-      if (chunk.value?.items) items.push(...chunk.value.items);
+      if (chunk.value?.items) {
+        items.push(...chunk.value.items);
+        if (items.length > MAX_PDF_TEXT_ITEMS_PER_PAGE)
+          throw new Error(`PDF 单页文字过多（>${MAX_PDF_TEXT_ITEMS_PER_PAGE} 项）`);
+      }
     }
   } finally {
     reader.releaseLock?.();
@@ -167,45 +184,50 @@ async function extractPdfLines(bytes: Uint8Array) {
   ).toString();
   // PDF.js may transfer the input buffer to its worker; keep the original for OCR fallback.
   const loadingTask = pdfjs.getDocument({ data: bytes.slice() });
-  const document = await loadingTask.promise;
-  const lines: PdfLine[] = [];
-  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-    const page = await document.getPage(pageNumber);
-    const contentItems = await readPdfTextItems(page);
-    const pageLines: { y: number; items: { x: number; text: string }[] }[] = [];
-    for (const candidate of contentItems) {
-      if (!candidate || typeof candidate !== "object") continue;
-      if (!("str" in candidate)) continue;
-      const item = candidate as PdfTextItem;
-      const text = item.str.trim();
-      if (!text) continue;
-      const x = item.transform[4];
-      const y = item.transform[5];
-      let line = pageLines.find((current) => Math.abs(current.y - y) <= 2.2);
-      if (!line) {
-        line = { y, items: [] };
-        pageLines.push(line);
+  let document: Awaited<typeof loadingTask.promise>;
+  try {
+    document = await loadingTask.promise;
+    assertDocumentPageCount(document.numPages, MAX_PDF_PAGES);
+    const lines: PdfLine[] = [];
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const contentItems = await readPdfTextItems(page);
+      const pageLines: { y: number; items: { x: number; text: string }[] }[] = [];
+      for (const candidate of contentItems) {
+        if (!candidate || typeof candidate !== "object") continue;
+        if (!("str" in candidate)) continue;
+        const item = candidate as PdfTextItem;
+        const text = item.str.trim();
+        if (!text) continue;
+        const x = item.transform[4];
+        const y = item.transform[5];
+        let line = pageLines.find((current) => Math.abs(current.y - y) <= 2.2);
+        if (!line) {
+          line = { y, items: [] };
+          pageLines.push(line);
+        }
+        line.items.push({ x, text });
       }
-      line.items.push({ x, text });
-    }
-    pageLines
-      .sort((a, b) => b.y - a.y)
-      .forEach((line) => {
-        const items = line.items.sort((a, b) => a.x - b.x);
-        lines.push({
-          page: pageNumber,
-          y: line.y,
-          items,
-          text: items
-            .map((item) => item.text)
-            .join(" ")
-            .replace(/\s+/g, " ")
-            .trim(),
+      pageLines
+        .sort((a, b) => b.y - a.y)
+        .forEach((line) => {
+          const items = line.items.sort((a, b) => a.x - b.x);
+          lines.push({
+            page: pageNumber,
+            y: line.y,
+            items,
+            text: items
+              .map((item) => item.text)
+              .join(" ")
+              .replace(/\s+/g, " ")
+              .trim(),
+          });
         });
-      });
+    }
+    return lines;
+  } finally {
+    await loadingTask.destroy();
   }
-  await loadingTask.destroy();
-  return lines;
 }
 
 const lastFourOf = (text: string) => {
@@ -491,29 +513,32 @@ async function ocrPdf(
     import.meta.url,
   ).toString();
   const loadingTask = pdfjs.getDocument({ data: bytes.slice() });
-  const pdfDocument = await loadingTask.promise;
-  if (pdfDocument.numPages > 30)
-    throw new Error("扫描型 PDF 一次最多识别 30 页，请拆分后再导入");
-  const ocr = await getOcr();
-  const pageTexts: string[] = [];
-  for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
-    onProgress?.(`正在识别扫描 PDF 第 ${pageNumber}/${pdfDocument.numPages} 页…`);
-    const page = await pdfDocument.getPage(pageNumber);
-    const baseViewport = page.getViewport({ scale: 1 });
-    const scale = Math.min(2.5, Math.sqrt(12_000_000 / (baseViewport.width * baseViewport.height)));
-    const viewport = page.getViewport({ scale });
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
-    const context = canvas.getContext("2d", { alpha: false });
-    if (!context) throw new Error("浏览器无法渲染 PDF 页面");
-    await page.render({ canvas, canvasContext: context, viewport }).promise;
-    pageTexts.push(await ocr.recognize(canvas));
-    canvas.width = 1;
-    canvas.height = 1;
+  let pdfDocument: Awaited<typeof loadingTask.promise>;
+  try {
+    pdfDocument = await loadingTask.promise;
+    assertDocumentPageCount(pdfDocument.numPages, MAX_OCR_PDF_PAGES);
+    const ocr = await getOcr();
+    const pageTexts: string[] = [];
+    for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
+      onProgress?.(`正在识别扫描 PDF 第 ${pageNumber}/${pdfDocument.numPages} 页…`);
+      const page = await pdfDocument.getPage(pageNumber);
+      const baseViewport = page.getViewport({ scale: 1 });
+      const scale = Math.min(2.5, Math.sqrt(12_000_000 / (baseViewport.width * baseViewport.height)));
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      const context = canvas.getContext("2d", { alpha: false });
+      if (!context) throw new Error("浏览器无法渲染 PDF 页面");
+      await page.render({ canvas, canvasContext: context, viewport }).promise;
+      pageTexts.push(await ocr.recognize(canvas));
+      canvas.width = 1;
+      canvas.height = 1;
+    }
+    return parseImageStatementText(pageTexts.join("\n"), fileName) as ParsedStatement;
+  } finally {
+    await loadingTask.destroy();
   }
-  await loadingTask.destroy();
-  return parseImageStatementText(pageTexts.join("\n"), fileName) as ParsedStatement;
 }
 
 async function parsePdf(

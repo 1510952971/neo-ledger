@@ -6,8 +6,17 @@ import {
   normalizeTransactionEdit,
   transactionBalanceDelta,
 } from "../../transaction-edit-core.js";
+import { MAX_PROTOCOL_BODY_BYTES, readJsonWithLimit } from "../../request-limits";
 
 export const dynamic = "force-dynamic";
+
+function privateJson(body: unknown, init: ResponseInit = {}) {
+  const headers = new Headers(init.headers);
+  headers.set("Cache-Control", "no-store, private, max-age=0");
+  headers.set("Pragma", "no-cache");
+  headers.set("X-Content-Type-Options", "nosniff");
+  return NextResponse.json(body, { ...init, headers });
+}
 
 type ExistingTransaction = {
   id: number;
@@ -31,7 +40,9 @@ type ExistingTransaction = {
 export async function PUT(request: Request) {
   try {
     await ensureDb();
-    const value = normalizeTransactionEdit(await request.json());
+    const value = normalizeTransactionEdit(
+      await readJsonWithLimit<Record<string, unknown>>(request, MAX_PROTOCOL_BODY_BYTES),
+    );
     await claimAndRequireLedger(request, value.ledgerId);
     const db = getDbBinding();
     const current = await db
@@ -51,7 +62,7 @@ export async function PUT(request: Request) {
     if (current.installmentId)
       throw new Error("分期自动生成的流水不能单独修改，请前往分期项目管理");
     if (current.updatedAt !== value.expectedUpdatedAt)
-      return NextResponse.json(
+      return privateJson(
         { error: "这笔账单已在其他位置更新，请刷新后重试" },
         { status: 409 },
       );
@@ -226,12 +237,12 @@ export async function PUT(request: Request) {
         ),
     ]);
     if (Number(results.at(-1)?.meta.changes ?? 0) !== 1)
-      return NextResponse.json(
+      return privateJson(
         { error: "这笔账单已在其他位置更新，请刷新后重试" },
         { status: 409 },
       );
-    return NextResponse.json({ ok: true });
+    return privateJson({ ok: true });
   } catch (error) {
-    return accessErrorResponse(error, "修改失败");
+    return accessErrorResponse(error, "修改失败", request);
   }
 }

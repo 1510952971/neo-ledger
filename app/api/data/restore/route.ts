@@ -1,7 +1,36 @@
 import { NextResponse } from "next/server";
 import { ensureDb, getDbBinding } from "../../../../db";
-import { accessErrorResponse, requestOwnerId } from "../../../api-security";
+import { ApiAccessError, accessErrorResponse, requestOwnerId } from "../../../api-security";
+import { requireSameOrigin } from "../../../auth";
+import {
+  MAX_RESTORE_BODY_BYTES,
+  readJsonWithLimit,
+} from "../../../request-limits";
+import {
+  acquireRestoreLock,
+  createRestoreSnapshot,
+  createRestoreStaging,
+  deleteRestoreStaging,
+  listRestoreSnapshots,
+  loadRestoreSnapshot,
+  loadRestoreStaging,
+  releaseRestoreLock,
+} from "../../../restore-snapshot";
+import {
+  estimateRestoreBatchStatements,
+  MAX_RESTORE_BATCH_STATEMENTS,
+} from "../../../restore-limits";
+import { recordAuditEvent, requestIdFromRequest } from "../../../audit-log";
+import { canonicalRestorePayload, fingerprintRestorePlan } from "../../../restore-plan";
 type Row = Record<string, unknown>;
+
+function privateJson(body: unknown, init: ResponseInit = {}) {
+  const headers = new Headers(init.headers);
+  headers.set("Cache-Control", "no-store, private, max-age=0");
+  headers.set("Pragma", "no-cache");
+  headers.set("X-Content-Type-Options", "nosniff");
+  return NextResponse.json(body, { ...init, headers });
+}
 
 function dedupeNaturalRows(rows: Row[] | undefined, fields: string[]) {
   if (!rows) return rows;
@@ -29,6 +58,113 @@ function dedupeCategoryRows(rows: Row[] | undefined) {
     if (!current || timestamp > currentTimestamp) winners.set(key, row);
   }
   return [...winners.values()];
+}
+
+function validateRestoreRows(data: Record<string, unknown>) {
+  const arrays = Object.entries(data).filter(([, value]) => Array.isArray(value)) as Array<[string, unknown[]]>;
+  for (const [name, rows] of arrays) {
+    if (rows.length > 500_000) throw new Error(`${name} 条目过多，恢复已取消`);
+    for (const row of rows) if (!row || typeof row !== "object") throw new Error(`${name} 包含无效条目`);
+  }
+  const idTables = [
+    "ledgers",
+    "accounts",
+    "members",
+    "transactions",
+    "subscriptions",
+    "savingsGoals",
+    "installments",
+    "digitalAssets",
+    "expenseCategories",
+    "incomeCategories",
+    "pendingTransactions",
+    "systemNotifications",
+    "sideHustleDeductions",
+  ] as const;
+  const ids = new Map<string, Set<number>>();
+  for (const key of idTables) {
+    const rows = (data[key] as Row[]) ?? [];
+    const values = rows.map((row) => Number(row.id));
+    if (
+      values.some((id) => !Number.isSafeInteger(id) || id <= 0) ||
+      new Set(values).size !== values.length
+    )
+      throw new Error(`${key} 编号重复或无效`);
+    ids.set(key, new Set(values));
+  }
+  const ledgerIds = ids.get("ledgers") ?? new Set<number>();
+  const accounts = (data.accounts as Row[]) ?? [];
+  const accountIds = ids.get("accounts") ?? new Set<number>();
+  const memberIds = ids.get("members") ?? new Set<number>();
+  const transactionIds = ids.get("transactions") ?? new Set<number>();
+  const requireLedger = (row: Row, label: string) => {
+    if (!ledgerIds.has(Number(row.ledgerId))) throw new Error(`${label}归属了不存在的账本`);
+  };
+  for (const key of [
+    "categoryBudgets", "subscriptions", "savingsGoals", "members", "installments",
+    "achievements", "sideHustleDeductions", "pendingTransactions", "systemNotifications",
+    "fireSettings", "economicSettings", "crdtTombstones", "digitalAssets", "expenseCategories",
+    "incomeCategories", "accountTransfers", "syncTombstones", "transactionReconciliation", "automationRules",
+  ]) {
+    for (const row of ((data[key] as Row[]) ?? [])) requireLedger(row, key);
+  }
+  for (const row of ((data.budgetSettings as Row[]) ?? [])) {
+    if (!ledgerIds.has(Number(row.id))) throw new Error("备份预算设置归属了不存在的账本");
+  }
+  for (const row of accounts) {
+    if (!ledgerIds.has(Number(row.ledgerId)))
+      throw new Error("备份账户归属无效");
+    if (!["资产", "负债"].includes(String(row.type)))
+      throw new Error("备份包含无效账户类型");
+    if (row.currency != null && !["CNY", "USD", "JPY", "EUR"].includes(String(row.currency)))
+      throw new Error("备份包含无效账户币种");
+    if (row.assetClass != null && !["现金流", "固收防守", "风险进攻"].includes(String(row.assetClass)))
+      throw new Error("备份包含无效资产分类");
+  }
+  for (const row of ((data.transactions as Row[]) ?? [])) {
+    if (!ledgerIds.has(Number(row.ledgerId)) || !accountIds.has(Number(row.accountId)))
+      throw new Error("备份流水引用了不存在的账本或账户");
+    for (const memberId of [row.paidByMemberId, row.splitWithMemberId])
+      if (memberId != null && !memberIds.has(Number(memberId))) throw new Error("备份流水引用了不存在的分账成员");
+    if (row.installmentId != null && !ids.get("installments")?.has(Number(row.installmentId)))
+      throw new Error("备份流水引用了不存在的分期");
+    if (!Number.isSafeInteger(Number(row.amount)) || Number(row.amount) < 0)
+      throw new Error("备份包含无效金额");
+    if (!["支出", "收入"].includes(String(row.type)))
+      throw new Error("备份包含无效流水类型");
+    if (row.currency != null && !["CNY", "USD", "JPY", "EUR"].includes(String(row.currency)))
+      throw new Error("备份包含无效流水币种");
+  }
+  for (const row of ((data.transactionReconciliation as Row[]) ?? [])) {
+    if (!ledgerIds.has(Number(row.ledgerId)) || !transactionIds.has(Number(row.transactionId)))
+      throw new Error("备份对账状态引用了不存在的账本或流水");
+    if (!["unreconciled", "reconciled", "exception"].includes(String(row.status)))
+      throw new Error("备份包含无效对账状态");
+  }
+  for (const row of ((data.subscriptions as Row[]) ?? []))
+    if (!accountIds.has(Number(row.accountId))) throw new Error("备份续费引用了不存在的账户");
+  for (const row of ((data.installments as Row[]) ?? []))
+    for (const accountId of [row.accountId, row.paymentAccountId])
+      if (accountId != null && !accountIds.has(Number(accountId))) throw new Error("备份分期引用了不存在的账户");
+  for (const row of ((data.pendingTransactions as Row[]) ?? []))
+    if (!accountIds.has(Number(row.accountId))) throw new Error("备份待确认流水引用了不存在的账户");
+  for (const row of ((data.sideHustleDeductions as Row[]) ?? []))
+    if (!transactionIds.has(Number(row.transactionId))) throw new Error("备份副业扣除引用了不存在的流水");
+  for (const row of ((data.accountTransfers as Row[]) ?? [])) {
+    for (const accountId of [row.fromAccountId, row.toAccountId])
+      if (accountId != null && !accountIds.has(Number(accountId))) throw new Error("备份转账引用了不存在的账户");
+    if (row.targetType === "savings-goal" && !ids.get("savingsGoals")?.has(Number(row.targetId))) throw new Error("备份转账引用了不存在的储蓄目标");
+    if (row.targetType === "member" && !memberIds.has(Number(row.targetId))) throw new Error("备份转账引用了不存在的分账成员");
+    if (row.targetType === "installment" && !ids.get("installments")?.has(Number(row.targetId))) throw new Error("备份转账引用了不存在的分期");
+  }
+  for (const row of ((data.automationRules as Row[]) ?? [])) {
+    if (!ledgerIds.has(Number(row.ledgerId)) || typeof row.id !== "string" || !row.id)
+      throw new Error("备份自动化规则归属无效");
+    for (const value of [row.conditions, row.actions])
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("备份自动化规则格式无效");
+    for (const value of [(row.conditions as Row).accountId, (row.actions as Row).accountId])
+      if (value != null && !accountIds.has(Number(value))) throw new Error("备份自动化规则引用了不存在的账户");
+  }
 }
 
 async function remapLocalIds(db: ReturnType<typeof getDbBinding>, rows: Record<string, Row[] | undefined>) {
@@ -78,54 +214,172 @@ async function remapLocalIds(db: ReturnType<typeof getDbBinding>, rows: Record<s
         mapValue(row, "targetId", "members");
       if (key === "accountTransfers" && row.targetType === "installment")
         mapValue(row, "targetId", "installments");
+      if (key === "automationRules") {
+        if (row.conditions && typeof row.conditions === "object") mapValue(row.conditions as Row, "accountId", "accounts");
+        if (row.actions && typeof row.actions === "object") mapValue(row.actions as Row, "accountId", "accounts");
+      }
     }
   }
 }
 export async function POST(request: Request) {
+  let restoreLock: { ownerId: string; lockId: string } | null = null;
+  let stagingId: string | null = null;
+  let stagingOwnerId: string | null = null;
   try {
+    requireSameOrigin(request);
     await ensureDb();
-    const data = (await request.json()) as Record<string, unknown>;
+    const submitted = await readJsonWithLimit<Record<string, unknown>>(
+      request,
+      MAX_RESTORE_BODY_BYTES,
+    );
+    const db = getDbBinding();
+    const ownerId = await requestOwnerId(request);
+    stagingOwnerId = ownerId;
+    const dryRun =
+      submitted.dryRun === true ||
+      request.headers.get("x-restore-dry-run") === "1";
+    const expectedPlanChecksum = request.headers
+      .get("x-restore-plan-checksum")
+      ?.trim() ?? "";
+    if (expectedPlanChecksum && !/^[a-f0-9]{64}$/u.test(expectedPlanChecksum))
+      throw new ApiAccessError("恢复计划指纹格式无效", 400);
+    if (!dryRun) {
+      const lock = await acquireRestoreLock(ownerId);
+      if (!lock)
+        throw new ApiAccessError("当前账本正在恢复，请稍后再试", 409);
+      restoreLock = { ownerId, lockId: lock.lockId };
+    }
+    const auditRequestId = requestIdFromRequest(request);
+    const snapshotId =
+      typeof submitted.restoreSnapshotId === "string"
+        ? submitted.restoreSnapshotId
+        : null;
+    const data = snapshotId
+      ? await loadRestoreSnapshot(ownerId, snapshotId)
+      : submitted;
     if (
-      ![7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22].includes(Number(data.version)) ||
+      ![7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23].includes(Number(data.version)) ||
       !Array.isArray(data.ledgers) ||
       !Array.isArray(data.accounts) ||
       !Array.isArray(data.transactions)
     )
       throw new Error("不是有效的 NeoLedger 备份");
-    const db = getDbBinding(),
-      ownerId = await requestOwnerId(request),
-      rows = data as unknown as {
-        ledgers: Row[];
-        accounts: Row[];
-        transactions: Row[];
-        budgetSettings?: Row[];
-        categoryBudgets?: Row[];
-        subscriptions?: Row[];
-        savingsGoals?: Row[];
-        members?: Row[];
-        installments?: Row[];
-        achievements?: Row[];
-        sideHustleDeductions?: Row[];
-        pendingTransactions?: Row[];
-        systemNotifications?: Row[];
-        fireSettings?: Row[];
-        economicSettings?: Row[];
-        crdtTombstones?: Row[];
-        digitalAssets?: Row[];
-        expenseCategories?: Row[];
-        incomeCategories?: Row[];
-        accountTransfers?: Row[];
-        syncTombstones?: Row[];
-      };
-    rows.expenseCategories = dedupeCategoryRows(rows.expenseCategories);
-    rows.incomeCategories = dedupeCategoryRows(rows.incomeCategories);
-    rows.categoryBudgets = dedupeNaturalRows(rows.categoryBudgets, [
-      "category",
-    ]);
+    validateRestoreRows(data);
+    const sourceRows = data as unknown as {
+      ledgers: Row[];
+      accounts: Row[];
+      transactions: Row[];
+      budgetSettings?: Row[];
+      categoryBudgets?: Row[];
+      subscriptions?: Row[];
+      savingsGoals?: Row[];
+      members?: Row[];
+      installments?: Row[];
+      achievements?: Row[];
+      sideHustleDeductions?: Row[];
+      pendingTransactions?: Row[];
+      systemNotifications?: Row[];
+      fireSettings?: Row[];
+      economicSettings?: Row[];
+      crdtTombstones?: Row[];
+      digitalAssets?: Row[];
+      expenseCategories?: Row[];
+      incomeCategories?: Row[];
+      accountTransfers?: Row[];
+      syncTombstones?: Row[];
+      transactionReconciliation?: Row[];
+      automationRules?: Row[];
+    };
+    sourceRows.expenseCategories = dedupeCategoryRows(sourceRows.expenseCategories);
+    sourceRows.incomeCategories = dedupeCategoryRows(sourceRows.incomeCategories);
+    sourceRows.categoryBudgets = dedupeNaturalRows(sourceRows.categoryBudgets, ["category"]);
+    const planPayload = Object.fromEntries(
+      Object.entries(sourceRows).filter(
+        ([key, value]) => key === "version" || Array.isArray(value),
+      ),
+    );
+    const planChecksum = await fingerprintRestorePlan(planPayload);
+    if (expectedPlanChecksum && expectedPlanChecksum !== planChecksum)
+      throw new ApiAccessError("恢复计划已变化，请重新执行预检", 409);
+    const estimatedStatements = estimateRestoreBatchStatements(sourceRows);
+    if (estimatedStatements > MAX_RESTORE_BATCH_STATEMENTS)
+      throw new ApiAccessError(
+        `恢复内容过大，需要约 ${estimatedStatements} 条数据库语句，当前单批上限为 ${MAX_RESTORE_BATCH_STATEMENTS} 条；请拆分账本后再恢复`,
+        413,
+      );
+    if (dryRun) {
+      const restoredByType = Object.fromEntries(
+        Object.entries(sourceRows)
+          .filter(([, value]) => Array.isArray(value))
+          .map(([key, value]) => [key, (value as Row[]).length]),
+      );
+      const totalRecords = Object.values(restoredByType).reduce((total, count) => total + count, 0);
+      return privateJson({
+        ok: true,
+        dryRun: true,
+        summary: {
+          version: Number(data.version),
+          totalRecords,
+          restoredByType,
+          estimatedStatements,
+          maxStatements: MAX_RESTORE_BATCH_STATEMENTS,
+          planChecksum,
+          errorCount: 0,
+        },
+      });
+    }
+    const staged = await createRestoreStaging(ownerId, canonicalRestorePayload(planPayload));
+    stagingId = staged.id;
+    const stagedData = await loadRestoreStaging(ownerId, staged.id);
+    if (await fingerprintRestorePlan(stagedData) !== planChecksum)
+      throw new ApiAccessError("恢复暂存计划指纹不一致，已取消恢复", 409);
+    validateRestoreRows(stagedData);
+    const rows = stagedData as unknown as {
+      ledgers: Row[];
+      accounts: Row[];
+      transactions: Row[];
+      budgetSettings?: Row[];
+      categoryBudgets?: Row[];
+      subscriptions?: Row[];
+      savingsGoals?: Row[];
+      members?: Row[];
+      installments?: Row[];
+      achievements?: Row[];
+      sideHustleDeductions?: Row[];
+      pendingTransactions?: Row[];
+      systemNotifications?: Row[];
+      fireSettings?: Row[];
+      economicSettings?: Row[];
+      crdtTombstones?: Row[];
+      digitalAssets?: Row[];
+      expenseCategories?: Row[];
+      incomeCategories?: Row[];
+      accountTransfers?: Row[];
+      syncTombstones?: Row[];
+      transactionReconciliation?: Row[];
+      automationRules?: Row[];
+    };
+    if (ownerId === "local")
+      await db
+        .prepare("UPDATE ledgers SET owner_id=? WHERE owner_id IS NULL OR owner_id='local'")
+        .bind(ownerId)
+        .run();
+    const beforeSnapshot = await createRestoreSnapshot(request, ownerId);
+    await recordAuditEvent({
+      ownerId,
+      eventType: snapshotId ? "data.restore_snapshot" : "data.restore",
+      subjectType: "snapshot",
+      subjectId: beforeSnapshot.id,
+      requestId: auditRequestId,
+      metadata: {
+        source: snapshotId ? "snapshot" : "upload",
+        planChecksum,
+        estimatedStatements,
+      },
+    });
     await remapLocalIds(db, rows as unknown as Record<string, Row[] | undefined>);
     const q = [
       db.prepare("INSERT OR REPLACE INTO app_meta(key,value) VALUES('restore_mode','1')"),
-      db.prepare("UPDATE ledgers SET owner_id=? WHERE owner_id IS NULL").bind(ownerId),
       db.prepare("DELETE FROM side_hustle_deductions WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
       db.prepare("DELETE FROM pending_transactions WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
       db.prepare("DELETE FROM system_notifications WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
@@ -135,6 +389,10 @@ export async function POST(request: Request) {
       db.prepare("DELETE FROM fire_settings WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
       db.prepare("DELETE FROM economic_settings WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
       db.prepare("DELETE FROM crdt_tombstones WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
+      db.prepare("DELETE FROM transaction_reconciliation WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
+      db.prepare("DELETE FROM automation_rules WHERE owner_id=?").bind(ownerId),
+      db.prepare("DELETE FROM import_batch_items WHERE batch_id IN (SELECT id FROM import_batches WHERE owner_id=?)").bind(ownerId),
+      db.prepare("DELETE FROM import_batches WHERE owner_id=?").bind(ownerId),
       db.prepare("DELETE FROM digital_assets WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
       db.prepare("DELETE FROM expense_categories WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
       db.prepare("DELETE FROM income_categories WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
@@ -186,7 +444,7 @@ export async function POST(request: Request) {
       q.push(
         db
           .prepare(
-            "INSERT INTO digital_assets(id,ledger_id,name,asset_type,currency,valuation_mode,manual_value,purchase_price,purchase_date,lifespan_months,residual_rate_bps,heat_level,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO digital_assets(id,ledger_id,name,asset_type,currency,valuation_mode,manual_value,purchase_price,purchase_date,lifespan_months,residual_rate_bps,heat_level,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
           )
           .bind(
             x.id,
@@ -201,6 +459,7 @@ export async function POST(request: Request) {
             x.lifespanMonths,
             x.residualRateBps,
             x.heatLevel ?? null,
+            x.updatedAt ?? x.createdAt,
             x.createdAt,
           ),
       );
@@ -534,10 +793,57 @@ export async function POST(request: Request) {
         db.prepare("INSERT OR REPLACE INTO sync_tombstones(entity_type,entity_uuid,ledger_id,owner_id,deleted_at) VALUES(?,?,?,?,?)")
           .bind(x.entityType ?? x.table, x.entityUuid ?? x.syncId, x.ledgerId, ownerId, x.deletedAt),
       );
+    for (const x of rows.transactionReconciliation ?? [])
+      q.push(
+        db.prepare("INSERT INTO transaction_reconciliation(transaction_id,ledger_id,status,note,reconciled_by,reconciled_at,updated_at) VALUES(?,?,?,?,?,?,?)")
+          .bind(x.transactionId, x.ledgerId, x.status, x.note ?? null, ownerId, x.reconciledAt ?? null, x.updatedAt ?? x.reconciledAt ?? new Date(0).toISOString()),
+      );
+    for (const x of rows.automationRules ?? [])
+      q.push(
+        db.prepare("INSERT INTO automation_rules(id,owner_id,ledger_id,name,priority,enabled,conditions_json,actions_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
+          .bind(x.id, ownerId, x.ledgerId, x.name, x.priority ?? 100, x.enabled ? 1 : 0, JSON.stringify(x.conditions ?? {}), JSON.stringify(x.actions ?? {}), x.createdAt ?? x.updatedAt, x.updatedAt ?? x.createdAt),
+      );
     q.push(db.prepare("DELETE FROM app_meta WHERE key='restore_mode'"));
+    const restoredByType = Object.fromEntries(
+      Object.entries(rows)
+        .filter(([, value]) => Array.isArray(value))
+        .map(([key, value]) => [key, (value as Row[]).length]),
+    );
+    const totalRecords = Object.values(restoredByType).reduce(
+      (total, count) => total + count,
+      0,
+    );
     await db.batch(q);
-    return NextResponse.json({ ok: true });
+    await deleteRestoreStaging(ownerId, stagingId).catch(() => undefined);
+    stagingId = null;
+    return privateJson({
+      ok: true,
+      beforeSnapshot,
+      summary: {
+        totalRecords,
+        restoredByType,
+        planChecksum,
+        skippedRecords: 0,
+        errorCount: 0,
+      },
+    });
   } catch (error) {
-    return accessErrorResponse(error, "恢复失败");
+    return accessErrorResponse(error, "恢复失败", request);
+  } finally {
+    if (stagingId && stagingOwnerId)
+      await deleteRestoreStaging(stagingOwnerId, stagingId).catch(() => undefined);
+    if (restoreLock)
+      await releaseRestoreLock(restoreLock.ownerId, restoreLock.lockId).catch(() => undefined);
+  }
+}
+
+export async function GET(request: Request) {
+  try {
+    await ensureDb();
+    return privateJson(
+      await listRestoreSnapshots(await requestOwnerId(request)),
+    );
+  } catch (error) {
+    return accessErrorResponse(error, "读取恢复快照失败", request);
   }
 }

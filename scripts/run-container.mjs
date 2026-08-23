@@ -1,7 +1,18 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { bindHostForConfig, evaluateDeploymentSecurity } from "../app/deployment-security.ts";
 
 const root = path.resolve(import.meta.dirname, "..");
+const deployment = evaluateDeploymentSecurity(process.env);
+if (!deployment.secure) {
+  console.error("Neo Ledger 配置检查失败：");
+  for (const issue of deployment.blocking) console.error(`- [${issue.code}] ${issue.message}`);
+  process.exit(1);
+}
+for (const warning of deployment.warnings)
+  console.warn(`[${warning.code}] ${warning.message}`);
+const mode = deployment.mode ?? "local";
+const bindHost = bindHostForConfig(process.env, mode);
 const wrangler = path.join(root, "node_modules", ".bin", "wrangler");
 const args = [
   "dev",
@@ -9,7 +20,7 @@ const args = [
   path.join(root, "dist", "server", "wrangler.json"),
   "--local",
   "--ip",
-  "0.0.0.0",
+  bindHost,
   "--port",
   String(process.env.PORT || "3000"),
   "--persist-to",
@@ -32,6 +43,14 @@ const variableNames = [
   "ALIPAY_PUBLIC_KEY",
   "P2P_STUN_URLS",
   "LAN_ORIGIN",
+  "NEO_TRUSTED_AUTH_HEADERS",
+  "NEO_HSTS",
+  "DEPLOYMENT_MODE",
+  "NEO_ALLOWED_HOSTS",
+  "NEO_WEBDAV_ALLOWED_HOSTS",
+  "NEO_TRUSTED_AUTH_SECRET",
+  "NEO_TRUSTED_PROXY_IPS",
+  "NEO_TRUSTED_AUTH_AUDIENCE",
 ];
 for (const name of variableNames) {
   const value = String(process.env[name] || "").trim();

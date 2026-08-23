@@ -6,26 +6,37 @@ import {
   passwordRecord,
   requireSameOrigin,
 } from "../../../auth";
-import { validateEmail } from "../../../auth-core.js";
+import { validateEmail, validatePasswordStrength } from "../../../auth-core.js";
 import { consumeEmailCode } from "../../../email-code";
+import { MAX_AUTH_BODY_BYTES, readJsonWithLimit } from "../../../request-limits";
+import { recordAuditEvent, requestIdFromRequest } from "../../../audit-log";
 
 export const dynamic = "force-dynamic";
+
+function privateJson(body: unknown, init: ResponseInit = {}) {
+  const headers = new Headers(init.headers);
+  headers.set("Cache-Control", "no-store, private, max-age=0");
+  headers.set("Pragma", "no-cache");
+  headers.set("X-Content-Type-Options", "nosniff");
+  return NextResponse.json(body, { ...init, headers });
+}
 
 export async function POST(request: Request) {
   try {
     requireSameOrigin(request);
     await enforceAuthRateLimit(request, "reset-password");
     await ensureDb();
-    const body = (await request.json()) as {
+    const body = await readJsonWithLimit<{
       email?: string;
       code?: string;
       newPassword?: string;
-    };
+    }>(request, MAX_AUTH_BODY_BYTES);
     const email = validateEmail(body.email);
     if (!email) throw new ApiAccessError("请输入邮箱地址", 400);
     const newPassword = String(body.newPassword ?? "");
     if (newPassword.length < 8 || newPassword.length > 72)
       throw new ApiAccessError("新密码需为 8—72 位", 400);
+    validatePasswordStrength(newPassword);
 
     // 先校验验证码：失败会累加尝试次数，成功即作废，杜绝一码多用。
     await consumeEmailCode({ email, purpose: "reset", code: String(body.code ?? "") });
@@ -48,9 +59,17 @@ export async function POST(request: Request) {
         .bind(password.hash, password.salt, password.iterations, owner.id),
       // 重置密码后让所有旧会话失效，防止别人还留在已登录状态。
       db.prepare("DELETE FROM app_sessions WHERE user_id=?").bind(owner.id),
+      db.prepare("DELETE FROM app_session_devices WHERE user_id=?").bind(owner.id),
     ]);
-    return NextResponse.json({ ok: true });
+    await recordAuditEvent({
+      ownerId: "user:" + owner.id,
+      eventType: "auth.password_reset",
+      subjectType: "user",
+      subjectId: owner.id,
+      requestId: requestIdFromRequest(request),
+    });
+    return privateJson({ ok: true });
   } catch (error) {
-    return accessErrorResponse(error, "重置密码失败");
+    return accessErrorResponse(error, "重置密码失败", request);
   }
 }

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { env } from "cloudflare:workers";
 import { SESSION_COOKIE_NAME } from "./app/auth-core.js";
+import { validRequestId } from "./app/audit-log";
+import { trustedChatGPTEmailFromHeaders } from "./app/api-security";
 
 type Bucket = { count: number; resetAt: number };
 const buckets = new Map<string, Bucket>();
@@ -8,6 +10,22 @@ const buckets = new Map<string, Bucket>();
 function dbBinding() {
   return (env as unknown as { DB?: D1Database }).DB;
 }
+
+function configValue(name: string) {
+  const runtime = env as unknown as Record<string, unknown>;
+  return String(
+    runtime[name] ??
+      (globalThis as unknown as { process?: { env?: Record<string, string> } })
+        .process?.env?.[name] ??
+      "",
+  ).trim();
+}
+
+function trustedIdentityProxyEnabled() {
+  const value = configValue("NEO_TRUSTED_AUTH_HEADERS").toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
 
 function isLocalHost(hostname: string) {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
@@ -28,7 +46,27 @@ function limitFor(pathname: string, method: string) {
   if (pathname === "/api/data/restore") return 3;
   if (pathname === "/api/bill-import") return method === "POST" ? 10 : 5;
   if (pathname === "/api/webdav-sync") return 10;
+  if (
+    method === "POST" &&
+    (pathname === "/api/external/quick-sync" ||
+      pathname === "/api/v1/transactions" ||
+      pathname.startsWith("/api/v1/webhook/"))
+  )
+    return 60;
   return method === "GET" ? 120 : 40;
+}
+
+function bodyLimitFor(pathname: string, method: string) {
+  if (method !== "POST" && method !== "PUT" && method !== "PATCH") return null;
+  if (pathname === "/api/data/restore") return 50 * 1024 * 1024;
+  if (pathname === "/api/bill-import") return 15 * 1024 * 1024;
+  if (
+    pathname === "/api/external/quick-sync" ||
+    pathname === "/api/v1/transactions" ||
+    pathname.startsWith("/api/v1/webhook/")
+  )
+    return 64 * 1024;
+  return null;
 }
 
 async function globalRequestCount(identity: string, scope: string, windowStart: number) {
@@ -49,7 +87,7 @@ async function globalRequestCount(identity: string, scope: string, windowStart: 
       .first<{ count: number }>();
     if (Math.random() < 0.01)
       await binding
-        .prepare("DELETE FROM api_rate_limits WHERE window_start<?")
+        .prepare("DELETE FROM api_rate_limits WHERE scope NOT LIKE 'auth:%' AND scope <> 'quick-sync' AND window_start<?")
         .bind(windowStart - 3_600_000)
         .run();
     return Number(row?.count ?? 1);
@@ -75,8 +113,14 @@ async function sessionOwnerId(request: NextRequest) {
       .join("");
     const row = await binding
       .prepare(
-        `SELECT user_id AS userId FROM app_sessions
-         WHERE token_hash=? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+       `SELECT user_id AS userId FROM app_sessions
+        WHERE token_hash=? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
+           AND last_used_at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-14 days')
+           AND NOT EXISTS (
+             SELECT 1 FROM app_session_devices d
+             WHERE d.token_hash=app_sessions.token_hash
+               AND (d.revoked_at IS NOT NULL OR d.expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+           )`,
       )
       .bind(tokenHash)
       .first<{ userId: string }>();
@@ -105,38 +149,68 @@ async function ownsRequestedLedger(identity: string, ledgerValue: string | null)
 
 export async function proxy(request: NextRequest) {
   const { pathname, origin, hostname } = request.nextUrl;
+  const requestId = validRequestId(request.headers.get("x-request-id")) ?? crypto.randomUUID();
+  const responseHeaders = { "X-Request-ID": requestId, "Cache-Control": "no-store" };
+  const errorResponse = (error: string, status: number, code: string, headers?: HeadersInit) =>
+    NextResponse.json(
+      { error, code, requestId },
+      { status, headers: { ...responseHeaders, ...Object.fromEntries(new Headers(headers)) } },
+    );
   const externalTokenRoute =
+    pathname === "/api/openapi.json" ||
+    pathname === "/api/health" ||
     pathname.startsWith("/api/v1/webhook/") ||
+    pathname === "/api/v1/transactions" ||
     pathname.startsWith("/api/external/");
-  const email = request.headers
-    .get("oai-authenticated-user-email")
-    ?.trim()
-    .toLowerCase();
+  // Discoverable Passkey authentication starts without a session. The route
+  // still enforces same-origin, rate limits and challenge binding below; it
+  // only needs to pass the edge's pre-session gate so remote users can begin
+  // WebAuthn login.
+  const publicPasskeyRoute = pathname === "/api/auth/passkeys";
+  const email = trustedIdentityProxyEnabled()
+    ? await trustedChatGPTEmailFromHeaders(request.headers, request)
+    : null;
   const trustedLocalNetwork = isLocalHost(hostname) || isPrivateNetworkHost(hostname);
   const sessionIdentity = !externalTokenRoute ? await sessionOwnerId(request) : null;
-  if (!externalTokenRoute && !email && !sessionIdentity && !trustedLocalNetwork)
-    return NextResponse.json({ error: "请先登录后再访问账本" }, { status: 401 });
+  if (!externalTokenRoute && !publicPasskeyRoute && !email && !sessionIdentity && !trustedLocalNetwork)
+    return errorResponse("请先登录后再访问账本", 401, "unauthorized");
 
   if (!externalTokenRoute && !["GET", "HEAD", "OPTIONS"].includes(request.method)) {
     const fetchSite = request.headers.get("sec-fetch-site");
     const requestOrigin = request.headers.get("origin");
     if (fetchSite === "cross-site" || (!isLocalHost(hostname) && requestOrigin !== origin))
-      return NextResponse.json({ error: "已拒绝非同源请求" }, { status: 403 });
+      return errorResponse("已拒绝非同源请求", 403, "forbidden");
     if (requestOrigin && requestOrigin !== origin)
-      return NextResponse.json({ error: "已拒绝非同源请求" }, { status: 403 });
+      return errorResponse("已拒绝非同源请求", 403, "forbidden");
+  }
+
+  const bodyLimit = bodyLimitFor(pathname, request.method);
+  const contentLength = request.headers.get("content-length");
+  if (bodyLimit && contentLength) {
+    const declared = Number(contentLength);
+    if (!Number.isFinite(declared) || declared < 0)
+      return errorResponse("请求大小声明无效", 400, "request_failed");
+    if (declared > bodyLimit)
+      return errorResponse(
+        "请求不能超过 " + Math.floor(bodyLimit / 1024 / 1024) + " MB",
+        413,
+        "payload_too_large",
+      );
   }
 
   const now = Date.now();
+  const forwarded = request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for") ?? "local";
+  const sourceAddress = forwarded.split(",")[0].trim().slice(0, 80) || "unknown";
   const identity = email
     ? `email:${email}`
-    : (sessionIdentity ?? (trustedLocalNetwork ? "local" : "external-token"));
+    : (sessionIdentity ??
+      (externalTokenRoute ? `external:${sourceAddress}` : trustedLocalNetwork ? "local" : "anonymous"));
   if (
     !externalTokenRoute &&
     !(await ownsRequestedLedger(identity, request.nextUrl.searchParams.get("ledger")))
   )
-    return NextResponse.json({ error: "无权访问这个账本" }, { status: 403 });
-  const forwarded = request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for") ?? "local";
-  const key = `${identity}:${forwarded.split(",")[0]}:${request.method}:${pathname}`;
+    return errorResponse("无权访问这个账本", 403, "forbidden");
+  const key = `${identity}:${sourceAddress}:${request.method}:${pathname}`;
   const current = buckets.get(key);
   const bucket = !current || current.resetAt <= now
     ? { count: 1, resetAt: now + 60_000 }
@@ -151,17 +225,31 @@ export async function proxy(request: NextRequest) {
   );
   const effectiveCount = globalCount ?? bucket.count;
   if (effectiveCount > limit)
-    return NextResponse.json(
-      { error: "操作过于频繁，请稍后再试" },
-      { status: 429, headers: { "Retry-After": String(Math.ceil((bucket.resetAt - now) / 1000)) } },
+    return errorResponse(
+      "操作过于频繁，请稍后再试",
+      429,
+      "rate_limited",
+      { "Retry-After": String(Math.ceil((bucket.resetAt - now) / 1000)) },
     );
   if (buckets.size > 5000)
     for (const [bucketKey, value] of buckets)
       if (value.resetAt <= now) buckets.delete(bucketKey);
 
-  const response = NextResponse.next();
+  const forwardedHeaders = new Headers(request.headers);
+  forwardedHeaders.set("x-request-id", requestId);
+  const response = NextResponse.next({ request: { headers: forwardedHeaders } });
+  if (/^(1|true|yes)$/i.test(configValue("NEO_HSTS")))
+    response.headers.set(
+      "Strict-Transport-Security",
+      "max-age=31536000; includeSubDomains",
+    );
   response.headers.set("X-RateLimit-Limit", String(limit));
   response.headers.set("X-RateLimit-Remaining", String(Math.max(0, limit - effectiveCount)));
+  response.headers.set("X-Request-ID", requestId);
+  response.headers.set(
+    "Cache-Control",
+    pathname === "/api/openapi.json" ? "public, max-age=300" : "no-store",
+  );
   return response;
 }
 

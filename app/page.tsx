@@ -36,6 +36,24 @@ import { getOwnerPreferences } from "./api-security";
 import { hasLocalUsers, sessionUser } from "./auth";
 import { SESSION_COOKIE_NAME } from "./auth-core.js";
 import { localDateTimeToUtc } from "./time-money.js";
+import { MAX_ACCOUNT_COUNT } from "./account-limits";
+import { MAX_ASSET_COUNT } from "./asset-limits";
+import { MAX_CATEGORY_COUNT } from "./category-limits";
+import { MAX_LEDGER_COUNT } from "./ledger-limits";
+import { MAX_MEMBER_COUNT } from "./member-limits";
+import {
+  MAX_INSTALLMENT_COUNT,
+  MAX_SAVINGS_GOAL_COUNT,
+  MAX_SUBSCRIPTION_COUNT,
+} from "./planning-limits";
+import {
+  actionMoneyCents,
+  actionOptionalPositiveInteger,
+  actionPercent,
+  actionPositiveInteger,
+  actionTimezone,
+  boundedActionText,
+} from "./server-action-input";
 import {
   isSplitMode,
   transactionAccountDelta,
@@ -45,6 +63,7 @@ export const dynamic = "force-dynamic";
 
 const moods = ["悦己", "刚需", "冲动"] as const;
 const categories = ["餐饮", "交通", "购物", "咖啡", "娱乐"] as const;
+const INITIAL_TRANSACTION_PAGE_SIZE = 100;
 async function currentIdentity() {
   const requestHeaders = await headers();
   const user = await getChatGPTUser();
@@ -108,37 +127,33 @@ async function currentOwnerId() {
 async function requireOwnedLedger(ledgerId: number) {
   const ownerId = await currentOwnerId();
   const db = getDbBinding();
-  await db.prepare("UPDATE ledgers SET owner_id=? WHERE id=? AND owner_id IS NULL").bind(ownerId, ledgerId).run();
+  // 认证用户不能通过伪造 Server Action 参数认领孤立账本；旧数据接管只
+  // 在没有账号的 local 兼容模式或注册时 adoptOrProvisionVault 中发生。
+  if (ownerId === "local")
+    await db.prepare("UPDATE ledgers SET owner_id=? WHERE id=? AND owner_id IS NULL").bind(ownerId, ledgerId).run();
   const row = await db.prepare("SELECT id FROM ledgers WHERE id=? AND owner_id=?").bind(ledgerId, ownerId).first();
   if (!row) throw new Error("无权访问这个账本");
   return ownerId;
 }
 async function addTransaction(formData: FormData) {
   "use server";
-  const amountYuan = Number(formData.get("amount"));
-  const amount = Math.round(amountYuan * 100);
-  const title = String(formData.get("title") || "今日消费")
-    .trim()
-    .slice(0, 40);
-  const type = String(formData.get("type"));
-  const mood = String(formData.get("mood"));
-  const category = String(formData.get("category"));
-  const incomeCategory = String(formData.get("incomeCategory"));
-  const accountId = Number(formData.get("accountId"));
-  const occurredAt = String(formData.get("occurredAt") || "");
-  const originalTimezone = String(formData.get("originalTimezone") || "Asia/Shanghai");
-  const ledgerId = Number(formData.get("ledgerId") || 1);
-  const splitMode = String(formData.get("splitMode") || "");
-  const splitWithMemberId = Number(formData.get("splitWithMemberId") || 0);
-  const mySharePercent = Math.max(
-    0,
-    Math.min(100, Number(formData.get("mySharePercent") || 100)),
-  );
+  const amount = actionMoneyCents(formData.get("amount"));
+  const rawTitle = boundedActionText(formData.get("title") || "", 40, "标题");
+  const title = rawTitle || "今日消费";
+  const type = boundedActionText(formData.get("type"), 8, "收支类型");
+  const mood = boundedActionText(formData.get("mood") ?? "", 8, "消费情绪");
+  const category = boundedActionText(formData.get("category") ?? "", 40, "消费分类");
+  const incomeCategory = boundedActionText(formData.get("incomeCategory") ?? "", 40, "收入分类");
+  const accountId = actionPositiveInteger(formData.get("accountId"), "账户");
+  const occurredAt = boundedActionText(formData.get("occurredAt") || "", 64, "发生时间");
+  const originalTimezone = actionTimezone(formData.get("originalTimezone") || "Asia/Shanghai");
+  const ledgerId = actionPositiveInteger(formData.get("ledgerId") || 1, "账本");
+  const splitMode = boundedActionText(formData.get("splitMode") || "", 20, "分账方式");
+  const splitWithMemberId = actionOptionalPositiveInteger(formData.get("splitWithMemberId"), "分账搭子");
+  const mySharePercent = actionPercent(formData.get("mySharePercent") || 100);
   const isSideHustle = formData.get("isSideHustle") === "on";
   const isBusinessExpense = formData.get("isBusinessExpense") === "on";
 
-  if (!Number.isFinite(amount) || amount <= 0)
-    throw new Error("请输入正确金额");
   if (!(type === "支出" || type === "收入")) throw new Error("请选择收支类型");
   if (type === "支出" && !moods.includes(mood as (typeof moods)[number]))
     throw new Error("请选择消费情绪");
@@ -274,6 +289,7 @@ async function addTransaction(formData: FormData) {
 async function deleteTransaction(id: number) {
   "use server";
   try {
+    id = actionPositiveInteger(id, "流水");
     await ensureDb();
     const binding = getDbBinding();
     const item = await binding
@@ -343,10 +359,8 @@ async function deleteTransaction(id: number) {
 
 async function updateBudget(formData: FormData) {
   "use server";
-  const amount = Math.round(Number(formData.get("budget")) * 100);
-  const ledgerId = Number(formData.get("ledgerId") || 1);
-  if (!Number.isFinite(amount) || amount <= 0)
-    throw new Error("请输入正确预算");
+  const amount = actionMoneyCents(formData.get("budget"), "预算");
+  const ledgerId = actionPositiveInteger(formData.get("ledgerId") || 1, "账本");
   await ensureDb();
   await requireOwnedLedger(ledgerId);
   await getDb()
@@ -358,7 +372,8 @@ async function updateBudget(formData: FormData) {
 
 async function parseImportText(text: string, ledgerId: number) {
   "use server";
-  const cleaned = text.trim();
+  const cleaned = boundedActionText(text, 64 * 1024, "导入文本");
+  ledgerId = actionPositiveInteger(ledgerId, "账本");
   await ensureDb();
   await requireOwnedLedger(ledgerId);
   const moneyMatches = [
@@ -395,7 +410,7 @@ async function parseImportText(text: string, ledgerId: number) {
       : "刚需";
   const categoryRows = await getDbBinding()
     .prepare(
-      "SELECT name,builtin_key builtinKey FROM expense_categories WHERE ledger_id=? AND is_active=1 ORDER BY sort_order,id",
+      "SELECT name,builtin_key builtinKey FROM expense_categories WHERE ledger_id=? AND is_active=1 ORDER BY sort_order,id LIMIT 200",
     )
     .bind(ledgerId)
     .all<{ name: string; builtinKey: string | null }>();
@@ -406,7 +421,7 @@ async function parseImportText(text: string, ledgerId: number) {
     legacyCategory;
   const incomeCategoryRows = await getDbBinding()
     .prepare(
-      "SELECT name,builtin_key builtinKey FROM income_categories WHERE ledger_id=? AND is_active=1 ORDER BY sort_order,id",
+      "SELECT name,builtin_key builtinKey FROM income_categories WHERE ledger_id=? AND is_active=1 ORDER BY sort_order,id LIMIT 200",
     )
     .bind(ledgerId)
     .all<{ name: string; builtinKey: string | null }>();
@@ -454,16 +469,18 @@ export default async function Home({
   const identity = await currentIdentity();
   if (!identity) return <AuthGate hasUsers />;
   const ownerId = identity.ownerId;
-  await getDbBinding()
-    .prepare("UPDATE ledgers SET owner_id=? WHERE owner_id IS NULL")
-    .bind(ownerId)
-    .run();
+  if (ownerId === "local")
+    await getDbBinding()
+      .prepare("UPDATE ledgers SET owner_id=? WHERE owner_id IS NULL OR owner_id='local'")
+      .bind(ownerId)
+      .run();
   const params = await searchParams;
   const ledgerRows = await getDb()
     .select()
     .from(ledgers)
     .where(eq(ledgers.ownerId, ownerId))
-    .orderBy(ledgers.id);
+    .orderBy(ledgers.id)
+    .limit(MAX_LEDGER_COUNT);
   const requestedLedger = Number(params.ledger || 1);
   const ledgerId = ledgerRows.some((item) => item.id === requestedLedger)
     ? requestedLedger
@@ -473,6 +490,7 @@ export default async function Home({
   const db = getDb();
   const [
     records,
+    transactionCountResult,
     accountRows,
     budgetRows,
     categoryBudgetRows,
@@ -493,39 +511,50 @@ export default async function Home({
       .select()
       .from(transactions)
       .where(eq(transactions.ledgerId, ledgerId))
-      .orderBy(desc(transactions.occurredAt), desc(transactions.id)),
+      .orderBy(desc(transactions.occurredAt), desc(transactions.id))
+      .limit(INITIAL_TRANSACTION_PAGE_SIZE),
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(transactions)
+      .where(eq(transactions.ledgerId, ledgerId)),
     db
       .select()
       .from(accounts)
       .where(eq(accounts.ledgerId, ledgerId))
-      .orderBy(accounts.id),
+      .orderBy(accounts.id)
+      .limit(MAX_ACCOUNT_COUNT),
     db.select().from(budgetSettings).where(eq(budgetSettings.id, ledgerId)),
     db
       .select()
       .from(categoryBudgets)
       .where(eq(categoryBudgets.ledgerId, ledgerId))
-      .orderBy(categoryBudgets.category),
+      .orderBy(categoryBudgets.category)
+      .limit(MAX_CATEGORY_COUNT),
     db
       .select()
       .from(subscriptions)
       .where(eq(subscriptions.ledgerId, ledgerId))
-      .orderBy(subscriptions.nextChargeDate),
+      .orderBy(subscriptions.nextChargeDate)
+      .limit(MAX_SUBSCRIPTION_COUNT),
     db
       .select()
       .from(savingsGoals)
       .where(eq(savingsGoals.ledgerId, ledgerId))
-      .orderBy(savingsGoals.id),
+      .orderBy(savingsGoals.id)
+      .limit(MAX_SAVINGS_GOAL_COUNT),
     getOwnerPreferences(ownerId),
     db
       .select()
       .from(members)
       .where(eq(members.ledgerId, ledgerId))
-      .orderBy(desc(members.isMe), members.id),
+      .orderBy(desc(members.isMe), members.id)
+      .limit(MAX_MEMBER_COUNT),
     db
       .select()
       .from(installments)
       .where(eq(installments.ledgerId, ledgerId))
-      .orderBy(desc(installments.id)),
+      .orderBy(desc(installments.id))
+      .limit(MAX_INSTALLMENT_COUNT),
     evaluateAchievements(ledgerId),
     db
       .select()
@@ -541,17 +570,20 @@ export default async function Home({
       .select()
       .from(digitalAssets)
       .where(eq(digitalAssets.ledgerId, ledgerId))
-      .orderBy(desc(digitalAssets.id)),
+      .orderBy(desc(digitalAssets.id))
+      .limit(MAX_ASSET_COUNT),
     db
       .select()
       .from(expenseCategories)
       .where(eq(expenseCategories.ledgerId, ledgerId))
-      .orderBy(expenseCategories.sortOrder, expenseCategories.id),
+      .orderBy(expenseCategories.sortOrder, expenseCategories.id)
+      .limit(MAX_CATEGORY_COUNT),
     db
       .select()
       .from(incomeCategoriesConfig)
       .where(eq(incomeCategoriesConfig.ledgerId, ledgerId))
-      .orderBy(incomeCategoriesConfig.sortOrder, incomeCategoriesConfig.id),
+      .orderBy(incomeCategoriesConfig.sortOrder, incomeCategoriesConfig.id)
+      .limit(MAX_CATEGORY_COUNT),
   ]);
 
   return (
@@ -561,6 +593,8 @@ export default async function Home({
         category: row.categoryDynamic ?? row.category,
         incomeCategory: row.incomeCategoryDynamic ?? row.incomeCategory,
       }))}
+      transactionTotal={Number(transactionCountResult[0]?.count ?? records.length)}
+      transactionsTruncated={Number(transactionCountResult[0]?.count ?? records.length) > INITIAL_TRANSACTION_PAGE_SIZE}
       accounts={accountRows}
       budget={budgetRows[0]?.amount ?? 500000}
       categoryBudgets={categoryBudgetRows}

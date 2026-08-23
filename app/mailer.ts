@@ -1,5 +1,6 @@
 import { maskEmail } from "./email-code-core.js";
 import { configValue } from "./runtime-env";
+import { fetchWithTimeout, readResponseTextWithLimit } from "./request-limits";
 
 // Cloudflare Workers 运行时没有 TCP，因此通过 Resend HTTP API 发信。
 // 没有配置发信通道时必须明确失败，不能把终端输出伪装成已发送。
@@ -28,7 +29,7 @@ export async function sendMail(input: {
     return { ok: false, error: "邮件服务未配置，暂时无法发送验证码" };
   }
   try {
-    const response = await fetch("https://api.resend.com/emails", {
+    const response = await fetchWithTimeout("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -42,8 +43,9 @@ export async function sendMail(input: {
         ...(input.html ? { html: input.html } : {}),
       }),
     });
+    const responseText = await readResponseTextWithLimit(response, 32 * 1024);
     if (!response.ok) {
-      const detail = (await response.text()).slice(0, 300);
+      const detail = responseText.slice(0, 300);
       console.error(`[邮件发送失败] ${response.status} ${detail}`);
       const domainPending =
         response.status === 403 &&

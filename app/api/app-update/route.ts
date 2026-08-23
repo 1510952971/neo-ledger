@@ -5,7 +5,13 @@ import {
   compareVersions,
   normalizeReleaseTag,
 } from "../../update-rules.js";
-import { accessErrorResponse } from "../../api-security";
+import { ApiAccessError, accessErrorResponse } from "../../api-security";
+import { requestIdFromRequest } from "../../audit-log";
+import { readAppUpdateInput } from "../../internal-api-contract";
+import {
+  fetchWithTimeout,
+  readResponseTextWithLimit,
+} from "../../request-limits";
 
 type GitHubRelease = {
   tag_name?: string;
@@ -16,6 +22,31 @@ type GitHubRelease = {
   draft?: boolean;
   prerelease?: boolean;
 };
+
+async function boundedJson<T>(response: Response, label: string, maximum: number) {
+  let text: string;
+  try {
+    text = await readResponseTextWithLimit(response, maximum);
+  } catch {
+    throw new ApiAccessError(`${label}响应过大或读取失败`, 502);
+  }
+  try {
+    const value: unknown = JSON.parse(text);
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("not object");
+    return value as T;
+  } catch {
+    throw new ApiAccessError(`${label}响应格式无效`, 502);
+  }
+}
+
+async function boundedFetch(input: RequestInfo | URL, init: RequestInit) {
+  try {
+    return await fetchWithTimeout(input, init, 15_000);
+  } catch (error) {
+    if (error instanceof ApiAccessError) throw error;
+    throw new ApiAccessError("外部版本服务连接失败", 502);
+  }
+}
 
 function runtimeConfig() {
   const runtime = env as unknown as Record<string, unknown>;
@@ -31,7 +62,7 @@ function isLocalRequest(request: Request) {
 }
 
 async function latestRelease(repository: string) {
-  const response = await fetch(
+  const response = await boundedFetch(
     `https://api.github.com/repos/${repository}/releases/latest`,
     {
       headers: {
@@ -45,7 +76,7 @@ async function latestRelease(repository: string) {
   if (response.status === 404) return null;
   if (!response.ok)
     throw new Error(`GitHub 版本服务暂时不可用（${response.status}）`);
-  const release = (await response.json()) as GitHubRelease;
+  const release = await boundedJson<GitHubRelease>(response, "GitHub 版本服务", 512 * 1024);
   if (release.draft || release.prerelease) return null;
   return release;
 }
@@ -73,20 +104,21 @@ export async function GET(request: Request) {
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
-    return accessErrorResponse(error, "检查更新失败");
+    return accessErrorResponse(error, "检查更新失败", request);
   }
 }
 export async function POST(request: Request) {
   try {
     if (!isLocalRequest(request))
-      return NextResponse.json(
-        { error: "一键更新仅允许在本机程序中执行" },
-        { status: 403 },
+      return accessErrorResponse(
+        new ApiAccessError("一键更新仅允许在本机程序中执行", 403),
+        "启动更新失败",
+        request,
       );
     const config = runtimeConfig();
     if (!config.token)
       throw new Error("本地更新服务尚未启动，请重新运行 npm run dev");
-    const body = (await request.json()) as { tag?: string };
+    const body = await readAppUpdateInput(request);
     const tag = normalizeReleaseTag(body.tag);
     if (!tag) throw new Error("更新版本无效");
     const release = await latestRelease(config.repository);
@@ -94,7 +126,7 @@ export async function POST(request: Request) {
       throw new Error("该版本不是当前 GitHub 正式最新版");
     if (compareVersions(tag.slice(1), APP_VERSION) <= 0)
       throw new Error("当前已经是最新版");
-    const response = await fetch("http://127.0.0.1:3210/apply", {
+    const response = await boundedFetch("http://127.0.0.1:3210/apply", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${config.token}`,
@@ -102,11 +134,11 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify({ tag }),
     });
-    const result = (await response.json()) as {
+    const result = await boundedJson<{
       ok?: boolean;
       error?: string;
       backupPath?: string;
-    };
+    }>(response, "本地更新服务", 64 * 1024);
     if (!response.ok) throw new Error(result.error || "更新服务执行失败");
     return NextResponse.json(
       {
@@ -115,9 +147,17 @@ export async function POST(request: Request) {
         backupCreated: Boolean(result.backupPath),
         message: "更新包已验证，程序即将重启",
       },
-      { status: 202 },
+      {
+        status: 202,
+        headers: {
+          "Cache-Control": "no-store, private, max-age=0",
+          Pragma: "no-cache",
+          "X-Content-Type-Options": "nosniff",
+          "X-Request-ID": requestIdFromRequest(request),
+        },
+      },
     );
   } catch (error) {
-    return accessErrorResponse(error, "启动更新失败");
+    return accessErrorResponse(error, "启动更新失败", request);
   }
 }

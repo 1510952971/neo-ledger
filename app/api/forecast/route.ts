@@ -1,8 +1,18 @@
 import { NextResponse } from "next/server";
 import { ensureDb, getDbBinding } from "../../../db";
-import { claimAndRequireLedger } from "../../api-security";
+import { claimAndRequireLedger, guardedApiResponse } from "../../api-security";
+
+function privateJson(body: unknown) {
+  const headers = new Headers({
+    "Cache-Control": "no-store, private, max-age=0",
+    Pragma: "no-cache",
+    "X-Content-Type-Options": "nosniff",
+  });
+  return NextResponse.json(body, { headers });
+}
 
 export async function GET(request: Request) {
+  return guardedApiResponse(request, "读取现金流预测失败", async () => {
   await ensureDb();
   const ledgerId = Number(new URL(request.url).searchParams.get("ledger") || 1),
     db = getDbBinding();
@@ -29,8 +39,9 @@ export async function GET(request: Request) {
     )
     .bind(ledgerId)
     .first<{ monthly: number }>();
-  const dailyBurn = (spent?.total || 0) / Math.max(90, spent?.activeDays || 0),
-    monthlyFixed = recurring?.monthly || 0,
+  const monthlyFixed = recurring?.monthly || 0,
+    hasSpendingData = (spent?.activeDays || 0) > 0 || monthlyFixed > 0,
+    dailyBurn = (spent?.total || 0) / Math.max(90, spent?.activeDays || 0),
     start = (balances?.netWorth || 0) + (savings?.total || 0);
   const points = [] as {
     label: string;
@@ -65,16 +76,19 @@ export async function GET(request: Request) {
       danger,
     });
   }
-  const runwayDays =
-    dailyBurn + monthlyFixed / 30.4375 > 0
-      ? Math.max(0, Math.floor(start / (dailyBurn + monthlyFixed / 30.4375)))
-      : 9999;
-  return NextResponse.json({
+  const burnPerDay = dailyBurn + monthlyFixed / 30.4375;
+  const runwayDays = burnPerDay > 0
+    ? Math.max(0, Math.floor(start / burnPerDay))
+    : null;
+  return privateJson({
     netWorth: start,
     averageDailySpend: Math.round(dailyBurn),
     monthlyFixed: Math.round(monthlyFixed),
     bankruptcyDate,
     runwayDays,
+    hasSpendingData,
+    dataStatus: hasSpendingData ? "ok" : "insufficient_data",
     points,
+  });
   });
 }

@@ -5,6 +5,7 @@ import {
   buildWechatAuthorizeUrl,
   normalizeOauthProvider,
   oauthStateCookie,
+  safeOauthErrorMessage,
   safeReturnTo,
 } from "../app/oauth-core.js";
 
@@ -46,4 +47,9 @@ test("OAuth state is provider-scoped, short-lived and resists open redirects", (
   assert.match(cookie, /SameSite=Lax/);
   assert.match(cookie, /Max-Age=600/);
   assert.match(cookie, /Secure/);
+});
+
+test("OAuth callback never reflects provider or runtime error text", () => {
+  assert.equal(safeOauthErrorMessage("wechat", new Error("provider leaked secret")), "微信登录失败，请稍后重试");
+  assert.equal(safeOauthErrorMessage("alipay", new Error("第三方登录状态已失效，请重试")), "第三方登录状态已失效，请重试");
 });

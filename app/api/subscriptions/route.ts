@@ -1,7 +1,17 @@
 import { NextResponse } from "next/server";
 import { ensureDb, getDbBinding } from "../../../db";
 import { normalizeSubscriptionInput } from "./rules.js";
-import { accessErrorResponse, claimAndRequireLedger } from "../../api-security";
+import { ApiAccessError, accessErrorResponse, claimAndRequireLedger, guardedApiResponse } from "../../api-security";
+import { readSubscriptionCreateInput, readSubscriptionUpdateInput } from "../../internal-api-contract";
+import { MAX_SUBSCRIPTION_COUNT } from "../../planning-limits";
+
+function privateJson(body: unknown, init: ResponseInit = {}) {
+  const headers = new Headers(init.headers);
+  headers.set("Cache-Control", "no-store, private, max-age=0");
+  headers.set("Pragma", "no-cache");
+  headers.set("X-Content-Type-Options", "nosniff");
+  return NextResponse.json(body, { ...init, headers });
+}
 
 async function validateReferences(
   ledgerId: number,
@@ -29,34 +39,50 @@ async function validateReferences(
 }
 
 export async function GET(request: Request) {
-  await ensureDb();
-  const requestedLedger = Number(new URL(request.url).searchParams.get("ledger"));
-  const ledgerId = Number.isInteger(requestedLedger) && requestedLedger > 0
-    ? requestedLedger
-    : 1;
-  await claimAndRequireLedger(request, ledgerId);
-  const rows = await getDbBinding()
-    .prepare(
-      "SELECT id,ledger_id AS ledgerId,name,amount,account_id AS accountId,cycle,COALESCE(category_dynamic,category) AS category,next_charge_date AS nextChargeDate,uuid,updated_at AS updatedAt,created_at AS createdAt FROM subscriptions WHERE ledger_id=? ORDER BY next_charge_date,id",
-    )
-    .bind(ledgerId)
-    .all();
-  return NextResponse.json(rows.results);
+  return guardedApiResponse(request, "读取续费失败", async () => {
+    await ensureDb();
+    const requestedLedger = Number(new URL(request.url).searchParams.get("ledger"));
+    const ledgerId = Number.isInteger(requestedLedger) && requestedLedger > 0
+      ? requestedLedger
+      : 1;
+    await claimAndRequireLedger(request, ledgerId);
+    const db = getDbBinding();
+    const total = await db
+      .prepare("SELECT COUNT(*) count FROM subscriptions WHERE ledger_id=?")
+      .bind(ledgerId)
+      .first<{ count: number }>();
+    const rows = await db
+      .prepare(
+        "SELECT id,ledger_id AS ledgerId,name,amount,account_id AS accountId,cycle,COALESCE(category_dynamic,category) AS category,next_charge_date AS nextChargeDate,uuid,updated_at AS updatedAt,created_at AS createdAt FROM subscriptions WHERE ledger_id=? ORDER BY next_charge_date,id LIMIT ?",
+      )
+      .bind(ledgerId, MAX_SUBSCRIPTION_COUNT)
+      .all();
+    const response = privateJson(rows.results);
+    const totalCount = Number(total?.count ?? 0);
+    response.headers.set("X-Total-Count", String(totalCount));
+    response.headers.set("X-Has-More", totalCount > MAX_SUBSCRIPTION_COUNT ? "1" : "0");
+    return response;
+  });
 }
 
 export async function POST(request: Request) {
   try {
     await ensureDb();
-    const value = normalizeSubscriptionInput(
-      (await request.json()) as Record<string, unknown>,
-    );
+    const value = normalizeSubscriptionInput(await readSubscriptionCreateInput(request));
     await claimAndRequireLedger(request, value.ledgerId);
+    const db = getDbBinding();
+    const count = await db
+      .prepare("SELECT COUNT(*) count FROM subscriptions WHERE ledger_id=?")
+      .bind(value.ledgerId)
+      .first<{ count: number }>();
+    if (Number(count?.count ?? 0) >= MAX_SUBSCRIPTION_COUNT)
+      throw new ApiAccessError("订阅最多 " + MAX_SUBSCRIPTION_COUNT + " 个", 409);
     const configuredCategory = await validateReferences(
       value.ledgerId,
       value.accountId,
       value.category,
     );
-    await getDbBinding()
+    await db
       .prepare(
         "INSERT INTO subscriptions(ledger_id,name,amount,account_id,cycle,category,category_dynamic,next_charge_date,uuid,updated_at) VALUES(?,?,?,?,?,?,?,?,lower(hex(randomblob(16))),strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
       )
@@ -71,18 +97,17 @@ export async function POST(request: Request) {
         value.nextChargeDate,
       )
       .run();
-    return NextResponse.json({ ok: true }, { status: 201 });
+    return privateJson({ ok: true }, { status: 201 });
   } catch (error) {
-    return accessErrorResponse(error, "保存失败");
+    return accessErrorResponse(error, "保存失败", request);
   }
 }
 
 export async function PUT(request: Request) {
   try {
     await ensureDb();
-    const body = (await request.json()) as Record<string, unknown>;
-    const id = Number(body.id);
-    if (!Number.isInteger(id) || id <= 0) throw new Error("续费项目不存在");
+    const body = await readSubscriptionUpdateInput(request);
+    const id = body.id;
     const value = normalizeSubscriptionInput(body);
     await claimAndRequireLedger(request, value.ledgerId);
     const db = getDbBinding();
@@ -112,9 +137,9 @@ export async function PUT(request: Request) {
         value.ledgerId,
       )
       .run();
-    return NextResponse.json({ ok: true });
+    return privateJson({ ok: true });
   } catch (error) {
-    return accessErrorResponse(error, "修改失败");
+    return accessErrorResponse(error, "修改失败", request);
   }
 }
 
@@ -135,8 +160,8 @@ export async function DELETE(request: Request) {
       db.prepare("INSERT OR REPLACE INTO sync_tombstones(entity_type,entity_uuid,ledger_id,deleted_at) VALUES('subscription',?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))").bind(row.uuid, ledgerId),
       db.prepare("DELETE FROM subscriptions WHERE id=? AND ledger_id=?").bind(id, ledgerId),
     ]);
-    return NextResponse.json({ ok: true });
+    return privateJson({ ok: true });
   } catch (error) {
-    return accessErrorResponse(error, "删除失败");
+    return accessErrorResponse(error, "删除失败", request);
   }
 }

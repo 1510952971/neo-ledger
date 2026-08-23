@@ -16,6 +16,12 @@ import {
   oauthStateCookie,
   safeReturnTo,
 } from "./oauth-core.js";
+import {
+  fetchWithTimeout,
+  MAX_EXTERNAL_API_BODY_BYTES,
+  readResponseBytesWithLimit,
+  readResponseTextWithLimit,
+} from "./request-limits";
 
 export type OAuthProvider = "wechat" | "alipay";
 
@@ -82,7 +88,7 @@ async function oauthAvatarDataUrl(profile: OAuthProfile) {
   if (url.protocol !== "https:") return null;
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers: { Accept: "image/jpeg,image/png,image/webp" },
       redirect: "error",
     });
@@ -97,7 +103,7 @@ async function oauthAvatarDataUrl(profile: OAuthProfile) {
     const declaredSize = Number(response.headers.get("content-length") ?? 0);
     if (Number.isFinite(declaredSize) && declaredSize > MAX_AVATAR_BYTES)
       return null;
-    const bytes = new Uint8Array(await response.arrayBuffer());
+    const bytes = await readResponseBytesWithLimit(response, MAX_AVATAR_BYTES);
     return avatarDataUrlFromBytes(mimeType as AvatarMimeType, bytes);
   } catch {
     // A profile image must never make an otherwise valid OAuth login fail.
@@ -326,12 +332,12 @@ async function alipayCall(
     ...extra,
   };
   const form = new URLSearchParams({ ...params, sign: await signAlipay(params) });
-  const response = await fetch("https://openapi.alipay.com/gateway.do", {
+  const response = await fetchWithTimeout("https://openapi.alipay.com/gateway.do", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded;charset=utf-8" },
     body: form,
   });
-  const raw = await response.text();
+  const raw = await readResponseTextWithLimit(response, MAX_EXTERNAL_API_BODY_BYTES);
   if (!response.ok) throw new Error("支付宝登录服务暂时不可用");
   const parsed = await verifyAlipayResponse(raw, responseKey);
   const value = parsed[responseKey] as Record<string, unknown> | undefined;
@@ -348,7 +354,10 @@ async function exchangeWechat(code: string): Promise<OAuthProfile> {
     code,
     grant_type: "authorization_code",
   }).toString();
-  const token = (await (await fetch(tokenUrl)).json()) as Record<string, unknown>;
+  const tokenResponse = await fetchWithTimeout(tokenUrl);
+  const token = JSON.parse(
+    await readResponseTextWithLimit(tokenResponse, MAX_EXTERNAL_API_BODY_BYTES),
+  ) as Record<string, unknown>;
   if (!token.access_token || !token.openid)
     throw new Error(String(token.errmsg || "微信授权失败"));
   const profileUrl = new URL("https://api.weixin.qq.com/sns/userinfo");
@@ -357,7 +366,10 @@ async function exchangeWechat(code: string): Promise<OAuthProfile> {
     openid: String(token.openid),
     lang: "zh_CN",
   }).toString();
-  const profile = (await (await fetch(profileUrl)).json()) as Record<string, unknown>;
+  const profileResponse = await fetchWithTimeout(profileUrl);
+  const profile = JSON.parse(
+    await readResponseTextWithLimit(profileResponse, MAX_EXTERNAL_API_BODY_BYTES),
+  ) as Record<string, unknown>;
   if (profile.errcode) throw new Error(String(profile.errmsg || "读取微信资料失败"));
   const unionId = String(profile.unionid || token.unionid || "");
   return {

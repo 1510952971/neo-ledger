@@ -147,12 +147,15 @@ MAIL_FROM=Neo Ledger <noreply@你的域名>
 
 ### 6.1 工作原理
 
-Android 伴侣使用系统“通知使用权”读取已选择来源的通知。只有同时包含金额和支付关键词的通知才会进入队列。伴侣把通知正文发送到 Neo Ledger 的 `/api/external/quick-sync`，服务端解析金额、收支方向、商户和分类。
+Android 伴侣使用系统“通知使用权”读取已选择来源的通知。只有同时包含金额和支付关键词的通知才会进入队列。伴侣把通知正文发送到 Neo Ledger 的 `/api/v1/transactions`，服务端解析金额、收支方向、商户和分类。
 
 支持包名：
 
 - 微信：`com.tencent.mm`
 - 支付宝：`com.eg.android.AlipayGphone`
+- 抖音：`com.ss.android.ugc.aweme`；抖音极速版：`com.ss.android.ugc.aweme.lite`
+- 小红书：`com.xingin.xhs`
+- 闲鱼：`com.taobao.idlefish`
 - 双开版、银行 App 或其他支付 App：可在“其他应用包名”中追加，多个包名用逗号分隔。
 
 ### 6.2 安装
@@ -163,25 +166,22 @@ Android 伴侣使用系统“通知使用权”读取已选择来源的通知。
 
 ### 6.3 一键配置
 
-最简单的方法是在手机上完成：
+现在推荐使用一体化快速流程：
 
-1. 手机和 Neo Ledger 服务连接同一个网络。
-2. 手机浏览器打开数据中心显示的“本机局域网连接地址”。
-3. 登录同一个账号。
-4. 打开“数据中心 → 自动记账连接”。
-5. 生成或重新生成密钥。
-6. 点击“复制安卓配置”。
-7. 切换到 Android 伴侣，点击“从 Neo Ledger 粘贴配置”。
-8. 粘贴成功后，伴侣会清除剪贴板中的密钥。
+1. 手机和 Neo Ledger 服务连接同一个 Wi-Fi；首次使用先在电脑 `.env.local` 开启 `NEO_ENABLE_LAN=true`，并重启服务。
+2. 在 Neo Ledger 打开“数据中心 → 自动记账连接”，点击“生成并复制安卓配置”。页面会自动生成密钥并把地址、密钥和账本 ID 组合到剪贴板。
+3. 打开 Android 伴侣，点击“一键粘贴配置并开启通知权限”；确认系统权限后即可回到伴侣。
+4. 点击“发送 ¥0.01 测试账单”，看到成功后再进行真实通知测试。
+
+伴侣会在粘贴成功后清除剪贴板中的密钥。页面中的“高级设置与其他连接”只用于手动配置、快捷指令、Bark、NAS 或脚本，不是 Android 首次连接的必经步骤。
+
+若快速按钮提示地址是 localhost，请先在数据中心附近设备卡片中重新检测局域网地址，并确认配置使用 `http://192.168.x.x:3000` 这类地址。手机里的 `localhost` 代表手机自身，不能填写 `http://localhost:3000`。
 
 手动配置时需要填写 Neo Ledger 地址、完整自动记账密钥和账本 ID。局域网地址示例：`http://192.168.1.95:3000`。手机里的 `localhost` 代表手机自身，不能填写 `http://localhost:3000`。
 
 ### 6.4 权限和后台运行
 
-1. 点击“开启通知读取权限”，允许“Neo Ledger 自动记账”。
-2. 点击“厂商自启动 / 后台设置”，允许自启动和后台运行。
-3. 点击“系统省电设置”，把伴侣设为不限制或允许后台活动。
-4. 确保微信和支付宝本身允许显示交易通知及通知详情。
+快速流程会自动打开通知读取权限页面；如果系统没有自动授予，再在伴侣首页点击“开启通知读取权限”。随后只需按手机品牌需要开启自启动和“不限制电量”。最后确认微信和支付宝允许显示交易通知及通知详情。
 
 伴侣会尝试打开小米/Redmi、华为/荣耀、OPPO/一加/realme、vivo/iQOO、魅族的专用自启动页面；找不到时回到系统应用详情页。
 
@@ -341,8 +341,12 @@ MAIL_FROM=Neo Ledger <noreply@eyeme.online>
 AUTH_PUBLIC_ORIGIN=https://ledger.eyeme.online
 OLLAMA_URL=http://NAS中的Ollama地址:11434
 OLLAMA_MODEL=llama3.1:8b
+# 可选安全开关：true 时禁止任何 Ollama 外发，即使 OLLAMA_URL 仍然存在
+NEO_AI_EXTERNAL_DISABLED=false
 P2P_STUN_URLS=
 ```
+
+NeoAI 默认只使用当前账本的聚合摘要，不把原始流水直接发送到外部模型。只有在对话面板明确勾选本次会话同意、且 `NEO_AI_EXTERNAL_DISABLED` 未开启时，才会调用 `OLLAMA_URL`；账本切换会清空对话并取消旧请求。模型调用有 15 秒超时和响应大小上限，仍建议在隐私政策中明确 Ollama 的部署位置、日志策略和数据留存责任。
 
 多账号自动记账应在页面生成账号专用密钥。`SYNC_TOKEN` 只用于旧版单用户兼容，不建议多人共用。
 
@@ -385,7 +389,7 @@ docker compose logs --tail=200 neo-ledger
 请求地址：
 
 ```text
-POST /api/external/quick-sync
+POST /api/v1/transactions
 Authorization: Bearer <账号专用密钥>
 Content-Type: application/json
 ```
@@ -514,7 +518,7 @@ docker compose up -d
 curl http://127.0.0.1:3000/api/app-update/health
 ```
 
-发布前必须确认：网页测试通过、Android 测试通过、Docker 健康检查通过、版本号一致、正式 APK 使用固定发布证书签名、`.env` 与任何密钥未进入 Git。
+发布前必须确认：网页测试通过、Android 测试通过、Docker 健康检查通过、`release-compatibility.json` 与 Web/Android 版本校验通过、正式 APK 使用固定发布证书签名、`.env` 与任何密钥未进入 Git。
 
 ## 15. 数据和密钥清单
 

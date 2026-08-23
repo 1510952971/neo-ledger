@@ -1,3 +1,5 @@
+import { PASSWORD_DENYLIST } from "./password-denylist.js";
+
 export const SESSION_COOKIE_NAME = "neo_ledger_session";
 
 export function normalizeUsername(value) {
@@ -41,7 +43,38 @@ export function validateRegistrationInput(input) {
   if (!displayName) throw new Error("请输入显示名称");
   if (password.length < 8 || password.length > 72)
     throw new Error("密码需为 8—72 位");
+  validatePasswordStrength(password);
   return { username, displayName, password, email };
+}
+
+export function validatePasswordStrength(password) {
+  const lowered = String(password).toLowerCase();
+  if (PASSWORD_DENYLIST.has(lowered) || /^(.)\1{7,}$/u.test(password) || /0123456789|9876543210/u.test(password))
+    throw new Error("密码过于常见，请使用密码管理器生成的随机密码");
+}
+
+/**
+ * A client-safe explanation that mirrors the server validation without
+ * exposing the password itself. Keep this separate from validation so forms
+ * can give useful feedback before submission while the server remains the
+ * authoritative gate.
+ */
+export function passwordStrengthHint(password) {
+  const value = String(password ?? "");
+  if (!value) return "";
+  if (value.length < 8) return "至少 8 位";
+  try {
+    validatePasswordStrength(value);
+  } catch {
+    return "密码过于常见或可预测，请换用密码管理器生成的随机密码";
+  }
+  const classes = [
+    /[a-z]/u.test(value),
+    /[A-Z]/u.test(value),
+    /\d/u.test(value),
+    /[^A-Za-z0-9]/u.test(value),
+  ].filter(Boolean).length;
+  return value.length >= 12 && classes >= 3 ? "密码强度：较强" : "密码强度：可用";
 }
 
 export function parseCookieValue(header, name) {

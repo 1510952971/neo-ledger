@@ -58,6 +58,9 @@ final class HttpSender {
         HttpURLConnection connection = null;
         try {
             if (!store.configured()) return new Result(false, false, false, "请先保存服务器地址和密钥");
+            // Validate again at send time so a configuration saved by an older
+            // APK cannot send a token to a public HTTP endpoint after upgrade.
+            EndpointNormalizer.validateBaseUrl(store.endpoint());
             JSONObject body = new JSONObject()
                     .put("ledgerId", store.ledgerId())
                     .put("text", text)
@@ -72,7 +75,11 @@ final class HttpSender {
             connection.setRequestProperty("Authorization", "Bearer " + store.token());
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
             connection.setRequestProperty("Idempotency-Key", externalId);
-            connection.setRequestProperty("User-Agent", "NeoLedger-Android/1.0");
+            connection.setRequestProperty("X-Client-Platform", "android");
+            connection.setRequestProperty("X-Client-Version", BuildConfig.VERSION_NAME);
+            connection.setRequestProperty("X-Device-ID", store.deviceId());
+            connection.setRequestProperty("X-Ledger-ID", String.valueOf(store.ledgerId()));
+            connection.setRequestProperty("User-Agent", "NeoLedger-Android/" + BuildConfig.VERSION_NAME);
             try (OutputStream output = connection.getOutputStream()) {
                 output.write(body.toString().getBytes(StandardCharsets.UTF_8));
             }

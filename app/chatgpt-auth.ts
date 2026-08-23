@@ -1,5 +1,9 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import {
+  trustedChatGPTEmailFromHeaders,
+  trustedIdentityProxyEnabled,
+} from "./api-security";
 
 export type ChatGPTUser = {
   displayName: string;
@@ -7,7 +11,6 @@ export type ChatGPTUser = {
   fullName: string | null;
 };
 
-const USER_EMAIL_HEADER = "oai-authenticated-user-email";
 const USER_FULL_NAME_HEADER = "oai-authenticated-user-full-name";
 const USER_FULL_NAME_ENCODING_HEADER =
   "oai-authenticated-user-full-name-encoding";
@@ -17,8 +20,9 @@ const SIGN_OUT_PATH = "/signout-with-chatgpt";
 const CALLBACK_PATH = "/callback";
 
 export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
+  if (!trustedIdentityProxyEnabled()) return null;
   const requestHeaders = await headers();
-  const email = requestHeaders.get(USER_EMAIL_HEADER);
+  const email = await trustedChatGPTEmailFromHeaders(requestHeaders);
   if (!email) return null;
 
   const encodedFullName = requestHeaders.get(USER_FULL_NAME_HEADER);

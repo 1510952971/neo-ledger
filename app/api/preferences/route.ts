@@ -1,13 +1,22 @@
 import { NextResponse } from "next/server";
 import { getDbBinding } from "../../../db";
 import {
+  ApiAccessError,
   accessErrorResponse,
   getOwnerPreferences,
   requestOwnerId,
 } from "../../api-security";
+import { readPinInput, readPreferencesPatchInput } from "../../internal-api-contract";
 
-const themes = ["cream", "obsidian", "glacier", "peach"];
 const PIN_ITERATIONS = 120_000;
+
+function privateJson(body: unknown, init: ResponseInit = {}) {
+  const headers = new Headers(init.headers);
+  headers.set("Cache-Control", "no-store, private, max-age=0");
+  headers.set("Pragma", "no-cache");
+  headers.set("X-Content-Type-Options", "nosniff");
+  return NextResponse.json(body, { ...init, headers });
+}
 
 function bytesToHex(bytes: Uint8Array) {
   return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
@@ -37,19 +46,48 @@ async function derivePin(
   return bytesToHex(new Uint8Array(bits));
 }
 
-function validPin(value: unknown): value is string {
-  return typeof value === "string" && /^\d{4}$/.test(value);
+function constantTimeEqual(left: string, right: string) {
+  const length = Math.max(left.length, right.length);
+  let difference = left.length ^ right.length;
+  for (let index = 0; index < length; index += 1)
+    difference |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);
+  return difference === 0;
+}
+
+async function enforcePinAttempts(ownerId: string) {
+  const db = getDbBinding();
+  const windowDurationMs = 15 * 60 * 1_000;
+  const now = Date.now();
+  const windowStart = Math.floor(now / windowDurationMs);
+  await db
+    .prepare(
+      `INSERT INTO api_rate_limits(owner_id,scope,window_start,count)
+       VALUES(?,?,?,1)
+       ON CONFLICT(owner_id,scope,window_start) DO UPDATE SET count=count+1`,
+    )
+    .bind(`pin:${ownerId}`, "privacy-pin", windowStart)
+    .run();
+  const row = await db
+    .prepare(
+      "SELECT count FROM api_rate_limits WHERE owner_id=? AND scope=? AND window_start=?",
+    )
+    .bind(`pin:${ownerId}`, "privacy-pin", windowStart)
+    .first<{ count: number }>();
+  if (Number(row?.count ?? 0) > 5) {
+    const retryAfter = Math.max(1, Math.ceil(((windowStart + 1) * windowDurationMs - now) / 1_000));
+    throw new ApiAccessError("安全码尝试次数过多，请 15 分钟后再试", 429, retryAfter);
+  }
 }
 
 export async function GET(request: Request) {
   try {
     const row = await getOwnerPreferences(await requestOwnerId(request));
-    return NextResponse.json({
+    return privateJson({
       theme: row?.theme ?? "cream",
       lockEnabled: Boolean(row?.lockEnabled),
     });
   } catch (error) {
-    return accessErrorResponse(error, "读取设置失败");
+    return accessErrorResponse(error, "读取设置失败", request);
   }
 }
 
@@ -57,14 +95,9 @@ export async function PATCH(request: Request) {
   try {
     const ownerId = await requestOwnerId(request);
     await getOwnerPreferences(ownerId);
-    const body = (await request.json()) as {
-      theme?: string;
-      enabled?: boolean;
-      pin?: string;
-    };
+    const body = await readPreferencesPatchInput(request);
     const db = getDbBinding();
     if (body.theme) {
-      if (!themes.includes(body.theme)) throw new Error("主题不存在");
       await db
         .prepare(
           "UPDATE user_preferences SET theme=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE owner_id=?",
@@ -73,7 +106,6 @@ export async function PATCH(request: Request) {
         .run();
     }
     if (typeof body.enabled === "boolean") {
-      if (body.enabled && !validPin(body.pin)) throw new Error("请输入4位数字PIN");
       const salt = body.enabled ? crypto.getRandomValues(new Uint8Array(16)) : null;
       const hash = body.enabled
         ? await derivePin(body.pin!, salt!, PIN_ITERATIONS)
@@ -91,27 +123,28 @@ export async function PATCH(request: Request) {
         )
         .run();
     }
-    return NextResponse.json({ ok: true });
+    return privateJson({ ok: true });
   } catch (error) {
-    return accessErrorResponse(error, "设置失败");
+    return accessErrorResponse(error, "设置失败", request);
   }
 }
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as { pin?: string };
-    if (!validPin(body.pin)) return NextResponse.json({ ok: false }, { status: 400 });
-    const row = await getOwnerPreferences(await requestOwnerId(request));
+    const body = await readPinInput(request);
+    const ownerId = await requestOwnerId(request);
+    await enforcePinAttempts(ownerId);
+    const row = await getOwnerPreferences(ownerId);
     if (!row?.lockEnabled || !row.pinHash || !row.pinSalt)
-      return NextResponse.json({ ok: false }, { status: 401 });
+      return privateJson({ ok: false }, { status: 401 });
     const hash = await derivePin(
       body.pin,
       hexToBytes(row.pinSalt),
       row.pinIterations || PIN_ITERATIONS,
     );
-    const ok = hash === row.pinHash;
-    return NextResponse.json({ ok }, { status: ok ? 200 : 401 });
+    const ok = constantTimeEqual(hash, row.pinHash);
+    return privateJson({ ok }, { status: ok ? 200 : 401 });
   } catch (error) {
-    return accessErrorResponse(error, "验证失败");
+    return accessErrorResponse(error, "验证失败", request);
   }
 }

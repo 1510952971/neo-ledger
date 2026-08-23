@@ -7,10 +7,19 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   verify-and-release:
     runs-on: ubuntu-latest
+    # Configure this environment with required reviewers in GitHub. A green
+    # CI run alone must never be enough to publish a financial-data release.
+    environment:
+      name: release-approval
+    concurrency:
+      group: neo-ledger-release-${{ github.ref_name }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
         with:
@@ -19,14 +28,70 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Verify tag and package version
-        run: |
-          VERSION="$(node -p "require('./package.json').version")"
-          test "${GITHUB_REF_NAME}" = "v${VERSION}"
+      - name: Verify tag, package and runtime versions
+        run: node scripts/verify-release-version.mjs --tag="${GITHUB_REF_NAME}" --compatibility-file=release-compatibility.json --android-file=android-companion/app/build.gradle.kts
       - run: npm ci
+      - name: Verify release governance artifacts
+        run: npm run ga:evidence -- --mode=repository
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
       - run: npm test
+      - name: Verify patch hygiene
+        run: git diff --check
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Android SDK for release verification
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Verify Android companion release build
+        working-directory: android-companion
+        run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
+      - name: Generate release SBOM
+        run: npm sbom --sbom-format cyclonedx --sbom-type application > neo-ledger-${GITHUB_REF_NAME}-sbom.cdx.json
+      - name: Package and checksum production artifact
+        run: |
+          tar -czf neo-ledger-${GITHUB_REF_NAME}-dist.tar.gz dist
+          sha256sum neo-ledger-${GITHUB_REF_NAME}-dist.tar.gz > neo-ledger-${GITHUB_REF_NAME}-dist.tar.gz.sha256
+      - name: Verify release bundle metadata
+        run: |
+          sha256sum --check neo-ledger-${GITHUB_REF_NAME}-dist.tar.gz.sha256
+          node --input-type=module -e 'import { readFileSync } from "node:fs"; const sbom = JSON.parse(readFileSync(`neo-ledger-${process.env.GITHUB_REF_NAME}-sbom.cdx.json`, "utf8")); if (sbom.bomFormat !== "CycloneDX" || !Array.isArray(sbom.components) || sbom.components.length === 0) throw new Error("invalid CycloneDX SBOM");'
+      - name: Install Cosign for keyless artifact signing
+        uses: sigstore/cosign-installer@v3.7.0
+      - name: Sign production artifact with Sigstore
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign sign-blob --yes \
+            --output-signature neo-ledger-${GITHUB_REF_NAME}-dist.tar.gz.sig \
+            --output-certificate neo-ledger-${GITHUB_REF_NAME}-dist.tar.gz.pem \
+            neo-ledger-${GITHUB_REF_NAME}-dist.tar.gz
+      - name: Verify keyless artifact signature before publishing
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign verify-blob \
+            --certificate neo-ledger-${GITHUB_REF_NAME}-dist.tar.gz.pem \
+            --signature neo-ledger-${GITHUB_REF_NAME}-dist.tar.gz.sig \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/${GITHUB_REF_NAME}$" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            neo-ledger-${GITHUB_REF_NAME}-dist.tar.gz
+      - name: Attest production artifact provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: neo-ledger-${{ github.ref_name }}-dist.tar.gz
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            neo-ledger-${GITHUB_REF_NAME}-dist.tar.gz \
+            neo-ledger-${GITHUB_REF_NAME}-dist.tar.gz.sha256 \
+            neo-ledger-${GITHUB_REF_NAME}-dist.tar.gz.sig \
+            neo-ledger-${GITHUB_REF_NAME}-dist.tar.gz.pem \
+            neo-ledger-${GITHUB_REF_NAME}-sbom.cdx.json \
+            --generate-notes --verify-tag
