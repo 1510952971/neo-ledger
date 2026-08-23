@@ -7,7 +7,7 @@ import java.time.format.DateTimeFormatter;
 /** Formats integration timestamps with an explicit numeric ISO 8601 offset. */
 final class ApiTime {
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter
-            .ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX")
+            .ofPattern("yyyy-MM-dd'T'HH:mm:ssxxx")
             .withZone(ZoneId.systemDefault());
 
     static String now() {
