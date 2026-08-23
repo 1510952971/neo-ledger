@@ -24,7 +24,7 @@ public final class SyncJobService extends JobService {
                     queue.failed(event, result.message, result.retryable);
                     retry |= result.retryable;
                 }
-                new SettingsStore(this).status(result.message);
+                new SettingsStore(this).recordDelivery(result);
             }
             sendBroadcast(new Intent(SettingsStore.ACTION_STATUS).setPackage(getPackageName()));
             if (queue.count() > 0) SyncScheduler.schedule(this, false);

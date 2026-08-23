@@ -12,7 +12,10 @@ import java.util.List;
 final class PendingEventStore extends SQLiteOpenHelper {
     private static final int DATABASE_VERSION = 2;
     private static final long SEEN_RETENTION_MILLIS = 7L * 24 * 60 * 60 * 1000;
+    private static final long SCREEN_SESSION_DEDUP_MILLIS = 45_000L;
     private static final int MAX_SEEN_EVENTS = 500;
+
+    enum EnqueueResult { QUEUED, DUPLICATE }
 
     static final class Event {
         final String id;
@@ -50,14 +53,14 @@ final class PendingEventStore extends SQLiteOpenHelper {
      * cannot create duplicate ledger events or lose a claim between the two
      * operations.
      */
-    synchronized boolean enqueueIfNew(
+    synchronized EnqueueResult enqueueIfNew(
             String fingerprint,
             String id,
             String text,
             String source,
             String packageName,
             String amount,
-            String alternateMode,
+            String mode,
             long occurredAtMillis,
             long now) {
         SQLiteDatabase db = getWritableDatabase();
@@ -67,9 +70,10 @@ final class PendingEventStore extends SQLiteOpenHelper {
                     "seen_notifications",
                     "seen_at<?",
                     new String[]{String.valueOf(now - SEEN_RETENTION_MILLIS)});
-            if (hasRecentAlternateMode(db, packageName, amount, alternateMode, now)) {
+            if (hasRecentOtherMode(db, packageName, amount, mode, now)
+                    || ("screen".equals(mode) && hasRecentScreenSession(db, packageName, amount, now))) {
                 db.setTransactionSuccessful();
-                return false;
+                return EnqueueResult.DUPLICATE;
             }
             ContentValues values = new ContentValues();
             values.put("fingerprint", fingerprint);
@@ -78,7 +82,7 @@ final class PendingEventStore extends SQLiteOpenHelper {
                     "seen_notifications", null, values, SQLiteDatabase.CONFLICT_IGNORE);
             if (inserted == -1) {
                 db.setTransactionSuccessful();
-                return false;
+                return EnqueueResult.DUPLICATE;
             }
             ContentValues event = new ContentValues();
             event.put("id", id);
@@ -91,24 +95,32 @@ final class PendingEventStore extends SQLiteOpenHelper {
             long queued = db.insertWithOnConflict(
                     "pending_events", null, event, SQLiteDatabase.CONFLICT_IGNORE);
             if (queued == -1) {
-                return false;
+                return EnqueueResult.DUPLICATE;
+            }
+            if ("screen".equals(mode)) {
+                ContentValues session = new ContentValues();
+                session.put("fingerprint", screenSessionMarker(packageName, amount));
+                session.put("seen_at", now);
+                db.insertWithOnConflict(
+                        "seen_notifications", null, session, SQLiteDatabase.CONFLICT_REPLACE);
             }
             db.execSQL(
                     "DELETE FROM seen_notifications WHERE fingerprint NOT IN " +
                             "(SELECT fingerprint FROM seen_notifications ORDER BY seen_at DESC LIMIT ?)",
                     new Object[]{MAX_SEEN_EVENTS});
             db.setTransactionSuccessful();
-            return true;
+            return EnqueueResult.QUEUED;
         } finally {
             db.endTransaction();
         }
     }
 
-    private boolean hasRecentAlternateMode(
-            SQLiteDatabase db, String packageName, String amount, String alternateMode, long now) {
+    private boolean hasRecentOtherMode(
+            SQLiteDatabase db, String packageName, String amount, String mode, long now) {
         if (packageName == null || packageName.isEmpty() || amount == null || amount.isEmpty()
-                || alternateMode == null || alternateMode.isEmpty()) return false;
-        String prefix = packageName + "|" + alternateMode + "|amount=" + amount + "|";
+                || mode == null || mode.isEmpty()) return false;
+        String otherMode = "screen".equals(mode) ? "notification" : "screen";
+        String prefix = packageName + "|" + otherMode + "|amount=" + amount + "|";
         try (Cursor cursor = db.query(
                 "seen_notifications",
                 new String[]{"fingerprint"},
@@ -120,6 +132,24 @@ final class PendingEventStore extends SQLiteOpenHelper {
             }
         }
         return false;
+    }
+
+    private boolean hasRecentScreenSession(
+            SQLiteDatabase db, String packageName, String amount, long now) {
+        if (packageName == null || packageName.isEmpty() || amount == null || amount.isEmpty()) return false;
+        try (Cursor cursor = db.query(
+                "seen_notifications",
+                new String[]{"fingerprint"},
+                "fingerprint=? AND seen_at>?",
+                new String[]{screenSessionMarker(packageName, amount),
+                        String.valueOf(now - SCREEN_SESSION_DEDUP_MILLIS)},
+                null, null, null, "1")) {
+            return cursor.moveToFirst();
+        }
+    }
+
+    private String screenSessionMarker(String packageName, String amount) {
+        return "screen-session|" + packageName + "|amount=" + amount;
     }
 
     List<Event> ready(int limit) {

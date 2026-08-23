@@ -23,11 +23,13 @@ final class HttpSender {
     static final class Result {
         final boolean ok;
         final boolean retryable;
+        final boolean duplicate;
         final String message;
 
-        Result(boolean ok, boolean retryable, String message) {
+        Result(boolean ok, boolean retryable, boolean duplicate, String message) {
             this.ok = ok;
             this.retryable = retryable;
+            this.duplicate = duplicate;
             this.message = message;
         }
     }
@@ -55,7 +57,7 @@ final class HttpSender {
         SettingsStore store = new SettingsStore(context);
         HttpURLConnection connection = null;
         try {
-            if (!store.configured()) return new Result(false, false, "请先保存服务器地址和密钥");
+            if (!store.configured()) return new Result(false, false, false, "请先保存服务器地址和密钥");
             JSONObject body = new JSONObject()
                     .put("ledgerId", store.ledgerId())
                     .put("text", text)
@@ -80,16 +82,16 @@ final class HttpSender {
                 boolean duplicate = false;
                 try { duplicate = new JSONObject(response).optBoolean("duplicate", false); }
                 catch (Exception ignored) {}
-                return new Result(true, false, duplicate
+                return new Result(true, false, duplicate, duplicate
                         ? "已确认：重复事件未再次入账"
                         : "已入账：" + source);
             }
             boolean retryable = status == 408 || status == 429 || status >= 500;
             String detail = response.length() > 180 ? response.substring(0, 180) : response;
-            return new Result(false, retryable, "服务器返回 " + status + (detail.isEmpty() ? "" : "：" + detail));
+            return new Result(false, retryable, false, "服务器返回 " + status + (detail.isEmpty() ? "" : "：" + detail));
         } catch (Exception error) {
             String detail = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
-            return new Result(false, true, "连接失败：" + detail);
+            return new Result(false, true, false, "连接失败：" + detail);
         } finally {
             if (connection != null) connection.disconnect();
         }

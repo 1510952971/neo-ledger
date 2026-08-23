@@ -78,8 +78,42 @@ final class SettingsStore {
         String safe = value.length() > 160 ? value.substring(0, 160) + "…" : value;
         preferences.edit()
                 .putString("last_captured", safe)
-                .putString("last_status", "已捕获，等待发送（" + pending + "）")
                 .apply();
+    }
+
+    void recordCandidate(String source, boolean queued, int pending) {
+        String safe = source == null || source.isEmpty() ? "支付应用" : source;
+        int candidates = preferences.getInt("candidate_count", 0) + 1;
+        SharedPreferences.Editor editor = preferences.edit()
+                .putInt("candidate_count", candidates)
+                .putString("last_captured", queued
+                        ? safe + "：已识别支付事件，已加入发送队列"
+                        : safe + "：重复支付候选已拦截，未重复入队");
+        if (queued) editor.putInt("queued_count", preferences.getInt("queued_count", 0) + 1);
+        else editor.putInt("deduped_count", preferences.getInt("deduped_count", 0) + 1);
+        editor.putString("last_status", queued
+                        ? "已识别，待发送 " + pending + " 条"
+                        : "已去重，待发送 " + pending + " 条")
+                .apply();
+    }
+
+    void recordDelivery(HttpSender.Result result) {
+        SharedPreferences.Editor editor = preferences.edit().putString("last_status", result.message);
+        if (result.ok && result.duplicate)
+            editor.putInt("deduped_count", preferences.getInt("deduped_count", 0) + 1);
+        else if (result.ok)
+            editor.putInt("delivered_count", preferences.getInt("delivered_count", 0) + 1);
+        else
+            editor.putInt("failed_count", preferences.getInt("failed_count", 0) + 1);
+        editor.apply();
+    }
+
+    String deliverySummary() {
+        return "累计：识别 " + preferences.getInt("candidate_count", 0)
+                + " · 入队 " + preferences.getInt("queued_count", 0)
+                + " · 已入账 " + preferences.getInt("delivered_count", 0)
+                + " · 已去重 " + preferences.getInt("deduped_count", 0)
+                + " · 失败 " + preferences.getInt("failed_count", 0);
     }
 
     void listenerConnected() {

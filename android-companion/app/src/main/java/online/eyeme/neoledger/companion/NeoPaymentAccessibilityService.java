@@ -41,20 +41,20 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
         PendingEventStore queue = new PendingEventStore(this);
         String amount = PaymentNotificationParser.amountFingerprint(text);
         long occurredAt = System.currentTimeMillis();
-        if (!queue.enqueueIfNew(
+        PendingEventStore.EnqueueResult queued = queue.enqueueIfNew(
                 fingerprint,
                 externalId,
                 PaymentScreenParser.payload(packageName, text),
                 "android-payment-screen",
                 packageName,
                 amount,
-                "notification",
+                "screen",
                 occurredAt,
-                occurredAt)) return;
+                occurredAt);
 
-        store.captured(source + "：已识别支付完成界面", queue.count());
+        store.recordCandidate(source, queued == PendingEventStore.EnqueueResult.QUEUED, queue.count());
         sendBroadcast(new Intent(SettingsStore.ACTION_STATUS).setPackage(getPackageName()));
-        SyncScheduler.schedule(this, true);
+        if (queued == PendingEventStore.EnqueueResult.QUEUED) SyncScheduler.schedule(this, true);
     }
 
     @Override

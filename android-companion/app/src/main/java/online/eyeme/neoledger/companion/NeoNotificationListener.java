@@ -36,19 +36,19 @@ public final class NeoNotificationListener extends NotificationListenerService {
         String payload = "【" + source + "】" + text;
         PendingEventStore queue = new PendingEventStore(this);
         String amount = PaymentNotificationParser.amountFingerprint(text);
-        if (!queue.enqueueIfNew(
+        PendingEventStore.EnqueueResult queued = queue.enqueueIfNew(
                 fingerprint,
                 externalId,
                 payload,
                 "android-notification",
                 notification.getPackageName(),
                 amount,
-                "screen",
+                "notification",
                 notification.getPostTime(),
-                System.currentTimeMillis())) return;
-        store.captured(source + "：" + text, queue.count());
+                System.currentTimeMillis());
+        store.recordCandidate(source, queued == PendingEventStore.EnqueueResult.QUEUED, queue.count());
         sendBroadcast(new android.content.Intent(SettingsStore.ACTION_STATUS).setPackage(getPackageName()));
-        SyncScheduler.schedule(this, true);
+        if (queued == PendingEventStore.EnqueueResult.QUEUED) SyncScheduler.schedule(this, true);
     }
 
     @Override

@@ -40,8 +40,10 @@ public final class MainActivity extends Activity {
     private TextView accessibilityState;
     private TextView updateState;
     private TextView sendState;
+    private TextView deliveryState;
     private TextView capturedState;
     private TextView queueState;
+    private Button retryButton;
     private java.io.File downloadedApk;
 
     private final BroadcastReceiver statusReceiver = new BroadcastReceiver() {
@@ -183,14 +185,14 @@ public final class MainActivity extends Activity {
         });
         root.addView(test, topMargin(10));
 
-        Button retry = button("立即发送待处理账单", false);
-        retry.setOnClickListener(view -> {
+        retryButton = button("立即发送待处理账单", false);
+        retryButton.setOnClickListener(view -> {
             if (!saveConfig(false)) return;
             sendState.setText("正在尝试发送…");
             SyncScheduler.schedule(this, true);
             Toast.makeText(this, "已开始发送", Toast.LENGTH_SHORT).show();
         });
-        root.addView(retry, topMargin(10));
+        root.addView(retryButton, topMargin(10));
 
         sendState = text("尚未发送通知", 14, "#657066");
         sendState.setPadding(0, dp(16), 0, 0);
@@ -199,6 +201,11 @@ public final class MainActivity extends Activity {
         queueState = text("待发送：0 条", 14, "#657066");
         queueState.setPadding(0, dp(8), 0, 0);
         root.addView(queueState);
+
+        deliveryState = text("累计：识别 0 · 入队 0 · 已入账 0 · 已去重 0 · 失败 0", 13, "#657066");
+        deliveryState.setPadding(0, dp(8), 0, 0);
+        deliveryState.setLineSpacing(0, 1.2f);
+        root.addView(deliveryState);
 
         capturedState = text("最近捕获：尚未捕获支付通知", 13, "#657066");
         capturedState.setPadding(0, dp(8), 0, 0);
@@ -258,8 +265,24 @@ public final class MainActivity extends Activity {
             accessibilityState.setBackgroundColor(color(enabled ? "#E5F5EC" : "#FBE9E7"));
         }
         if (sendState != null) sendState.setText("发送状态：" + store.lastStatus());
-        if (queueState != null) queueState.setText("待发送：" + new PendingEventStore(this).count() + " 条");
+        int pending = new PendingEventStore(this).count();
+        if (queueState != null) queueState.setText("待发送：" + pending + " 条");
+        if (deliveryState != null) deliveryState.setText(store.deliverySummary());
+        updateRetryButton(pending);
         if (capturedState != null) capturedState.setText("最近捕获：" + store.lastCaptured());
+    }
+
+    private void updateRetryButton(int pending) {
+        if (retryButton == null) return;
+        if (pending > 0) {
+            retryButton.setText("立即发送待处理账单（" + pending + " 条）");
+            retryButton.setTextColor(color("#162017"));
+            retryButton.setBackgroundTintList(ColorStateList.valueOf(color("#9CFA66")));
+        } else {
+            retryButton.setText("立即发送待处理账单");
+            retryButton.setTextColor(Color.WHITE);
+            retryButton.setBackgroundTintList(ColorStateList.valueOf(color("#44584C")));
+        }
     }
 
     private boolean notificationAccessGranted() {
