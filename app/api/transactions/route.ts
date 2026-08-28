@@ -246,3 +246,121 @@ export async function PUT(request: Request) {
     return accessErrorResponse(error, "修改失败", request);
   }
 }
+
+export async function DELETE(request: Request) {
+  try {
+    await ensureDb();
+    const body = await readJsonWithLimit<Record<string, unknown>>(
+      request,
+      MAX_PROTOCOL_BODY_BYTES,
+    );
+    const id = Number(body.id);
+    const ledgerId = Number(body.ledgerId);
+    const expectedUpdatedAt = String(body.expectedUpdatedAt || "").trim();
+    if (!Number.isInteger(id) || id <= 0) throw new Error("账单不存在");
+    if (!Number.isInteger(ledgerId) || ledgerId <= 0)
+      throw new Error("账本不存在");
+    if (!expectedUpdatedAt) throw new Error("账单版本无效，请刷新后重试");
+
+    await claimAndRequireLedger(request, ledgerId);
+    const db = getDbBinding();
+    const current = await db
+      .prepare(
+        `SELECT t.id,t.amount,t.type,t.income_category incomeCategory,
+          t.account_id accountId,t.installment_id installmentId,t.crdt_id crdtId,
+          t.ledger_id ledgerId,t.split_mode splitMode,
+          t.split_with_member_id splitWithMemberId,t.updated_at updatedAt,
+          a.is_investment oldAccountInvestment
+        FROM transactions t JOIN accounts a ON a.id=t.account_id
+        WHERE t.id=? AND t.ledger_id=?`,
+      )
+      .bind(id, ledgerId)
+      .first<{
+        id: number;
+        amount: number;
+        type: "支出" | "收入";
+        incomeCategory: string | null;
+        accountId: number;
+        installmentId: number | null;
+        crdtId: string | null;
+        ledgerId: number;
+        splitMode: string | null;
+        splitWithMemberId: number | null;
+        updatedAt: string;
+        oldAccountInvestment: number;
+      }>();
+    if (!current) throw new Error("账单不存在");
+    if (current.installmentId)
+      throw new Error(
+        "这是分期自动生成的流水，不能单独删除，请前往分期项目管理",
+      );
+    if (current.updatedAt !== expectedUpdatedAt)
+      return privateJson(
+        { error: "这笔账单已在其他位置更新，请刷新后重试" },
+        { status: 409 },
+      );
+
+    const guard =
+      "EXISTS(SELECT 1 FROM transactions WHERE id=? AND ledger_id=? AND updated_at=?)";
+    const crdtId = current.crdtId ?? `legacy:${current.id}`;
+    const reverseDelta = -transactionBalanceDelta(
+      current.type,
+      current.amount,
+      current.splitMode,
+      current.splitWithMemberId ?? 0,
+    );
+    const results = await db.batch([
+      db
+        .prepare(
+          `UPDATE accounts SET current_balance=current_balance+?,
+            cumulative_income=MAX(0,cumulative_income-?),
+            updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          WHERE id=? AND ledger_id=? AND ${guard}`,
+        )
+        .bind(
+          reverseDelta,
+          current.type === "收入" &&
+              current.incomeCategory === "理财收益" &&
+              current.oldAccountInvestment
+            ? current.amount
+            : 0,
+          current.accountId,
+          ledgerId,
+          id,
+          ledgerId,
+          expectedUpdatedAt,
+        ),
+      db
+        .prepare(
+          `DELETE FROM side_hustle_deductions
+          WHERE transaction_id=? AND ledger_id=? AND ${guard}`,
+        )
+        .bind(id, ledgerId, id, ledgerId, expectedUpdatedAt),
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO crdt_tombstones(crdt_id,ledger_id,deleted_at)
+          SELECT ?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE ${guard}`,
+        )
+        .bind(crdtId, ledgerId, id, ledgerId, expectedUpdatedAt),
+      db
+        .prepare(
+          `INSERT OR REPLACE INTO sync_tombstones(entity_type,entity_uuid,ledger_id,deleted_at)
+          SELECT 'transaction',?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE ${guard}`,
+        )
+        .bind(crdtId, ledgerId, id, ledgerId, expectedUpdatedAt),
+      db
+        .prepare(
+          "DELETE FROM transactions WHERE id=? AND ledger_id=? AND updated_at=?",
+        )
+        .bind(id, ledgerId, expectedUpdatedAt),
+    ]);
+    if (Number(results.at(-1)?.meta.changes ?? 0) !== 1)
+      return privateJson(
+        { error: "这笔账单已在其他位置更新，请刷新后重试" },
+        { status: 409 },
+      );
+    return privateJson({ ok: true });
+  } catch (error) {
+    return accessErrorResponse(error, "删除失败", request);
+  }
+}

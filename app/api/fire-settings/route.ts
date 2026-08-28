@@ -12,6 +12,37 @@ function privateJson(body: unknown) {
   return NextResponse.json(body, { headers });
 }
 
+export async function GET(request: Request) {
+  try {
+    await ensureDb();
+    const rawLedgerId = new URL(request.url).searchParams.get("ledger") ?? "1";
+    const ledgerId = Number(rawLedgerId);
+    if (!Number.isSafeInteger(ledgerId) || ledgerId <= 0) {
+      return privateJson({ error: "账本参数无效" });
+    }
+    await claimAndRequireLedger(request, ledgerId);
+    const row = await getDbBinding()
+      .prepare(
+        "SELECT ledger_id AS ledgerId,monthly_expense AS monthlyExpense,annual_return_bps AS annualReturnBps,updated_at AS updatedAt FROM fire_settings WHERE ledger_id=?",
+      )
+      .bind(ledgerId)
+      .first<{
+        ledgerId: number;
+        monthlyExpense: number;
+        annualReturnBps: number;
+        updatedAt: string;
+      }>();
+    return privateJson({
+      ledgerId,
+      monthlyExpense: Number(row?.monthlyExpense ?? 1200000) / 100,
+      annualReturn: Number(row?.annualReturnBps ?? 500) / 100,
+      updatedAt: row?.updatedAt ?? null,
+    });
+  } catch (error) {
+    return accessErrorResponse(error, "读取 FIRE 参数失败", request);
+  }
+}
+
 export async function PUT(request: Request) {
   try {
     await ensureDb();

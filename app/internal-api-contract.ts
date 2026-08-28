@@ -126,6 +126,7 @@ const automationUpdateSchema = z.object({ id: z.string().uuid(), ledgerId: posit
 const automationDeleteSchema = z.object({ id: z.string().uuid(), ledgerId: positiveId }).strict();
 const integrationTokenSchema = z.object({ label: z.string().trim().min(1).max(60).optional().default("自动记账连接"), expiresInDays: z.coerce.number().int().min(1).max(730).optional().default(365), scope: z.literal("ledger:write").optional().default("ledger:write") }).strict();
 const ledgerCreateSchema = z.object({ name: z.string().trim().min(1).max(30), icon: z.string().trim().min(1).max(8).optional().default("📒") }).strict();
+const ledgerUpdateSchema = z.object({ id: positiveId, name: z.string().trim().min(1).max(30), icon: z.string().trim().min(1).max(8), expectedUpdatedAt: z.string().trim().min(1, "账本版本已失效，请刷新后重试").max(64) }).strict();
 const notificationReadSchema = z.object({ ledgerId: positiveId }).strict();
 const appUpdateSchema = z.object({ tag: z.string().trim().min(1).max(64) }).strict();
 const sessionRevokeSchema = z.object({ sessionId: z.string().uuid().optional(), allExceptCurrent: z.literal(true).optional() }).strict().refine((v) => (v.sessionId ? 1 : 0) + (v.allExceptCurrent ? 1 : 0) === 1, "请选择一个设备注销操作");
@@ -256,6 +257,7 @@ export const readAutomationUpdateInput = (request: Request) => readInternalJson(
 export const readAutomationDeleteInput = (request: Request) => readInternalJson(request, automationDeleteSchema);
 export const readIntegrationTokenInput = (request: Request) => readInternalJson(request, integrationTokenSchema);
 export const readLedgerCreateInput = (request: Request) => readInternalJson(request, ledgerCreateSchema);
+export const readLedgerUpdateInput = (request: Request) => readInternalJson(request, ledgerUpdateSchema);
 export const readNotificationReadInput = (request: Request) => readInternalJson(request, notificationReadSchema);
 export const readAppUpdateInput = (request: Request) => readInternalJson(request, appUpdateSchema);
 export const readSessionRevokeInput = (request: Request) => readInternalJson(request, sessionRevokeSchema);

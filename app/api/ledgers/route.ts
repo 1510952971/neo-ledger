@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { ensureDb, getDbBinding } from "../../../db";
 import { ApiAccessError, accessErrorResponse, requestOwnerId } from "../../api-security";
-import { readLedgerCreateInput } from "../../internal-api-contract";
+import { readLedgerCreateInput, readLedgerUpdateInput } from "../../internal-api-contract";
 import { MAX_LEDGER_COUNT } from "../../ledger-limits";
 
 function privateJson(body: unknown, init: ResponseInit = {}) {
@@ -86,6 +86,32 @@ export async function POST(request: Request) {
     return privateJson({ id, name, icon }, { status: 201 });
   } catch (error) {
     return accessErrorResponse(error, "创建失败", request);
+  }
+}
+
+export async function PUT(request: Request) {
+  try {
+    await ensureDb();
+    const ownerId = await requestOwnerId(request);
+    const { id, name, icon, expectedUpdatedAt } = await readLedgerUpdateInput(request);
+    const db = getDbBinding();
+    const ledger = await db
+      .prepare("SELECT id,updated_at AS updatedAt FROM ledgers WHERE id=? AND owner_id=?")
+      .bind(id, ownerId)
+      .first<{ id: number; updatedAt: string }>();
+    if (!ledger) throw new Error("账本不存在或已被删除");
+    if (ledger.updatedAt !== expectedUpdatedAt)
+      throw new ApiAccessError("账本已被其他操作更新，请刷新后重试", 409);
+    const nextUpdatedAt = new Date().toISOString();
+    const result = await db
+      .prepare("UPDATE ledgers SET name=?,icon=?,updated_at=? WHERE id=? AND owner_id=? AND updated_at=?")
+      .bind(name, icon, nextUpdatedAt, id, ownerId, expectedUpdatedAt)
+      .run();
+    if (!Number(result.meta.changes ?? 0))
+      throw new ApiAccessError("账本已被其他操作更新，请刷新后重试", 409);
+    return privateJson({ ok: true, id, name, icon, updatedAt: nextUpdatedAt });
+  } catch (error) {
+    return accessErrorResponse(error, "更新账本失败", request);
   }
 }
 

@@ -1,0 +1,3 @@
+<resources>
+    <string name="payment_accessibility_description">仅识别当前前台支付应用的支付完成界面，不会点击、输入或发起支付。</string>
+</resources>
