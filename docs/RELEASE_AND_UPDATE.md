@@ -22,12 +22,12 @@
 
 ### Android 签名
 
-推送 `native-v*` 标签前，GitHub 仓库必须配置以下 Actions Secrets：
+推送 `native-v*` 标签前，GitHub 仓库必须配置以下 Actions Secrets。工作流兼容两套名称；推荐使用带 `NEO_LEDGER_` 前缀的一套，新仓库也可以沿用现有 Android companion 的无前缀名称：
 
-- `NEO_LEDGER_ANDROID_KEYSTORE_BASE64`
-- `NEO_LEDGER_ANDROID_KEYSTORE_PASSWORD`
-- `NEO_LEDGER_ANDROID_KEY_ALIAS`
-- `NEO_LEDGER_ANDROID_KEY_PASSWORD`
+- `NEO_LEDGER_ANDROID_KEYSTORE_BASE64` 或 `ANDROID_KEYSTORE_BASE64`
+- `NEO_LEDGER_ANDROID_KEYSTORE_PASSWORD` 或 `ANDROID_KEYSTORE_PASSWORD`
+- `NEO_LEDGER_ANDROID_KEY_ALIAS` 或 `ANDROID_KEY_ALIAS`
+- `NEO_LEDGER_ANDROID_KEY_PASSWORD` 或 `ANDROID_KEY_PASSWORD`
 
 带标签的正式构建如果缺少任一密钥会主动失败，不会回退到 debug 签名。开发者本地如需验证构建，可显式传入 `-PneoLedgerAllowDebugSigning=true`；这类 APK 不能作为升级基线或正式分发包。
 
@@ -43,7 +43,7 @@ git tag native-v1.2.0
 git push origin native-v1.2.0
 ```
 
-标签推送后，在 GitHub Actions 中确认 `Native client build and release` 的四个平台构建均成功，再检查稳定 Release 是否包含 APK、AAB、Windows ZIP、Web 压缩包、`RELEASE_STATUS.json` 和 `SHA256SUMS.txt`。iOS 模拟器验证包只保留在 Actions artifact，不作为可安装版本发布；真机版本仍必须走 Apple 签名和 TestFlight/App Store。
+标签推送后，在 GitHub Actions 中确认 `Native client build and release` 的四个平台构建均成功，再检查稳定 Release 是否包含 APK、AAB、Windows ZIP、Web 压缩包、`RELEASE_STATUS.json` 和 `SHA256SUMS.txt`。发布 job 会进入 `release-approval` 环境；仓库管理员仍需在 GitHub 项目设置中为该环境配置至少两名 Required reviewers。iOS 模拟器验证包只保留在 Actions artifact，不作为可安装版本发布；真机版本仍必须走 Apple 签名和 TestFlight/App Store。
 
 ## 客户端更新语义
 
