@@ -197,6 +197,11 @@ final class PaymentScreenParser {
 
     private static String normalize(String text) {
         return text == null ? "" : text.replaceAll("[\\u200B-\\u200D\\uFEFF]", "")
-                .replaceAll("\\s+", " ").trim().toLowerCase(Locale.ROOT);
+                .replaceAll("\\s+", " ")
+                // OCR frequently inserts spaces between Chinese glyphs, for
+                // example "支 付 成 功". Remove only those intra-Han gaps;
+                // keep spaces around dates, amounts, and Latin identifiers.
+                .replaceAll("(?<=\\p{IsHan})\\s+(?=\\p{IsHan})", "")
+                .trim().toLowerCase(Locale.ROOT);
     }
 }

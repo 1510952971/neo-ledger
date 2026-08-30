@@ -17,6 +17,7 @@ const _surface = Color(0xff15151d);
 const _surfaceAlt = Color(0xff20202a);
 const _nativeVersion = '1.2.0';
 const _queueKey = 'neo_ledger_offline_queue_v1';
+const _coreSnapshotKey = 'neo_ledger_core_snapshot_v1';
 const _assetTypes = [
   '房产',
   '车辆',
@@ -129,6 +130,15 @@ class LedgerController extends ChangeNotifier {
   Preferences preferences = const Preferences();
   AiReply? lastAiReply;
   Map<String, dynamic> p2pStatus = const {};
+  ExchangeRateSnapshot? exchangeRates;
+  List<AutomationRule> automationRules = const [];
+  QuickSyncStatus? quickSyncStatus;
+  String? quickSyncToken;
+  List<SecuritySession> securitySessions = const [];
+  SecurityAuditPage securityAudit = const SecurityAuditPage(
+    events: [],
+    hasMore: false,
+  );
   List<NotificationItem> notifications = const [];
   PendingTransactionPage pendingTransactions = const PendingTransactionPage(
     items: [],
@@ -143,8 +153,10 @@ class LedgerController extends ChangeNotifier {
   bool loading = false;
   bool demoMode = false;
   String? error;
+  String? cachedAt;
   SharedPreferences? _preferences;
   Future<void>? _refreshOperation;
+  Future<void>? _syncOperation;
 
   bool get authenticated => user != null;
   Ledger? get selectedLedger => ledgers.isEmpty
@@ -161,10 +173,12 @@ class LedgerController extends ChangeNotifier {
     await _loadQueue();
     await api.load();
     if (!api.hasSession) return;
+    await _loadCoreSnapshot();
     try {
       await refresh();
     } catch (_) {
-      await api.logout();
+      error = '暂时无法连接服务器，已显示最近一次缓存数据';
+      notifyListeners();
     }
   }
 
@@ -284,6 +298,17 @@ class LedgerController extends ChangeNotifier {
       'transport': 'WebRTC DataChannel',
       'peers': 0,
     };
+    exchangeRates = const ExchangeRateSnapshot(
+      base: 'CNY',
+      rates: {'CNY': 1, 'USD': 7.2, 'HKD': 0.92, 'EUR': 7.8},
+      source: '演示数据',
+      updatedAt: '今天',
+    );
+    automationRules = const [];
+    quickSyncStatus = null;
+    quickSyncToken = null;
+    securitySessions = const [];
+    securityAudit = const SecurityAuditPage(events: [], hasMore: false);
     monthlyExpense = 10000;
     annualReturn = 4;
     inflationRate = 3;
@@ -349,6 +374,8 @@ class LedgerController extends ChangeNotifier {
       accounts = await api.fetchAccounts(ledger.id);
       transactions = await api.fetchTransactions(ledger.id);
       await _refreshAdvanced(ledger.id);
+      await _persistCoreSnapshot();
+      error = null;
       if (silent) notifyListeners();
     } catch (value) {
       if (!silent) error = '$value';
@@ -503,6 +530,70 @@ class LedgerController extends ChangeNotifier {
       throw const ApiException('账户缺少版本信息，请刷新后再删除');
     }
     await api.deleteAccount(id: item.id, expectedUpdatedAt: updatedAt);
+    await refresh();
+  }
+
+  Future<void> transfer({
+    required String kind,
+    required int fromAccountId,
+    required int toAccountId,
+    required double amount,
+    String? note,
+  }) async {
+    final ledger = selectedLedger;
+    if (ledger == null) throw const ApiException('没有可用的账本');
+    if (amount <= 0) throw const ApiException('转账金额必须大于 0');
+    if (fromAccountId == toAccountId) {
+      throw const ApiException('转出和转入账户不能相同');
+    }
+    final from = accounts.where((item) => item.id == fromAccountId).firstOrNull;
+    final to = accounts.where((item) => item.id == toAccountId).firstOrNull;
+    if (from == null || to == null || from.ledgerId != ledger.id || to.ledgerId != ledger.id) {
+      throw const ApiException('请选择当前账本中的有效账户');
+    }
+    if (from.type != '资产') throw const ApiException('转出账户必须是资产账户');
+    if (kind == '账户转账' && to.type != '资产') {
+      throw const ApiException('账户转账的转入账户必须是资产账户');
+    }
+    if (kind == '信用卡还款' && to.type != '负债') {
+      throw const ApiException('信用卡还款的转入账户必须是负债账户');
+    }
+    if (!const ['账户转账', '信用卡还款'].contains(kind)) {
+      throw const ApiException('转账类型无效');
+    }
+    if (from.currency != to.currency) throw const ApiException('转账双方币种必须一致');
+    final cents = (amount * 100).round();
+    if (cents <= 0) throw const ApiException('转账金额过小');
+    if (from.balanceCents < cents) throw const ApiException('转出账户余额不足');
+    if (demoMode) {
+      accounts = [
+        for (final item in accounts)
+          if (item.id == from.id)
+            item.copyWith(
+              balanceCents: item.balanceCents - cents,
+              updatedAt: DateTime.now().toIso8601String(),
+            )
+          else if (item.id == to.id)
+            item.copyWith(
+              balanceCents: item.balanceCents + cents,
+              updatedAt: DateTime.now().toIso8601String(),
+            )
+          else
+            item,
+      ];
+      notifyListeners();
+      return;
+    }
+    await api.transfer(
+      ledgerId: ledger.id,
+      kind: kind,
+      fromAccountId: from.id,
+      toAccountId: to.id,
+      amount: amount,
+      occurredAt: DateTime.now().toUtc().toIso8601String(),
+      originalTimezone: 'Asia/Shanghai',
+      note: note,
+    );
     await refresh();
   }
 
@@ -865,17 +956,36 @@ class LedgerController extends ChangeNotifier {
     try {
       await syncQueue();
     } catch (_) {
-      // 保留在队列，等待用户在线后手动同步。
+      // 保留在队列，生命周期轮询会在恢复联网后自动重试。
     }
   }
 
-  Future<void> syncQueue() async {
-    if (queue.isEmpty) return;
-    final synced = await api.syncEntries(queue);
-    final syncedSet = synced.toSet();
-    queue = queue.where((item) => !syncedSet.contains(item.offlineId)).toList();
-    await _persistQueue();
-    await refresh();
+  Future<void> syncQueue({bool silent = false}) {
+    final inFlight = _syncOperation;
+    if (inFlight != null) return inFlight;
+    final operation = _syncQueueInternal(silent: silent);
+    _syncOperation = operation;
+    operation.then<void>(
+      (_) {
+        if (identical(_syncOperation, operation)) _syncOperation = null;
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (identical(_syncOperation, operation)) _syncOperation = null;
+      },
+    );
+    return operation;
+  }
+
+  Future<void> _syncQueueInternal({required bool silent}) async {
+    if (queue.isNotEmpty) {
+      final synced = await api.syncEntries(queue);
+      final syncedSet = synced.toSet();
+      queue = queue
+          .where((item) => !syncedSet.contains(item.offlineId))
+          .toList();
+      await _persistQueue();
+    }
+    await refresh(silent: silent);
     notifyListeners();
   }
 
@@ -1118,6 +1228,7 @@ class LedgerController extends ChangeNotifier {
 
   Future<void> logout() async {
     await api.logout();
+    await _preferences?.remove(_coreSnapshotKey);
     user = null;
     demoMode = false;
     ledgers = const [];
@@ -1141,6 +1252,12 @@ class LedgerController extends ChangeNotifier {
     preferences = const Preferences();
     lastAiReply = null;
     p2pStatus = const {};
+    exchangeRates = null;
+    automationRules = const [];
+    quickSyncStatus = null;
+    quickSyncToken = null;
+    securitySessions = const [];
+    securityAudit = const SecurityAuditPage(events: [], hasMore: false);
     notifications = const [];
     pendingTransactions = const PendingTransactionPage(
       items: [],
@@ -1150,6 +1267,7 @@ class LedgerController extends ChangeNotifier {
     monthlyExpense = null;
     annualReturn = null;
     inflationRate = null;
+    cachedAt = null;
     notifyListeners();
   }
 
@@ -1171,6 +1289,11 @@ class LedgerController extends ChangeNotifier {
       _optional(() => api.fetchCategories(ledgerId, income: true)),
       _optional(() => api.fetchPreferences()),
       _optional(() => api.fetchP2pStatus()),
+      _optional(() => api.fetchExchangeRates()),
+      _optional(() => api.fetchAutomationRules(ledgerId)),
+      _optional(() => api.fetchQuickSyncStatus()),
+      _optional(() => api.fetchSecuritySessions()),
+      _optional(() => api.fetchSecurityAudit()),
     ]);
     if (values[0] is AnalysisSummary) analysis = values[0] as AnalysisSummary;
     if (values[1] is List<CategoryBudget>) {
@@ -1218,6 +1341,22 @@ class LedgerController extends ChangeNotifier {
     if (values[15] is Map<String, dynamic>) {
       p2pStatus = values[15] as Map<String, dynamic>;
     }
+    if (values[16] is ExchangeRateSnapshot) {
+      exchangeRates = values[16] as ExchangeRateSnapshot;
+    }
+    if (values[17] is List<AutomationRule>) {
+      automationRules = values[17] as List<AutomationRule>;
+    }
+    if (values[18] is QuickSyncStatus) {
+      quickSyncStatus = values[18] as QuickSyncStatus;
+    }
+    if (values[19] is List<SecuritySession>) {
+      securitySessions = values[19] as List<SecuritySession>;
+    }
+    if (values[20] is SecurityAuditPage) {
+      securityAudit = values[20] as SecurityAuditPage;
+    }
+    await _persistCoreSnapshot();
   }
 
   Future<void> markNotificationsRead() async {
@@ -1230,6 +1369,207 @@ class LedgerController extends ChangeNotifier {
         .map((item) => item.copyWith(read: true))
         .toList();
     notifyListeners();
+  }
+
+  Future<void> refreshExchangeRates() async {
+    if (demoMode) return;
+    exchangeRates = await api.fetchExchangeRates();
+    await _persistCoreSnapshot();
+    notifyListeners();
+  }
+
+  Future<void> refreshAutomationRules() async {
+    final ledger = selectedLedger;
+    if (demoMode || ledger == null) return;
+    automationRules = await api.fetchAutomationRules(ledger.id);
+    await _persistCoreSnapshot();
+    notifyListeners();
+  }
+
+  Future<void> createAutomationRule({
+    required String name,
+    required int priority,
+    required bool enabled,
+    required Map<String, dynamic> conditions,
+    required Map<String, dynamic> actions,
+  }) async {
+    final ledger = selectedLedger;
+    if (ledger == null) throw const ApiException('没有可用的账本');
+    if (name.trim().isEmpty) throw const ApiException('请输入规则名称');
+    if (demoMode) {
+      automationRules = [
+        ...automationRules,
+        AutomationRule(
+          id: 'demo-${DateTime.now().microsecondsSinceEpoch}',
+          name: name.trim(),
+          priority: priority,
+          enabled: enabled,
+          conditions: conditions,
+          actions: actions,
+        ),
+      ];
+      notifyListeners();
+      return;
+    }
+    await api.createAutomationRule(
+      ledgerId: ledger.id,
+      name: name,
+      priority: priority,
+      enabled: enabled,
+      conditions: conditions,
+      actions: actions,
+    );
+    await refreshAutomationRules();
+  }
+
+  Future<void> updateAutomationRuleEnabled(
+    AutomationRule rule,
+    bool enabled,
+  ) async {
+    final ledger = selectedLedger;
+    if (ledger == null) throw const ApiException('没有可用的账本');
+    if (demoMode) {
+      automationRules = automationRules
+          .map((item) => item.id == rule.id ? item.copyWith(enabled: enabled) : item)
+          .toList();
+      notifyListeners();
+      return;
+    }
+    await api.updateAutomationRule(
+      id: rule.id,
+      ledgerId: ledger.id,
+      enabled: enabled,
+    );
+    await refreshAutomationRules();
+  }
+
+  Future<void> updateAutomationRule({
+    required AutomationRule rule,
+    required String name,
+    required int priority,
+    required bool enabled,
+    required Map<String, dynamic> conditions,
+    required Map<String, dynamic> actions,
+  }) async {
+    final ledger = selectedLedger;
+    if (ledger == null) throw const ApiException('没有可用的账本');
+    if (name.trim().isEmpty) throw const ApiException('请输入规则名称');
+    if (demoMode) {
+      automationRules = automationRules
+          .map(
+            (item) => item.id == rule.id
+                ? item.copyWith(
+                    name: name.trim(),
+                    priority: priority,
+                    enabled: enabled,
+                    conditions: conditions,
+                    actions: actions,
+                  )
+                : item,
+          )
+          .toList();
+      notifyListeners();
+      return;
+    }
+    await api.updateAutomationRule(
+      id: rule.id,
+      ledgerId: ledger.id,
+      name: name,
+      priority: priority,
+      enabled: enabled,
+      conditions: conditions,
+      actions: actions,
+    );
+    await refreshAutomationRules();
+  }
+
+  Future<void> deleteAutomationRule(AutomationRule rule) async {
+    final ledger = selectedLedger;
+    if (ledger == null) throw const ApiException('没有可用的账本');
+    if (demoMode) {
+      automationRules = automationRules.where((item) => item.id != rule.id).toList();
+      notifyListeners();
+      return;
+    }
+    await api.deleteAutomationRule(id: rule.id, ledgerId: ledger.id);
+    await refreshAutomationRules();
+  }
+
+  Future<void> refreshQuickSync() async {
+    if (demoMode) return;
+    quickSyncStatus = await api.fetchQuickSyncStatus();
+    await _persistCoreSnapshot();
+    notifyListeners();
+  }
+
+  Future<String> createQuickSyncToken({
+    required String label,
+    required int expiresInDays,
+    required String scope,
+  }) async {
+    if (demoMode) {
+      quickSyncToken = 'demo-${DateTime.now().microsecondsSinceEpoch}';
+      final now = DateTime.now();
+      quickSyncStatus = QuickSyncStatus(
+        active: true,
+        tokenPrefix: quickSyncToken!.substring(0, 12),
+        label: label.trim().isEmpty ? '自动记账连接' : label.trim(),
+        scope: scope,
+        createdAt: now.toIso8601String(),
+        expiresAt: now.add(Duration(days: expiresInDays)).toIso8601String(),
+        processedCount: 0,
+      );
+      notifyListeners();
+      return quickSyncToken!;
+    }
+    final token = await api.createQuickSyncToken(
+      label: label,
+      expiresInDays: expiresInDays,
+      scope: scope,
+    );
+    quickSyncToken = token;
+    await refreshQuickSync();
+    return token;
+  }
+
+  Future<void> revokeQuickSyncToken() async {
+    if (!demoMode) await api.revokeQuickSyncToken();
+    quickSyncToken = null;
+    if (demoMode) quickSyncStatus = const QuickSyncStatus(active: false);
+    if (!demoMode) await refreshQuickSync();
+    notifyListeners();
+  }
+
+  Future<void> refreshSecurityCenter() async {
+    if (demoMode) return;
+    final values = await Future.wait<dynamic>([
+      api.fetchSecuritySessions(),
+      api.fetchSecurityAudit(),
+    ]);
+    securitySessions = values[0] as List<SecuritySession>;
+    securityAudit = values[1] as SecurityAuditPage;
+    await _persistCoreSnapshot();
+    notifyListeners();
+  }
+
+  Future<void> revokeSecuritySession(SecuritySession session) async {
+    if (demoMode) {
+      securitySessions = securitySessions.where((item) => item.id != session.id).toList();
+      notifyListeners();
+      return;
+    }
+    await api.revokeSecuritySession(sessionId: session.id);
+    await refreshSecurityCenter();
+  }
+
+  Future<void> revokeOtherSecuritySessions() async {
+    if (demoMode) {
+      securitySessions = securitySessions.where((item) => item.current).toList();
+      notifyListeners();
+      return;
+    }
+    await api.revokeSecuritySession(allExceptCurrent: true);
+    await refreshSecurityCenter();
   }
 
   Future<void> resolvePending(
@@ -1407,6 +1747,81 @@ class LedgerController extends ChangeNotifier {
       residualRate: residualRate,
       heatLevel: heatLevel,
       expectedUpdatedAt: existing?.updatedAt,
+    );
+    await refresh();
+  }
+
+  Future<void> liquidateAsset({
+    required DigitalAsset asset,
+    required double salePrice,
+    required int accountId,
+  }) async {
+    final ledger = selectedLedger;
+    if (ledger == null) throw const ApiException('没有可用的账本');
+    if (!salePrice.isFinite || salePrice < 0) {
+      throw const ApiException('变现金额不能小于 0');
+    }
+    final current = assets.where((item) => item.id == asset.id).firstOrNull;
+    if (current == null) throw const ApiException('资产不存在或已经被处理');
+    final cents = (salePrice * 100).round();
+    Account? target;
+    if (cents > 0) {
+      target = accounts.where((item) => item.id == accountId).firstOrNull;
+      if (target == null || target.ledgerId != ledger.id || target.type != '资产') {
+        throw const ApiException('请选择当前账本中的资产账户');
+      }
+      if (target.currency != current.currency) {
+        throw const ApiException('变现账户币种必须与资产一致');
+      }
+    }
+    if (demoMode) {
+      assets = assets.where((item) => item.id != current.id).toList();
+      if (target != null) {
+        final now = DateTime.now().toIso8601String();
+        accounts = [
+          for (final item in accounts)
+            if (item.id == target!.id)
+              item.copyWith(
+                balanceCents: item.balanceCents + cents,
+                updatedAt: now,
+              )
+            else
+              item,
+        ];
+        final transaction = TransactionItem(
+          id: DateTime.now().millisecondsSinceEpoch,
+          ledgerId: ledger.id,
+          accountId: target.id,
+          accountName: target.name,
+          title: '${current.name} · 资产变现',
+          amountCents: cents,
+          type: '收入',
+          category: '二手变现',
+          occurredAt: now,
+          currency: current.currency,
+          source: '本机演示',
+        );
+        final items = [transaction, ...transactions.items];
+        transactions = TransactionPage(
+          items: items,
+          total: items.length,
+          incomeCents: transactions.incomeCents + cents,
+          expenseCents: transactions.expenseCents,
+        );
+      }
+      notifyListeners();
+      return;
+    }
+    final expectedUpdatedAt = current.updatedAt;
+    if (expectedUpdatedAt == null || expectedUpdatedAt.isEmpty) {
+      throw const ApiException('资产版本信息缺失，请先刷新后重试');
+    }
+    await api.liquidateAsset(
+      id: current.id,
+      ledgerId: ledger.id,
+      salePrice: salePrice,
+      accountId: cents > 0 ? accountId : 0,
+      expectedUpdatedAt: expectedUpdatedAt,
     );
     await refresh();
   }
@@ -1702,7 +2117,9 @@ class LedgerController extends ChangeNotifier {
     if (demoMode) return;
     try {
       await api.deleteTransaction(item);
-      await refresh();
+      // The list and totals were already updated optimistically. Avoid a
+      // visible full-page refresh; the normal background refresh reconciles
+      // other derived panels later without interrupting the deletion motion.
     } catch (value) {
       transactions = before;
       error = '$value';
@@ -1733,6 +2150,235 @@ class LedgerController extends ChangeNotifier {
         })
         .whereType<OfflineEntry>()
         .toList();
+  }
+
+  Future<void> _loadCoreSnapshot() async {
+    final raw = _preferences?.getString(_coreSnapshotKey);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final userJson = decoded['user'];
+      final ledgersJson = decoded['ledgers'];
+      final accountsJson = decoded['accounts'];
+      final transactionsJson = decoded['transactions'];
+      final assetsJson = decoded['assets'];
+      List<T> decodeList<T>(
+        Object? value,
+        T Function(Map<String, dynamic>) parse,
+      ) {
+        if (value is! List) return <T>[];
+        return value
+            .whereType<Map>()
+            .map((item) => parse(Map<String, dynamic>.from(item)))
+            .toList(growable: false);
+      }
+      if (userJson is Map) {
+        user = SessionUser.fromJson(Map<String, dynamic>.from(userJson));
+      }
+      if (ledgersJson is List) {
+        ledgers = ledgersJson
+            .whereType<Map>()
+            .map((item) => Ledger.fromJson(Map<String, dynamic>.from(item)))
+            .toList(growable: false);
+      }
+      if (accountsJson is List) {
+        accounts = accountsJson
+            .whereType<Map>()
+            .map((item) => Account.fromJson(Map<String, dynamic>.from(item)))
+            .toList(growable: false);
+      }
+      if (transactionsJson is Map) {
+        transactions = TransactionPage.fromJson(
+          Map<String, dynamic>.from(transactionsJson),
+        );
+      }
+      if (assetsJson is List) {
+        assets = decodeList(assetsJson, DigitalAsset.fromJson);
+      }
+      if (decoded.containsKey('analysis')) {
+        final value = decoded['analysis'];
+        analysis = value is Map
+            ? AnalysisSummary.fromJson(Map<String, dynamic>.from(value))
+            : null;
+      }
+      if (decoded.containsKey('forecast')) {
+        final value = decoded['forecast'];
+        forecast = value is Map
+            ? Forecast.fromJson(Map<String, dynamic>.from(value))
+            : null;
+      }
+      if (decoded.containsKey('budgets')) {
+        budgets = decodeList(decoded['budgets'], CategoryBudget.fromJson);
+      }
+      if (decoded.containsKey('subscriptions')) {
+        subscriptions = decodeList(
+          decoded['subscriptions'],
+          Subscription.fromJson,
+        );
+      }
+      if (decoded.containsKey('installments')) {
+        installments = decodeList(
+          decoded['installments'],
+          Installment.fromJson,
+        );
+      }
+      if (decoded.containsKey('savingsGoals')) {
+        savingsGoals = decodeList(
+          decoded['savingsGoals'],
+          SavingsGoal.fromJson,
+        );
+      }
+      if (decoded.containsKey('members')) {
+        members = decodeList(decoded['members'], Member.fromJson);
+      }
+      if (decoded.containsKey('expenseCategories')) {
+        expenseCategories = decodeList(
+          decoded['expenseCategories'],
+          Category.fromJson,
+        );
+      }
+      if (decoded.containsKey('incomeCategories')) {
+        incomeCategories = decodeList(
+          decoded['incomeCategories'],
+          Category.fromJson,
+        );
+      }
+      final preferencesJson = decoded['preferences'];
+      if (preferencesJson is Map) {
+        preferences = Preferences.fromJson(
+          Map<String, dynamic>.from(preferencesJson),
+        );
+      }
+      final aiJson = decoded['lastAiReply'];
+      if (aiJson is Map) {
+        lastAiReply = AiReply.fromJson(Map<String, dynamic>.from(aiJson));
+      }
+      if (decoded.containsKey('p2pStatus')) {
+        final value = decoded['p2pStatus'];
+        p2pStatus = value is Map
+            ? Map<String, dynamic>.from(value)
+            : const <String, dynamic>{};
+      }
+      final exchangeRatesJson = decoded['exchangeRates'];
+      if (exchangeRatesJson is Map) {
+        exchangeRates = ExchangeRateSnapshot.fromJson(
+          Map<String, dynamic>.from(exchangeRatesJson),
+        );
+      }
+      if (decoded.containsKey('automationRules')) {
+        automationRules = decodeList(
+          decoded['automationRules'],
+          AutomationRule.fromJson,
+        );
+      }
+      final quickSyncJson = decoded['quickSyncStatus'];
+      if (quickSyncJson is Map) {
+        quickSyncStatus = QuickSyncStatus.fromJson(
+          Map<String, dynamic>.from(quickSyncJson),
+        );
+      }
+      if (decoded.containsKey('securitySessions')) {
+        securitySessions = decodeList(
+          decoded['securitySessions'],
+          SecuritySession.fromJson,
+        );
+      }
+      final securityAuditJson = decoded['securityAudit'];
+      if (securityAuditJson is Map) {
+        securityAudit = SecurityAuditPage.fromJson(
+          Map<String, dynamic>.from(securityAuditJson),
+        );
+      }
+      if (decoded.containsKey('notifications')) {
+        notifications = decodeList(
+          decoded['notifications'],
+          NotificationItem.fromJson,
+        );
+      }
+      final pendingJson = decoded['pendingTransactions'];
+      if (pendingJson is Map) {
+        pendingTransactions = PendingTransactionPage.fromJson(
+          Map<String, dynamic>.from(pendingJson),
+        );
+      }
+      final fireJson = decoded['fireSettings'];
+      if (fireJson is Map) {
+        final monthly = num.tryParse('${fireJson['monthlyExpense'] ?? ''}');
+        final annual = num.tryParse('${fireJson['annualReturn'] ?? ''}');
+        monthlyExpense = monthly?.toDouble();
+        annualReturn = annual?.toDouble();
+      }
+      final economicJson = decoded['economicSettings'];
+      if (economicJson is Map) {
+        final inflation = num.tryParse(
+          '${economicJson['inflationRate'] ?? ''}',
+        );
+        inflationRate = inflation?.toDouble();
+      }
+      final savedAt = decoded['savedAt'];
+      if (savedAt is String && savedAt.isNotEmpty) cachedAt = savedAt;
+      final savedIndex = decoded['selectedLedgerIndex'];
+      if (savedIndex is num) selectedLedgerIndex = savedIndex.toInt();
+      if (ledgers.isEmpty) {
+        selectedLedgerIndex = 0;
+      } else {
+        selectedLedgerIndex =
+            selectedLedgerIndex.clamp(0, ledgers.length - 1).toInt();
+      }
+      notifyListeners();
+    } catch (_) {
+      // A stale or partially written snapshot must never prevent login.
+    }
+  }
+
+  Future<void> _persistCoreSnapshot() async {
+    if (_preferences == null || !authenticated || demoMode) return;
+    await _preferences!.setString(
+      _coreSnapshotKey,
+      jsonEncode({
+        'user': user?.toJson(),
+        'ledgers': ledgers.map((item) => item.toJson()).toList(),
+        'accounts': accounts.map((item) => item.toJson()).toList(),
+        'transactions': transactions.toJson(),
+        'assets': assets.map((item) => item.toJson()).toList(),
+        'analysis': analysis?.toJson(),
+        'forecast': forecast?.toJson(),
+        'budgets': budgets.map((item) => item.toJson()).toList(),
+        'subscriptions': subscriptions.map((item) => item.toJson()).toList(),
+        'installments': installments.map((item) => item.toJson()).toList(),
+        'savingsGoals': savingsGoals.map((item) => item.toJson()).toList(),
+        'members': members.map((item) => item.toJson()).toList(),
+        'expenseCategories':
+            expenseCategories.map((item) => item.toJson()).toList(),
+        'incomeCategories':
+            incomeCategories.map((item) => item.toJson()).toList(),
+        'preferences': preferences.toJson(),
+        'lastAiReply': lastAiReply?.toJson(),
+        'p2pStatus': p2pStatus,
+        'exchangeRates': exchangeRates?.toJson(),
+        'automationRules': automationRules
+            .map((item) => item.toJson())
+            .toList(),
+        'quickSyncStatus': quickSyncStatus?.toJson(),
+        'securitySessions': securitySessions
+            .map((item) => item.toJson())
+            .toList(),
+        'securityAudit': securityAudit.toJson(),
+        'notifications': notifications.map((item) => item.toJson()).toList(),
+        'pendingTransactions': pendingTransactions.toJson(),
+        'fireSettings': {
+          if (monthlyExpense != null) 'monthlyExpense': monthlyExpense,
+          if (annualReturn != null) 'annualReturn': annualReturn,
+        },
+        'economicSettings': {
+          if (inflationRate != null) 'inflationRate': inflationRate,
+        },
+        'selectedLedgerIndex': selectedLedgerIndex,
+        'savedAt': DateTime.now().toUtc().toIso8601String(),
+      }),
+    );
+    cachedAt = DateTime.now().toUtc().toIso8601String();
   }
 
   Future<void> _persistQueue() async {
@@ -1888,6 +2534,7 @@ class NeoShell extends StatefulWidget {
 
 class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
   int tab = 0;
+  int? _selectedTransactionId;
   static const titles = ['主页', '资产', '账单', '规划', '分析'];
   final updateService = NeoLedgerUpdateService();
   final _billSearchController = TextEditingController();
@@ -1925,9 +2572,18 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
 
   Future<void> _refreshSilently() async {
     try {
-      await widget.controller.refresh(silent: true);
+      if (widget.controller.queue.isNotEmpty) {
+        await widget.controller.syncQueue(silent: true);
+      } else {
+        await widget.controller.refresh(silent: true);
+      }
     } catch (_) {
-      // Background refresh must not interrupt the current page or show a toast.
+      // A failed sync remains queued; still try to refresh server-side data.
+      try {
+        await widget.controller.refresh(silent: true);
+      } catch (_) {
+        // Background work must not interrupt the current page or show a toast.
+      }
     }
   }
 
@@ -2054,7 +2710,7 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
                   ),
                 ],
               ),
-              body: content,
+              body: _responsiveContent(context, content),
               floatingActionButton: FloatingActionButton.extended(
                 onPressed: _openEntry,
                 backgroundColor: _brand,
@@ -2065,6 +2721,159 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  TransactionItem? _selectedTransaction() {
+    final items = widget.controller.transactions.items;
+    final selectedId = _selectedTransactionId;
+    if (selectedId != null) {
+      for (final item in items) {
+        if (item.id == selectedId) return item;
+      }
+    }
+    return items.isEmpty ? null : items.first;
+  }
+
+  void _selectTransaction(TransactionItem item) {
+    if (_selectedTransactionId == item.id) return;
+    setState(() => _selectedTransactionId = item.id);
+  }
+
+  Widget _responsiveContent(BuildContext context, Widget content) {
+    final width = MediaQuery.sizeOf(context).width;
+    final useMasterDetail = width >= 900 && width < 1181;
+    // The detail pane belongs to the home/bills workflows. Applying it to
+    // settings or analytics creates a misleading empty transaction detail.
+    if (!useMasterDetail || (tab != 0 && tab != 2)) return content;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(child: content),
+        const VerticalDivider(width: 1),
+        SizedBox(width: 360, child: _tabletDetails()),
+      ],
+    );
+  }
+
+  Widget _tabletDetails() {
+    final item = _selectedTransaction();
+    final theme = Theme.of(context);
+
+    Widget detailLine(String label, String value) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 82,
+              child: Text(label, style: theme.textTheme.bodySmall),
+            ),
+            Expanded(
+              child: Text(
+                value,
+                textAlign: TextAlign.end,
+                style: theme.textTheme.bodyMedium,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ColoredBox(
+      color: theme.scaffoldBackgroundColor,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 100),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('流水详情', style: theme.textTheme.titleLarge),
+            const SizedBox(height: 12),
+            if (item == null)
+              const _EmptyState(message: '选择一笔流水查看详情')
+            else ...[
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(item.title, style: theme.textTheme.titleMedium),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${item.isIncome ? '+' : '-'}${_money(item.amountCents)}',
+                        style: theme.textTheme.headlineSmall?.copyWith(
+                          color: item.isIncome ? Colors.green : _brand,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(item.isIncome ? '收入' : '支出'),
+                    ],
+                  ),
+                ),
+              ),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                  child: Column(
+                    children: [
+                      detailLine('发生时间', _date(item.occurredAt)),
+                      detailLine('来源', item.source),
+                      detailLine('账户', item.accountName ?? '未指定账户'),
+                      detailLine('分类', item.category ?? '未分类'),
+                      detailLine('币种', item.currency),
+                      if (item.updatedAt != null)
+                        detailLine('更新时间', _date(item.updatedAt!)),
+                    ],
+                  ),
+                ),
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _editTransaction(item),
+                      icon: const Icon(Icons.edit_outlined),
+                      label: const Text('编辑'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: item.installmentId == null
+                          ? () => _deleteTransaction(item)
+                          : null,
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('删除'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 18),
+            Text('本月概览', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Card(
+              child: Column(
+                children: [
+                  _SettingRow(
+                    label: '本月支出',
+                    value: _money(widget.controller.monthlyExpense),
+                  ),
+                  _SettingRow(
+                    label: '待同步',
+                    value: '${widget.controller.totalPendingCount} 笔',
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2382,10 +3191,13 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
                     _openAccount(account);
                   } else if (value == 'delete') {
                     _deleteAccount(account);
+                  } else if (value == 'transfer') {
+                    _openTransfer(initialFrom: account);
                   }
                 },
                 itemBuilder: (context) => const [
                   PopupMenuItem(value: 'edit', child: Text('编辑账户')),
+                  PopupMenuItem(value: 'transfer', child: Text('转账/还款')),
                   PopupMenuItem(value: 'delete', child: Text('删除账户')),
                 ],
               ),
@@ -2418,10 +3230,16 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
                     _money(asset.currentValueCents ?? asset.valueCents),
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
-                  IconButton(
-                    tooltip: '编辑资产',
-                    onPressed: () => _openAsset(asset),
-                    icon: const Icon(Icons.edit_outlined),
+                  PopupMenuButton<String>(
+                    tooltip: '资产操作',
+                    onSelected: (value) {
+                      if (value == 'edit') _openAsset(asset);
+                      if (value == 'liquidate') _openLiquidation(asset);
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(value: 'edit', child: Text('编辑资产')),
+                      PopupMenuItem(value: 'liquidate', child: Text('变现/注销')),
+                    ],
                   ),
                 ],
               ),
@@ -2953,67 +3771,73 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
     return Column(
       children: items
           .map(
-            (item) => Card(
-              margin: const EdgeInsets.only(bottom: 10),
-              child: ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: item.isIncome
-                      ? Colors.green.withValues(alpha: .18)
-                      : Colors.orange.withValues(alpha: .18),
-                  child: Icon(
-                    item.isIncome ? Icons.south_west : Icons.north_east,
-                    color: item.isIncome ? _brand : Colors.orangeAccent,
+            (item) {
+              final selected = _selectedTransactionId == item.id;
+              return Card(
+                margin: const EdgeInsets.only(bottom: 10),
+                color: selected ? _brand.withValues(alpha: .12) : null,
+                child: ListTile(
+                  selected: selected,
+                  onTap: () => _selectTransaction(item),
+                  leading: CircleAvatar(
+                    backgroundColor: item.isIncome
+                        ? Colors.green.withValues(alpha: .18)
+                        : Colors.orange.withValues(alpha: .18),
+                    child: Icon(
+                      item.isIncome ? Icons.south_west : Icons.north_east,
+                      color: item.isIncome ? _brand : Colors.orangeAccent,
+                    ),
                   ),
-                ),
-                title: Text(item.title),
-                subtitle: Text(
-                  '${item.category ?? '未分类'} · ${item.accountName ?? item.source} · ${_date(item.occurredAt)}',
-                ),
-                trailing: SizedBox(
-                  width: 190,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      Flexible(
-                        child: Text(
-                          '${item.isIncome ? '+' : '-'}${_money(item.amountCents)}',
-                          textAlign: TextAlign.end,
-                          style: TextStyle(
-                            color: item.isIncome ? _brand : Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      PopupMenuButton<String>(
-                        tooltip: '流水操作',
-                        onSelected: (value) {
-                          if (value == 'edit') {
-                            _editTransaction(item);
-                          } else if (value == 'delete') {
-                            _deleteTransaction(item);
-                          }
-                        },
-                        itemBuilder: (context) => [
-                          const PopupMenuItem(
-                            value: 'edit',
-                            child: Text('编辑流水'),
-                          ),
-                          PopupMenuItem(
-                            value: 'delete',
-                            enabled: item.installmentId == null,
-                            child: Text(
-                              item.installmentId == null
-                                  ? '删除流水'
-                                  : '分期流水不可单独删除',
+                  title: Text(item.title),
+                  subtitle: Text(
+                    '${item.category ?? '未分类'} · ${item.accountName ?? item.source} · ${_date(item.occurredAt)}',
+                  ),
+                  trailing: SizedBox(
+                    width: 190,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            '${item.isIncome ? '+' : '-'}${_money(item.amountCents)}',
+                            textAlign: TextAlign.end,
+                            style: TextStyle(
+                              color: item.isIncome ? _brand : Colors.white,
+                              fontWeight: FontWeight.bold,
                             ),
                           ),
-                        ],
-                      ),
-                    ],
+                        ),
+                        PopupMenuButton<String>(
+                          tooltip: '流水操作',
+                          onSelected: (value) {
+                            if (value == 'edit') {
+                              _editTransaction(item);
+                            } else if (value == 'delete') {
+                              _deleteTransaction(item);
+                            }
+                          },
+                          itemBuilder: (context) => [
+                            const PopupMenuItem(
+                              value: 'edit',
+                              child: Text('编辑流水'),
+                            ),
+                            PopupMenuItem(
+                              value: 'delete',
+                              enabled: item.installmentId == null,
+                              child: Text(
+                                item.installmentId == null
+                                    ? '删除流水'
+                                    : '分期流水不可单独删除',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            ),
+              );
+            },
           )
           .toList(),
     );
@@ -3120,6 +3944,18 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _openLiquidation(DigitalAsset asset) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => AssetLiquidationSheet(
+        controller: widget.controller,
+        asset: asset,
+      ),
+    );
+  }
+
   Future<void> _openLedger([Ledger? existing]) async {
     await showModalBottomSheet<void>(
       context: context,
@@ -3142,6 +3978,18 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
         controller: widget.controller,
         existing: existing,
         onDelete: existing == null ? null : () => _deleteAccount(existing),
+      ),
+    );
+  }
+
+  Future<void> _openTransfer({Account? initialFrom}) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => TransferSheet(
+        controller: widget.controller,
+        initialFrom: initialFrom,
       ),
     );
   }
@@ -4243,6 +5091,73 @@ class _SettingsSheetState extends State<SettingsSheet> {
                       builder: (_) => AiSheet(controller: controller),
                     ),
                   ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.rule_folder_outlined),
+                    title: const Text('自动化记账规则'),
+                    subtitle: Text(
+                      '${controller.automationRules.length} 条规则 · 只处理已识别的支付/导入事件',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => showModalBottomSheet<void>(
+                      context: context,
+                      isScrollControlled: true,
+                      useSafeArea: true,
+                      builder: (_) =>
+                          AutomationRulesSheet(controller: controller),
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.key_outlined),
+                    title: const Text('快捷同步连接'),
+                    subtitle: Text(
+                      controller.quickSyncStatus?.active == true
+                          ? '已启用 · ${controller.quickSyncStatus?.label ?? '未命名连接'}'
+                          : '未启用 · 为 NAS、快捷指令或外部设备生成受限令牌',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => showModalBottomSheet<void>(
+                      context: context,
+                      isScrollControlled: true,
+                      useSafeArea: true,
+                      builder: (_) => QuickSyncSheet(controller: controller),
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.devices_outlined),
+                    title: const Text('登录会话与安全审计'),
+                    subtitle: Text(
+                      '${controller.securitySessions.length} 个会话 · ${controller.securityAudit.events.length} 条安全事件',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => showModalBottomSheet<void>(
+                      context: context,
+                      isScrollControlled: true,
+                      useSafeArea: true,
+                      builder: (_) =>
+                          SecuritySessionsSheet(controller: controller),
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.currency_exchange_outlined),
+                    title: const Text('汇率'),
+                    subtitle: Text(
+                      controller.exchangeRates == null
+                          ? '尚未读取汇率快照'
+                          : '基准 ${controller.exchangeRates!.base} · ${controller.exchangeRates!.rates.length} 个币种',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => showModalBottomSheet<void>(
+                      context: context,
+                      isScrollControlled: true,
+                      useSafeArea: true,
+                      builder: (_) =>
+                          ExchangeRatesSheet(controller: controller),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -4310,6 +5225,1112 @@ class _SettingRow extends StatelessWidget {
       ),
     );
   }
+}
+
+class AutomationRulesSheet extends StatefulWidget {
+  const AutomationRulesSheet({required this.controller, super.key});
+
+  final LedgerController controller;
+
+  @override
+  State<AutomationRulesSheet> createState() => _AutomationRulesSheetState();
+}
+
+class _AutomationRulesSheetState extends State<AutomationRulesSheet> {
+  bool loading = false;
+  bool saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (mounted) setState(() => loading = true);
+    try {
+      await widget.controller.refreshAutomationRules();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('读取自动化规则失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> _edit([AutomationRule? rule]) async {
+    final payload = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => AutomationRuleEditorSheet(
+        controller: widget.controller,
+        rule: rule,
+      ),
+    );
+    if (payload == null || !mounted) return;
+    setState(() => saving = true);
+    try {
+      final conditions = Map<String, dynamic>.from(
+        (payload['conditions'] as Map?)?.cast<String, dynamic>() ?? const {},
+      );
+      final actions = Map<String, dynamic>.from(
+        (payload['actions'] as Map?)?.cast<String, dynamic>() ?? const {},
+      );
+      if (rule == null) {
+        await widget.controller.createAutomationRule(
+          name: '${payload['name'] ?? ''}',
+          priority: _settingInt(payload['priority'], fallback: 100),
+          enabled: payload['enabled'] == true,
+          conditions: conditions,
+          actions: actions,
+        );
+      } else {
+        await widget.controller.updateAutomationRule(
+          rule: rule,
+          name: '${payload['name'] ?? ''}',
+          priority: _settingInt(payload['priority'], fallback: rule.priority),
+          enabled: payload['enabled'] == true,
+          conditions: conditions,
+          actions: actions,
+        );
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(rule == null ? '规则已创建' : '规则已更新')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('保存规则失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  Future<void> _toggle(AutomationRule rule, bool enabled) async {
+    try {
+      await widget.controller.updateAutomationRuleEnabled(rule, enabled);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('更新规则状态失败：$error')));
+      }
+    }
+  }
+
+  Future<void> _delete(AutomationRule rule) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除自动化规则？'),
+        content: Text('“${rule.name}”删除后不会再处理新收到的支付或导入事件。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await widget.controller.deleteAutomationRule(rule);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('规则已删除')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('删除规则失败：$error')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = widget.controller;
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          8,
+          20,
+          MediaQuery.viewInsetsOf(context).bottom + 24,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '自动化记账规则',
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                ),
+                IconButton(
+                  tooltip: '刷新规则',
+                  onPressed: loading || saving ? null : _load,
+                  icon: const Icon(Icons.refresh),
+                ),
+                FilledButton.icon(
+                  onPressed: saving ? null : () => _edit(),
+                  icon: const Icon(Icons.add),
+                  label: const Text('新建'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '规则只作用于已经被通知监听、无障碍支付识别或账单导入判定为有效的事件，不会扫描照片、历史订单，也不会替你发起支付。优先级数字越小越先执行。',
+              style: TextStyle(color: Colors.grey.shade500, height: 1.4),
+            ),
+            const SizedBox(height: 16),
+            if (loading)
+              const Center(child: CircularProgressIndicator())
+            else if (controller.automationRules.isEmpty)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    children: [
+                      Icon(Icons.rule_outlined, size: 42, color: Colors.grey.shade500),
+                      const SizedBox(height: 8),
+                      const Text('还没有自动化规则'),
+                      const SizedBox(height: 4),
+                      Text(
+                        '例如：商户包含“打车”时自动归入交通，并标记为刚需。',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              ...controller.automationRules.map(
+                (rule) => Card(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  child: Column(
+                    children: [
+                      ListTile(
+                        onTap: saving ? null : () => _edit(rule),
+                        leading: CircleAvatar(
+                          backgroundColor: rule.enabled
+                              ? _brand.withValues(alpha: 0.18)
+                              : Colors.grey.withValues(alpha: 0.16),
+                          child: Icon(
+                            Icons.rule,
+                            color: rule.enabled ? _brand : Colors.grey,
+                          ),
+                        ),
+                        title: Text(rule.name),
+                        subtitle: Text(
+                          '优先级 ${rule.priority} · ${rule.enabled ? '运行中' : '已停用'}',
+                        ),
+                        trailing: Switch.adaptive(
+                          value: rule.enabled,
+                          onChanged: saving ? null : (value) => _toggle(rule, value),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '匹配：${_ruleConditionsSummary(rule.conditions)}',
+                              style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '动作：${_ruleActionsSummary(rule.actions)}',
+                              style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                            ),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton.icon(
+                                onPressed: saving ? null : () => _delete(rule),
+                                icon: const Icon(Icons.delete_outline, size: 18),
+                                label: const Text('删除'),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: Colors.redAccent,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class AutomationRuleEditorSheet extends StatefulWidget {
+  const AutomationRuleEditorSheet({
+    required this.controller,
+    this.rule,
+    super.key,
+  });
+
+  final LedgerController controller;
+  final AutomationRule? rule;
+
+  @override
+  State<AutomationRuleEditorSheet> createState() =>
+      _AutomationRuleEditorSheetState();
+}
+
+class _AutomationRuleEditorSheetState extends State<AutomationRuleEditorSheet> {
+  late final TextEditingController name;
+  late final TextEditingController merchant;
+  late final TextEditingController source;
+  late final TextEditingController minAmount;
+  late final TextEditingController maxAmount;
+  late final TextEditingController priority;
+  String? category;
+  String mood = '刚需';
+  bool enabled = true;
+
+  @override
+  void initState() {
+    super.initState();
+    final rule = widget.rule;
+    final conditions = rule?.conditions ?? const <String, dynamic>{};
+    final actions = rule?.actions ?? const <String, dynamic>{};
+    name = TextEditingController(text: rule?.name ?? '');
+    merchant = TextEditingController(text: '${conditions['merchantContains'] ?? ''}');
+    source = TextEditingController(text: '${conditions['source'] ?? ''}');
+    minAmount = TextEditingController(text: _storedYuan(conditions['minAmount']));
+    maxAmount = TextEditingController(text: _storedYuan(conditions['maxAmount']));
+    priority = TextEditingController(text: '${rule?.priority ?? 100}');
+    category = actions['category']?.toString();
+    final savedMood = actions['mood']?.toString();
+    if (['悦己', '刚需', '冲动'].contains(savedMood)) mood = savedMood!;
+    enabled = rule?.enabled ?? true;
+  }
+
+  @override
+  void dispose() {
+    name.dispose();
+    merchant.dispose();
+    source.dispose();
+    minAmount.dispose();
+    maxAmount.dispose();
+    priority.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final trimmedName = name.text.trim();
+    final min = _parseYuan(minAmount.text);
+    final max = _parseYuan(maxAmount.text);
+    final hasCondition = merchant.text.trim().isNotEmpty ||
+        source.text.trim().isNotEmpty ||
+        min != null ||
+        max != null;
+    final available = widget.controller.expenseCategories;
+    final selectedCategory = available.any((item) => item.name == category)
+        ? category
+        : null;
+    if (trimmedName.isEmpty) {
+      _error('请输入规则名称');
+      return;
+    }
+    if (!hasCondition) {
+      _error('至少设置一个匹配条件');
+      return;
+    }
+    if (minAmount.text.trim().isNotEmpty && min == null ||
+        maxAmount.text.trim().isNotEmpty && max == null) {
+      _error('金额条件请输入有效数字');
+      return;
+    }
+    if (min != null && max != null && min > max) {
+      _error('最低金额不能大于最高金额');
+      return;
+    }
+    if (selectedCategory == null) {
+      _error('请选择自动归入的支出分类');
+      return;
+    }
+    final conditions = <String, dynamic>{
+      if (merchant.text.trim().isNotEmpty) 'merchantContains': merchant.text.trim(),
+      if (source.text.trim().isNotEmpty) 'source': source.text.trim(),
+      if (min != null) 'minAmount': min,
+      if (max != null) 'maxAmount': max,
+    };
+    Navigator.pop(context, <String, dynamic>{
+      'name': trimmedName,
+      'priority': _settingInt(priority.text, fallback: 100).clamp(0, 9999).toInt(),
+      'enabled': enabled,
+      'conditions': conditions,
+      'actions': <String, dynamic>{'category': selectedCategory, 'mood': mood},
+    });
+  }
+
+  void _error(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final categories = widget.controller.expenseCategories;
+    final selectedCategory = categories.any((item) => item.name == category)
+        ? category
+        : null;
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          8,
+          20,
+          MediaQuery.viewInsetsOf(context).bottom + 24,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              widget.rule == null ? '新建自动化规则' : '编辑自动化规则',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: name,
+              decoration: const InputDecoration(
+                labelText: '规则名称',
+                hintText: '例如：打车自动归类',
+                prefixIcon: Icon(Icons.title_outlined),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              '匹配条件（至少填写一项）',
+              style: TextStyle(color: Colors.grey.shade400, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: merchant,
+              decoration: const InputDecoration(
+                labelText: '商户名称包含',
+                hintText: '例如：肯德基、滴滴、超市',
+                prefixIcon: Icon(Icons.storefront_outlined),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: source,
+              decoration: const InputDecoration(
+                labelText: '来源包含（可选）',
+                hintText: '例如：支付宝、微信、抖音',
+                prefixIcon: Icon(Icons.account_balance_wallet_outlined),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: minAmount,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: '最低金额（元）',
+                      prefixText: '¥ ',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: maxAmount,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: '最高金额（元）',
+                      prefixText: '¥ ',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              '自动处理动作',
+              style: TextStyle(color: Colors.grey.shade400, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              value: selectedCategory,
+              decoration: const InputDecoration(
+                labelText: '支出分类',
+                prefixIcon: Icon(Icons.category_outlined),
+              ),
+              items: categories
+                  .map(
+                    (item) => DropdownMenuItem<String>(
+                      value: item.name,
+                      child: Text('${item.icon} ${item.name}'),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) => setState(() => category = value),
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
+              value: mood,
+              decoration: const InputDecoration(
+                labelText: '消费情绪',
+                prefixIcon: Icon(Icons.mood_outlined),
+              ),
+              items: const ['刚需', '悦己', '冲动']
+                  .map((value) => DropdownMenuItem(value: value, child: Text(value)))
+                  .toList(),
+              onChanged: (value) => setState(() => mood = value ?? '刚需'),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: priority,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: '优先级',
+                      helperText: '数字越小越先执行',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('启用规则'),
+                    value: enabled,
+                    onChanged: (value) => setState(() => enabled = value),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              onPressed: _save,
+              icon: const Icon(Icons.save_outlined),
+              label: Text(widget.rule == null ? '创建规则' : '保存修改'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class QuickSyncSheet extends StatefulWidget {
+  const QuickSyncSheet({required this.controller, super.key});
+
+  final LedgerController controller;
+
+  @override
+  State<QuickSyncSheet> createState() => _QuickSyncSheetState();
+}
+
+class _QuickSyncSheetState extends State<QuickSyncSheet> {
+  late final TextEditingController label;
+  late final TextEditingController expiresInDays;
+  bool loading = false;
+  bool creating = false;
+  String? token;
+
+  @override
+  void initState() {
+    super.initState();
+    label = TextEditingController(text: '自动记账连接');
+    expiresInDays = TextEditingController(text: '365');
+    _load();
+  }
+
+  @override
+  void dispose() {
+    label.dispose();
+    expiresInDays.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() => loading = true);
+    try {
+      await widget.controller.refreshQuickSync();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('读取快捷同步状态失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> _create() async {
+    final days = _settingInt(expiresInDays.text, fallback: 365)
+        .clamp(1, 730)
+        .toInt();
+    setState(() => creating = true);
+    try {
+      final value = await widget.controller.createQuickSyncToken(
+        label: label.text.trim().isEmpty ? '自动记账连接' : label.text.trim(),
+        expiresInDays: days,
+        scope: 'ledger:write',
+      );
+      if (!mounted) return;
+      setState(() => token = value);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('令牌已生成，只会在这里显示一次')),
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('生成快捷同步令牌失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => creating = false);
+    }
+  }
+
+  Future<void> _revoke() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('撤销快捷同步连接？'),
+        content: const Text('撤销后，NAS、快捷指令或其他设备使用旧令牌将无法继续写入账本。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            child: const Text('确认撤销'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await widget.controller.revokeQuickSyncToken();
+      if (mounted) {
+        setState(() => token = null);
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('快捷同步连接已撤销')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('撤销快捷同步连接失败：$error')));
+      }
+    }
+  }
+
+  Future<void> _copyToken() async {
+    final value = token;
+    if (value == null) return;
+    await Clipboard.setData(ClipboardData(text: value));
+    if (mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('令牌已复制')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final status = widget.controller.quickSyncStatus;
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          8,
+          20,
+          MediaQuery.viewInsetsOf(context).bottom + 24,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '快捷同步连接',
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                ),
+                IconButton(
+                  tooltip: '刷新状态',
+                  onPressed: loading ? null : _load,
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            ),
+            Text(
+              '用于 NAS、快捷指令或外部自动化设备的受限写入连接。令牌只显示一次，不能代替登录密码；需要变更时直接生成新令牌，旧令牌会被替换。',
+              style: TextStyle(color: Colors.grey.shade500, height: 1.4),
+            ),
+            const SizedBox(height: 16),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _SettingRow(label: '状态', value: status?.active == true ? '已启用' : '未启用'),
+                    if (status?.tokenPrefix != null)
+                      _SettingRow(label: '令牌前缀', value: status!.tokenPrefix!),
+                    if (status?.label != null)
+                      _SettingRow(label: '连接名称', value: status!.label!),
+                    if (status?.scope != null)
+                      _SettingRow(label: '权限范围', value: status!.scope!),
+                    if (status?.expiresAt != null)
+                      _SettingRow(label: '到期时间', value: status!.expiresAt!),
+                    _SettingRow(
+                      label: '已处理事件',
+                      value: '${status?.processedCount ?? 0} 条',
+                    ),
+                    if (status?.lastEventAt != null)
+                      _SettingRow(label: '最近事件', value: status!.lastEventAt!),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: label,
+              decoration: const InputDecoration(
+                labelText: '连接名称',
+                prefixIcon: Icon(Icons.label_outline),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: expiresInDays,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: '有效期（天）',
+                helperText: '1～730 天，生成新令牌会替换旧令牌',
+                prefixIcon: Icon(Icons.event_outlined),
+              ),
+            ),
+            const SizedBox(height: 10),
+            const InputDecorator(
+              decoration: InputDecoration(
+                labelText: '权限范围',
+                prefixIcon: Icon(Icons.shield_outlined),
+              ),
+              child: Text('仅写入当前账本（ledger:write）'),
+            ),
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              onPressed: creating ? null : _create,
+              icon: creating
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.vpn_key_outlined),
+              label: Text(creating ? '生成中…' : '生成新令牌'),
+            ),
+            if (token != null) ...[
+              const SizedBox(height: 12),
+              Card(
+                color: Colors.orange.withValues(alpha: 0.12),
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '请立即复制保存，关闭此窗口后不会再次显示完整令牌。',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 8),
+                      SelectableText(token!, style: const TextStyle(fontSize: 12)),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: _copyToken,
+                          icon: const Icon(Icons.copy_outlined),
+                          label: const Text('复制令牌'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            if (status?.active == true) ...[
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _revoke,
+                icon: const Icon(Icons.link_off_outlined),
+                label: const Text('撤销当前连接'),
+                style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class SecuritySessionsSheet extends StatefulWidget {
+  const SecuritySessionsSheet({required this.controller, super.key});
+
+  final LedgerController controller;
+
+  @override
+  State<SecuritySessionsSheet> createState() => _SecuritySessionsSheetState();
+}
+
+class _SecuritySessionsSheetState extends State<SecuritySessionsSheet> {
+  bool loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => loading = true);
+    try {
+      await widget.controller.refreshSecurityCenter();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('读取安全中心失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> _revoke(SecuritySession session) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('注销“${session.displayName}”？'),
+        content: const Text('该设备之后需要重新登录，当前设备不能被注销。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('注销设备'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await widget.controller.revokeSecuritySession(session);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('设备会话已注销')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('注销设备失败：$error')));
+      }
+    }
+  }
+
+  Future<void> _revokeOthers() async {
+    try {
+      await widget.controller.revokeOtherSecuritySessions();
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('其他设备会话已注销')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('注销其他设备失败：$error')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = widget.controller;
+    final others = controller.securitySessions.where((item) => !item.current).toList();
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          8,
+          20,
+          MediaQuery.viewInsetsOf(context).bottom + 24,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '登录会话与安全审计',
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                ),
+                IconButton(
+                  tooltip: '刷新安全状态',
+                  onPressed: loading ? null : _load,
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            ),
+            Text(
+              '这里列出当前登录设备和关键安全事件。注销其他设备不会删除账单，只会使对应登录会话失效。',
+              style: TextStyle(color: Colors.grey.shade500, height: 1.4),
+            ),
+            const SizedBox(height: 16),
+            if (loading)
+              const Center(child: CircularProgressIndicator())
+            else if (controller.securitySessions.isEmpty)
+              const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(20),
+                  child: Text('暂时没有可显示的登录设备'),
+                ),
+              )
+            else
+              ...controller.securitySessions.map(
+                (session) => Card(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  child: ListTile(
+                    leading: Icon(
+                      session.current ? Icons.phone_android : Icons.devices,
+                      color: session.current ? _brand : null,
+                    ),
+                    title: Text(
+                      '${session.displayName}${session.current ? ' · 当前设备' : ''}',
+                    ),
+                    subtitle: Text(
+                      '${session.ipAddress.isEmpty ? '未知地址' : session.ipAddress}\n最近使用：${session.lastUsedAt}',
+                    ),
+                    isThreeLine: true,
+                    trailing: session.current
+                        ? const Chip(label: Text('当前'))
+                        : IconButton(
+                            tooltip: '注销设备',
+                            onPressed: () => _revoke(session),
+                            icon: const Icon(Icons.logout, color: Colors.redAccent),
+                          ),
+                  ),
+                ),
+              ),
+            if (others.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              OutlinedButton.icon(
+                onPressed: _revokeOthers,
+                icon: const Icon(Icons.logout_outlined),
+                label: Text('注销其他 ${others.length} 台设备'),
+                style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent),
+              ),
+            ],
+            const SizedBox(height: 20),
+            Text(
+              '最近安全事件',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            if (controller.securityAudit.events.isEmpty)
+              Text('暂无安全审计事件', style: TextStyle(color: Colors.grey.shade500))
+            else
+              ...controller.securityAudit.events.take(20).map(
+                (event) => ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.history, size: 20),
+                  title: Text(event.event),
+                  subtitle: Text(event.createdAt),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ExchangeRatesSheet extends StatefulWidget {
+  const ExchangeRatesSheet({required this.controller, super.key});
+
+  final LedgerController controller;
+
+  @override
+  State<ExchangeRatesSheet> createState() => _ExchangeRatesSheetState();
+}
+
+class _ExchangeRatesSheetState extends State<ExchangeRatesSheet> {
+  bool loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => loading = true);
+    try {
+      await widget.controller.refreshExchangeRates();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('读取汇率失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final rates = widget.controller.exchangeRates;
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          8,
+          20,
+          MediaQuery.viewInsetsOf(context).bottom + 24,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text('汇率', style: Theme.of(context).textTheme.headlineSmall),
+                ),
+                IconButton(
+                  tooltip: '刷新汇率',
+                  onPressed: loading ? null : _load,
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            ),
+            Text(
+              '汇率仅用于多币种账单展示和统计换算，不会修改原始账单金额。',
+              style: TextStyle(color: Colors.grey.shade500, height: 1.4),
+            ),
+            const SizedBox(height: 16),
+            if (loading)
+              const Center(child: CircularProgressIndicator())
+            else if (rates == null)
+              const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(20),
+                  child: Text('暂时没有汇率快照'),
+                ),
+              )
+            else ...[
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      _SettingRow(label: '基准货币', value: rates.base),
+                      _SettingRow(label: '数据来源', value: rates.source),
+                      _SettingRow(label: '更新时间', value: rates.updatedAt),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              ...rates.rates.entries.map(
+                (entry) => Card(
+                  margin: const EdgeInsets.only(bottom: 6),
+                  child: ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.currency_exchange),
+                    title: Text(entry.key),
+                    trailing: Text(
+                      entry.value.toStringAsFixed(4),
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+int _settingInt(Object? value, {int fallback = 0}) =>
+    int.tryParse('$value') ?? fallback;
+
+String _storedYuan(Object? value) {
+  final cents = double.tryParse('$value');
+  if (cents == null) return '';
+  return (cents / 100).toStringAsFixed(2);
+}
+
+double? _parseYuan(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return null;
+  final parsed = double.tryParse(trimmed);
+  return parsed == null || parsed < 0 ? null : parsed;
+}
+
+String _ruleConditionsSummary(Map<String, dynamic> conditions) {
+  final parts = <String>[];
+  final merchant = conditions['merchantContains']?.toString().trim();
+  final source = conditions['source']?.toString().trim();
+  if (merchant != null && merchant.isNotEmpty) parts.add('商户含“$merchant”');
+  if (source != null && source.isNotEmpty) parts.add('来源含“$source”');
+  if (conditions['minAmount'] != null) {
+    parts.add('金额≥${_money(_settingInt(conditions['minAmount']))}');
+  }
+  if (conditions['maxAmount'] != null) {
+    parts.add('金额≤${_money(_settingInt(conditions['maxAmount']))}');
+  }
+  return parts.isEmpty ? '无条件' : parts.join('，');
+}
+
+String _ruleActionsSummary(Map<String, dynamic> actions) {
+  final parts = <String>[];
+  final category = actions['category']?.toString().trim();
+  final incomeCategory = actions['incomeCategory']?.toString().trim();
+  final mood = actions['mood']?.toString().trim();
+  if (category != null && category.isNotEmpty) parts.add('支出分类：$category');
+  if (incomeCategory != null && incomeCategory.isNotEmpty) {
+    parts.add('收入分类：$incomeCategory');
+  }
+  if (mood != null && mood.isNotEmpty) parts.add('情绪：$mood');
+  return parts.isEmpty ? '无动作' : parts.join('，');
 }
 
 class DataCenterSheet extends StatefulWidget {
@@ -6507,6 +8528,342 @@ class _AssetSheetState extends State<AssetSheet> {
                     )
                   : const Icon(Icons.save_outlined),
               label: Text(saving ? '保存中…' : '保存资产'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class TransferSheet extends StatefulWidget {
+  const TransferSheet({required this.controller, this.initialFrom, super.key});
+
+  final LedgerController controller;
+  final Account? initialFrom;
+
+  @override
+  State<TransferSheet> createState() => _TransferSheetState();
+}
+
+class _TransferSheetState extends State<TransferSheet> {
+  late final TextEditingController amount;
+  late final TextEditingController note;
+  late String kind;
+  int? fromAccountId;
+  int? toAccountId;
+  bool saving = false;
+
+  List<Account> get sourceAccounts => widget.controller.accounts
+      .where((item) => item.type == '资产')
+      .toList(growable: false);
+
+  List<Account> get destinationAccounts => widget.controller.accounts
+      .where(
+        (item) =>
+            item.type == (kind == '信用卡还款' ? '负债' : '资产') &&
+            item.id != fromAccountId,
+      )
+      .toList(growable: false);
+
+  @override
+  void initState() {
+    super.initState();
+    amount = TextEditingController();
+    note = TextEditingController();
+    kind = '账户转账';
+    final preferred = widget.initialFrom;
+    fromAccountId = sourceAccounts
+        .where((item) => item.id == preferred?.id)
+        .firstOrNull
+        ?.id;
+    fromAccountId ??= sourceAccounts.firstOrNull?.id;
+    toAccountId = destinationAccounts.firstOrNull?.id;
+  }
+
+  @override
+  void dispose() {
+    amount.dispose();
+    note.dispose();
+    super.dispose();
+  }
+
+  void _setKind(String value) {
+    setState(() {
+      kind = value;
+      toAccountId = destinationAccounts.firstOrNull?.id;
+    });
+  }
+
+  Future<void> _submit() async {
+    final parsedAmount = double.tryParse(amount.text.trim());
+    if (fromAccountId == null || toAccountId == null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请先准备可用的转出和转入账户')));
+      return;
+    }
+    if (parsedAmount == null || !parsedAmount.isFinite || parsedAmount <= 0) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请输入大于 0 的金额')));
+      return;
+    }
+    setState(() => saving = true);
+    try {
+      await widget.controller.transfer(
+        kind: kind,
+        fromAccountId: fromAccountId!,
+        toAccountId: toAccountId!,
+        amount: parsedAmount,
+        note: note.text.trim().isEmpty ? null : note.text.trim(),
+      );
+      if (mounted) Navigator.pop(context);
+    } catch (error) {
+      if (mounted) {
+        setState(() => saving = false);
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('提交失败：$error')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final destinations = destinationAccounts;
+    final bottom = MediaQuery.viewInsetsOf(context).bottom;
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(20, 8, 20, bottom + 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('转账/还款', style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: 8),
+            Text(
+              '转账只改变账户余额，不会伪造消费流水；信用卡还款会将金额转入负债账户。',
+              style: TextStyle(color: Colors.grey.shade500, height: 1.4),
+            ),
+            const SizedBox(height: 18),
+            DropdownButtonFormField<String>(
+              initialValue: kind,
+              decoration: const InputDecoration(labelText: '操作类型'),
+              items: const [
+                DropdownMenuItem(value: '账户转账', child: Text('账户转账')),
+                DropdownMenuItem(value: '信用卡还款', child: Text('信用卡还款')),
+              ],
+              onChanged: saving ? null : (value) => _setKind(value!),
+            ),
+            const SizedBox(height: 12),
+            if (sourceAccounts.isEmpty)
+              const _EmptyState(message: '暂无资产账户，请先新增一个资产账户')
+            else ...[
+              DropdownButtonFormField<int>(
+                initialValue: fromAccountId,
+                decoration: const InputDecoration(labelText: '转出账户'),
+                items: sourceAccounts
+                    .map(
+                      (item) => DropdownMenuItem(
+                        value: item.id,
+                        child: Text('${item.name} · ${_money(item.balanceCents)}'),
+                      ),
+                    )
+                    .toList(),
+                onChanged: saving
+                    ? null
+                    : (value) => setState(() {
+                        fromAccountId = value;
+                        if (toAccountId == value) {
+                          toAccountId = destinationAccounts.firstOrNull?.id;
+                        }
+                      }),
+              ),
+              const SizedBox(height: 12),
+              if (destinations.isEmpty)
+                Text(
+                  kind == '信用卡还款' ? '暂无可还款的负债账户' : '暂无可转入的其他资产账户',
+                  style: TextStyle(color: Colors.orange.shade300),
+                )
+              else
+                DropdownButtonFormField<int>(
+                  initialValue: toAccountId,
+                  decoration: InputDecoration(
+                    labelText: kind == '信用卡还款' ? '还款账户' : '转入账户',
+                  ),
+                  items: destinations
+                      .map(
+                        (item) => DropdownMenuItem(
+                          value: item.id,
+                          child: Text('${item.name} · ${_money(item.balanceCents)}'),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: saving
+                      ? null
+                      : (value) => setState(() => toAccountId = value),
+                ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: amount,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: '金额',
+                  prefixText: '¥ ',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: note,
+                maxLength: 120,
+                decoration: const InputDecoration(
+                  labelText: '备注（可选）',
+                  hintText: '例如：本月信用卡还款',
+                ),
+              ),
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                onPressed: saving || destinations.isEmpty ? null : _submit,
+                icon: saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.swap_horiz),
+                label: Text(saving ? '提交中…' : kind == '信用卡还款' ? '确认还款' : '确认转账'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class AssetLiquidationSheet extends StatefulWidget {
+  const AssetLiquidationSheet({
+    required this.controller,
+    required this.asset,
+    super.key,
+  });
+
+  final LedgerController controller;
+  final DigitalAsset asset;
+
+  @override
+  State<AssetLiquidationSheet> createState() => _AssetLiquidationSheetState();
+}
+
+class _AssetLiquidationSheetState extends State<AssetLiquidationSheet> {
+  late final TextEditingController salePrice;
+  int? accountId;
+  bool saving = false;
+
+  List<Account> get eligibleAccounts => widget.controller.accounts
+      .where(
+        (item) =>
+            item.type == '资产' && item.currency == widget.asset.currency,
+      )
+      .toList(growable: false);
+
+  @override
+  void initState() {
+    super.initState();
+    salePrice = TextEditingController();
+    accountId = eligibleAccounts.firstOrNull?.id;
+  }
+
+  @override
+  void dispose() {
+    salePrice.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final parsedPrice = double.tryParse(salePrice.text.trim());
+    if (parsedPrice == null || !parsedPrice.isFinite || parsedPrice < 0) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请输入不小于 0 的变现金额')));
+      return;
+    }
+    if (parsedPrice > 0 && accountId == null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('有收入时必须选择入账账户')));
+      return;
+    }
+    setState(() => saving = true);
+    try {
+      await widget.controller.liquidateAsset(
+        asset: widget.asset,
+        salePrice: parsedPrice,
+        accountId: accountId ?? 0,
+      );
+      if (mounted) Navigator.pop(context);
+    } catch (error) {
+      if (mounted) {
+        setState(() => saving = false);
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('处理资产失败：$error')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final accounts = eligibleAccounts;
+    final bottom = MediaQuery.viewInsetsOf(context).bottom;
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(20, 8, 20, bottom + 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('变现/注销资产', style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: 8),
+            Text(
+              '当前资产：${widget.asset.name}。金额填 0 仅注销资产；填入售价会生成“二手变现”收入并入账。',
+              style: TextStyle(color: Colors.grey.shade500, height: 1.4),
+            ),
+            const SizedBox(height: 18),
+            TextField(
+              controller: salePrice,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                labelText: '变现金额（${widget.asset.currency}）',
+                prefixText: '${widget.asset.currency} ',
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (accounts.isEmpty)
+              Text(
+                '当前账本没有 ${widget.asset.currency} 资产账户；注销资产可直接提交，有收入时请先新建账户。',
+                style: TextStyle(color: Colors.orange.shade300),
+              )
+            else
+              DropdownButtonFormField<int>(
+                initialValue: accountId,
+                decoration: const InputDecoration(labelText: '收入账户'),
+                items: accounts
+                    .map(
+                      (item) => DropdownMenuItem(
+                        value: item.id,
+                        child: Text('${item.name} · ${_money(item.balanceCents)}'),
+                      ),
+                    )
+                    .toList(),
+                onChanged: saving
+                    ? null
+                    : (value) => setState(() => accountId = value),
+              ),
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: saving ? null : _submit,
+              icon: saving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.sell_outlined),
+              label: Text(saving ? '处理中…' : '确认变现并移除资产'),
             ),
           ],
         ),

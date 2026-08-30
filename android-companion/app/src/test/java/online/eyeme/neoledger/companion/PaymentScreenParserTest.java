@@ -30,6 +30,13 @@ public final class PaymentScreenParserTest {
     }
 
     @Test
+    public void acceptsChineseOcrSpacingInPaymentSemantics() {
+        assertTrue(PaymentScreenParser.isPaymentCompleted(
+                PaymentAppCatalog.DOUYIN,
+                "支 付 成 功 ¥13.78 支 付 方 式 抖 音 月 付"));
+    }
+
+    @Test
     public void rejectsPaymentPageBeforeConfirmation() {
         assertFalse(PaymentScreenParser.isPaymentCompleted(
                 PaymentAppCatalog.JD,

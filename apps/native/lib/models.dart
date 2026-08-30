@@ -14,6 +14,12 @@ class SessionUser {
     displayName: '${json['displayName'] ?? json['username'] ?? '用户'}',
     avatarUrl: json['avatarUrl'] as String?,
   );
+
+  Map<String, dynamic> toJson() => {
+    'username': username,
+    'displayName': displayName,
+    if (avatarUrl != null) 'avatarUrl': avatarUrl,
+  };
 }
 
 class Ledger {
@@ -35,6 +41,13 @@ class Ledger {
     icon: '${json['icon'] ?? '📒'}',
     updatedAt: json['updatedAt'] as String?,
   );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'icon': icon,
+    if (updatedAt != null) 'updatedAt': updatedAt,
+  };
 }
 
 class Account {
@@ -86,6 +99,47 @@ class Account {
         ? null
         : _asInt(json['repaymentDay'] ?? json['repayment_day']),
   );
+
+  Account copyWith({
+    String? name,
+    String? type,
+    int? balanceCents,
+    String? currency,
+    String? icon,
+    String? updatedAt,
+    bool? isInvestment,
+    String? assetClass,
+    int? billDay,
+    int? repaymentDay,
+  }) => Account(
+    id: id,
+    ledgerId: ledgerId,
+    name: name ?? this.name,
+    type: type ?? this.type,
+    balanceCents: balanceCents ?? this.balanceCents,
+    currency: currency ?? this.currency,
+    icon: icon ?? this.icon,
+    updatedAt: updatedAt ?? this.updatedAt,
+    isInvestment: isInvestment ?? this.isInvestment,
+    assetClass: assetClass ?? this.assetClass,
+    billDay: billDay ?? this.billDay,
+    repaymentDay: repaymentDay ?? this.repaymentDay,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'ledgerId': ledgerId,
+    'name': name,
+    'type': type,
+    'currentBalance': balanceCents,
+    'currency': currency,
+    'icon': icon,
+    if (updatedAt != null) 'updatedAt': updatedAt,
+    'isInvestment': isInvestment,
+    'assetClass': assetClass,
+    if (billDay != null) 'billDay': billDay,
+    if (repaymentDay != null) 'repaymentDay': repaymentDay,
+  };
 }
 
 class Member {
@@ -113,6 +167,15 @@ class Member {
     isMe: json['isMe'] == true || json['is_me'] == true || json['isMe'] == 1,
     createdAt: json['createdAt'] as String? ?? json['created_at'] as String?,
   );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'ledgerId': ledgerId,
+    'name': name,
+    'icon': icon,
+    'isMe': isMe,
+    if (createdAt != null) 'createdAt': createdAt,
+  };
 }
 
 class Category {
@@ -173,6 +236,19 @@ class Category {
     sortOrder: sortOrder ?? this.sortOrder,
     createdAt: createdAt,
   );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'ledgerId': ledgerId,
+    'name': name,
+    'icon': icon,
+    'color': color,
+    if (builtinKey != null) 'builtinKey': builtinKey,
+    'isSystem': isSystem,
+    'isActive': isActive,
+    'sortOrder': sortOrder,
+    if (createdAt != null) 'createdAt': createdAt,
+  };
 }
 
 class Preferences {
@@ -185,6 +261,11 @@ class Preferences {
     theme: '${json['theme'] ?? 'cream'}',
     lockEnabled: _asBool(json['lockEnabled'] ?? json['enabled']),
   );
+
+  Map<String, dynamic> toJson() => {
+    'theme': theme,
+    'lockEnabled': lockEnabled,
+  };
 }
 
 class AiReply {
@@ -203,6 +284,12 @@ class AiReply {
     provider: '${json['provider'] ?? 'local-rules'}',
     context: _asMap(json['context']),
   );
+
+  Map<String, dynamic> toJson() => {
+    'answer': answer,
+    'provider': provider,
+    'context': context,
+  };
 }
 
 class TransactionItem {
@@ -302,6 +389,25 @@ class TransactionItem {
     currency: '${json['currency'] ?? 'CNY'}',
     source: '${json['source'] ?? '账本'}',
   );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'ledgerId': ledgerId,
+    'accountId': accountId,
+    'title': title,
+    'amount': amountCents,
+    'type': type,
+    'occurredAt': occurredAt,
+    if (category != null) 'category': category,
+    if (incomeCategory != null) 'incomeCategory': incomeCategory,
+    if (mood != null) 'mood': mood,
+    'originalTimezone': originalTimezone,
+    if (updatedAt != null) 'updatedAt': updatedAt,
+    if (installmentId != null) 'installmentId': installmentId,
+    if (accountName != null) 'accountName': accountName,
+    'currency': currency,
+    'source': source,
+  };
 }
 
 class TransactionPage {
@@ -329,6 +435,13 @@ class TransactionPage {
         incomeCents: _asInt(json['income']),
         expenseCents: _asInt(json['expense']),
       );
+
+  Map<String, dynamic> toJson() => {
+    'items': items.map((item) => item.toJson()).toList(),
+    'total': total,
+    'income': incomeCents,
+    'expense': expenseCents,
+  };
 }
 
 class AnalysisBucket {
@@ -341,6 +454,11 @@ class AnalysisBucket {
     name: '${json['name'] ?? json['label'] ?? '未分类'}',
     amountCents: _asInt(json['amount'] ?? json['value']),
   );
+
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'amount': amountCents,
+  };
 }
 
 class AnalysisTrendPoint {
@@ -360,6 +478,12 @@ class AnalysisTrendPoint {
         expenseCents: _asInt(json['expense']),
         incomeCents: _asInt(json['income']),
       );
+
+  Map<String, dynamic> toJson() => {
+    'label': label,
+    'expense': expenseCents,
+    'income': incomeCents,
+  };
 }
 
 class AnalysisSummary {
@@ -418,6 +542,23 @@ class AnalysisSummary {
       topCategory: top.isEmpty ? null : AnalysisBucket.fromJson(top),
     );
   }
+
+  Map<String, dynamic> toJson() => {
+    'analysis': {
+      'incomeTotal': incomeCents,
+      'expenseTotal': expenseCents,
+      'balance': balanceCents,
+      'savingRate': savingRate,
+      'categoryData': categoryData.map((item) => item.toJson()).toList(),
+      'moodData': moodData.map((item) => item.toJson()).toList(),
+      'incomeData': incomeData.map((item) => item.toJson()).toList(),
+      'trend': trend.map((item) => item.toJson()).toList(),
+      'impulse': impulseCents,
+      'needExpense': needExpenseCents,
+      'investmentIncome': investmentIncomeCents,
+      'topCategory': topCategory?.toJson(),
+    },
+  };
 }
 
 class CategoryBudget {
@@ -439,6 +580,13 @@ class CategoryBudget {
     amountCents: _asInt(json['amount']),
     updatedAt: json['updatedAt'] as String?,
   );
+
+  Map<String, dynamic> toJson() => {
+    'ledgerId': ledgerId,
+    'category': category,
+    'amount': amountCents,
+    if (updatedAt != null) 'updatedAt': updatedAt,
+  };
 }
 
 class Subscription {
@@ -472,6 +620,17 @@ class Subscription {
     nextChargeDate: json['nextChargeDate'] as String?,
     updatedAt: json['updatedAt'] as String?,
   );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'amount': amountCents,
+    'cycle': cycle,
+    'accountId': accountId,
+    if (category != null) 'category': category,
+    if (nextChargeDate != null) 'nextChargeDate': nextChargeDate,
+    if (updatedAt != null) 'updatedAt': updatedAt,
+  };
 }
 
 class Installment {
@@ -518,6 +677,20 @@ class Installment {
     chargeDay: _asInt(json['chargeDay']) == 0 ? 1 : _asInt(json['chargeDay']),
     updatedAt: json['updatedAt'] as String?,
   );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'totalAmount': totalAmountCents,
+    'periods': periods,
+    'paidPeriods': paidPeriods,
+    'feeAmount': feeAmountCents,
+    'accountId': accountId,
+    'paymentAccountId': paymentAccountId,
+    if (startMonth != null) 'startMonth': startMonth,
+    'chargeDay': chargeDay,
+    if (updatedAt != null) 'updatedAt': updatedAt,
+  };
 }
 
 class SavingsGoal {
@@ -552,6 +725,16 @@ class SavingsGoal {
     icon: json['icon'] as String?,
     updatedAt: json['updatedAt'] as String?,
   );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'targetAmount': targetAmountCents,
+    'savedAmount': savedAmountCents,
+    if (deadline != null) 'deadline': deadline,
+    if (icon != null) 'icon': icon,
+    if (updatedAt != null) 'updatedAt': updatedAt,
+  };
 }
 
 class ForecastPoint {
@@ -573,6 +756,13 @@ class ForecastPoint {
     balanceCents: _asInt(json['balance']),
     danger: json['danger'] == true,
   );
+
+  Map<String, dynamic> toJson() => {
+    'label': label,
+    'date': date,
+    'balance': balanceCents,
+    'danger': danger,
+  };
 }
 
 class Forecast {
@@ -603,6 +793,16 @@ class Forecast {
     points: _asMaps(json['points']).map(ForecastPoint.fromJson).toList(),
     bankruptcyDate: json['bankruptcyDate'] as String?,
   );
+
+  Map<String, dynamic> toJson() => {
+    'netWorth': netWorthCents,
+    'averageDailySpend': averageDailySpendCents,
+    'monthlyFixed': monthlyFixedCents,
+    'runwayDays': runwayDays,
+    'hasSpendingData': hasSpendingData,
+    'points': points.map((item) => item.toJson()).toList(),
+    if (bankruptcyDate != null) 'bankruptcyDate': bankruptcyDate,
+  };
 }
 
 class NotificationItem {
@@ -636,6 +836,14 @@ class NotificationItem {
         read: json['read'] == true || json['read'] == 1,
         createdAt: '${json['createdAt'] ?? json['created_at'] ?? ''}',
       );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'title': title,
+    'message': message,
+    'read': read,
+    'createdAt': createdAt,
+  };
 }
 
 class PendingTransaction {
@@ -677,11 +885,29 @@ class PendingTransaction {
         status: '${json['status'] ?? 'pending'}',
         accountId: _asInt(json['accountId'] ?? json['account_id']),
         currency: '${json['currency'] ?? 'CNY'}',
-        accountName: json['accountName'] as String?,
-        rawText: json['rawText'] as String?,
-        createdAt: json['createdAt'] as String?,
-        suggestion: _asMap(json['automationSuggestion'])['category'] as String?,
+        accountName: json['accountName'] as String? ?? json['account_name'] as String?,
+        rawText: json['rawText'] as String? ?? json['raw_text'] as String?,
+        createdAt: json['createdAt'] as String? ?? json['created_at'] as String?,
+        suggestion: _asMap(
+          json['automationSuggestion'] ?? json['automation_suggestion'],
+        )['category'] as String?,
       );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'title': title,
+    'amount': amountCents,
+    'type': type,
+    'occurredAt': occurredAt,
+    'status': status,
+    'accountId': accountId,
+    'currency': currency,
+    if (accountName != null) 'accountName': accountName,
+    if (rawText != null) 'rawText': rawText,
+    if (createdAt != null) 'createdAt': createdAt,
+    if (suggestion != null)
+      'automationSuggestion': {'category': suggestion},
+  };
 }
 
 class PendingTransactionPage {
@@ -694,6 +920,21 @@ class PendingTransactionPage {
   final List<PendingTransaction> items;
   final int total;
   final bool hasMore;
+
+  factory PendingTransactionPage.fromJson(Map<String, dynamic> json) =>
+      PendingTransactionPage(
+        items: _asMaps(json['items'])
+            .map(PendingTransaction.fromJson)
+            .toList(growable: false),
+        total: _asInt(json['total']),
+        hasMore: _asBool(json['hasMore'] ?? json['has_more']),
+      );
+
+  Map<String, dynamic> toJson() => {
+    'items': items.map((item) => item.toJson()).toList(),
+    'total': total,
+    'hasMore': hasMore,
+  };
 }
 
 class DigitalAsset {
@@ -755,6 +996,24 @@ class DigitalAsset {
         : _asInt(json['lifespanMonths']),
     residualRate: _asInt(json['residualRateBps']) / 100,
   );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'assetType': assetType,
+    'currency': currency,
+    'currentValue': currentValueCents ?? valueCents,
+    'manualValue': currentValueCents ?? valueCents,
+    'purchasePrice': purchasePriceCents,
+    if (valuationMode != null) 'valuationMode': valuationMode,
+    if (updatedAt != null) 'updatedAt': updatedAt,
+    if (residualValueCents != null) 'residualValue': residualValueCents,
+    if (monthlyDepreciationCents != null)
+      'monthlyDepreciation': monthlyDepreciationCents,
+    if (purchaseDate != null) 'purchaseDate': purchaseDate,
+    'lifespanMonths': lifespanMonths,
+    'residualRateBps': (residualRate * 100).round(),
+  };
 }
 
 class OfflineEntry {
@@ -892,10 +1151,265 @@ class UpdateInfo {
   bool isNewerThan(String current) => _compareVersions(version, current) > 0;
 }
 
+/// A server-side rule that is applied to incoming payment or imported bill
+/// events.  Keeping the rule as data (instead of hard-coding it in the native
+/// UI) means the same rule can be edited from Web, Android, iOS and desktop.
+class AutomationRule {
+  const AutomationRule({
+    required this.id,
+    required this.name,
+    required this.priority,
+    required this.enabled,
+    required this.conditions,
+    required this.actions,
+    this.createdAt,
+    this.updatedAt,
+  });
+
+  final String id;
+  final String name;
+  final int priority;
+  final bool enabled;
+  final Map<String, dynamic> conditions;
+  final Map<String, dynamic> actions;
+  final String? createdAt;
+  final String? updatedAt;
+
+  factory AutomationRule.fromJson(Map<String, dynamic> json) => AutomationRule(
+    id: '${json['id'] ?? ''}',
+    name: '${json['name'] ?? '自动化规则'}',
+    priority: _asInt(json['priority']),
+    enabled: _asBool(json['enabled']),
+    conditions: _asMap(json['conditions']),
+    actions: _asMap(json['actions']),
+    createdAt: _asNullableString(json['createdAt'] ?? json['created_at']),
+    updatedAt: _asNullableString(json['updatedAt'] ?? json['updated_at']),
+  );
+
+  AutomationRule copyWith({
+    String? name,
+    int? priority,
+    bool? enabled,
+    Map<String, dynamic>? conditions,
+    Map<String, dynamic>? actions,
+  }) => AutomationRule(
+    id: id,
+    name: name ?? this.name,
+    priority: priority ?? this.priority,
+    enabled: enabled ?? this.enabled,
+    conditions: conditions ?? this.conditions,
+    actions: actions ?? this.actions,
+    createdAt: createdAt,
+    updatedAt: updatedAt,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'priority': priority,
+    'enabled': enabled,
+    'conditions': conditions,
+    'actions': actions,
+    if (createdAt != null) 'createdAt': createdAt,
+    if (updatedAt != null) 'updatedAt': updatedAt,
+  };
+}
+
+class ExchangeRateSnapshot {
+  const ExchangeRateSnapshot({
+    required this.base,
+    required this.rates,
+    required this.source,
+    required this.updatedAt,
+  });
+
+  final String base;
+  final Map<String, double> rates;
+  final String source;
+  final String updatedAt;
+
+  factory ExchangeRateSnapshot.fromJson(Map<String, dynamic> json) {
+    final rawRates = _asMap(json['rates']);
+    return ExchangeRateSnapshot(
+      base: '${json['base'] ?? 'CNY'}',
+      rates: {
+        for (final entry in rawRates.entries)
+          if (entry.value is num)
+            entry.key: (entry.value as num).toDouble(),
+      },
+      source: '${json['source'] ?? 'Neo Ledger'}',
+      updatedAt: '${json['updatedAt'] ?? json['updated_at'] ?? ''}',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'base': base,
+    'rates': rates,
+    'source': source,
+    'updatedAt': updatedAt,
+  };
+}
+
+class QuickSyncStatus {
+  const QuickSyncStatus({
+    required this.active,
+    this.tokenPrefix,
+    this.label,
+    this.scope,
+    this.expiresAt,
+    this.createdAt,
+    this.lastUsedAt,
+    this.processedCount = 0,
+    this.lastEventAt,
+  });
+
+  final bool active;
+  final String? tokenPrefix;
+  final String? label;
+  final String? scope;
+  final String? expiresAt;
+  final String? createdAt;
+  final String? lastUsedAt;
+  final int processedCount;
+  final String? lastEventAt;
+
+  factory QuickSyncStatus.fromJson(Map<String, dynamic> json) => QuickSyncStatus(
+    active: _asBool(json['active']),
+    tokenPrefix: _asNullableString(json['tokenPrefix'] ?? json['token_prefix']),
+    label: _asNullableString(json['label']),
+    scope: _asNullableString(json['scope']),
+    expiresAt: _asNullableString(json['expiresAt'] ?? json['expires_at']),
+    createdAt: _asNullableString(json['createdAt'] ?? json['created_at']),
+    lastUsedAt: _asNullableString(json['lastUsedAt'] ?? json['last_used_at']),
+    processedCount: _asInt(json['processedCount'] ?? json['processed_count']),
+    lastEventAt: _asNullableString(json['lastEventAt'] ?? json['last_event_at']),
+  );
+
+  Map<String, dynamic> toJson() => {
+    'active': active,
+    if (tokenPrefix != null) 'tokenPrefix': tokenPrefix,
+    if (label != null) 'label': label,
+    if (scope != null) 'scope': scope,
+    if (expiresAt != null) 'expiresAt': expiresAt,
+    if (createdAt != null) 'createdAt': createdAt,
+    if (lastUsedAt != null) 'lastUsedAt': lastUsedAt,
+    'processedCount': processedCount,
+    if (lastEventAt != null) 'lastEventAt': lastEventAt,
+  };
+}
+
+class SecuritySession {
+  const SecuritySession({
+    required this.id,
+    required this.displayName,
+    required this.userAgent,
+    required this.ipAddress,
+    required this.createdAt,
+    required this.lastUsedAt,
+    required this.expiresAt,
+    required this.current,
+    this.revokedAt,
+  });
+
+  final String id;
+  final String displayName;
+  final String userAgent;
+  final String ipAddress;
+  final String createdAt;
+  final String lastUsedAt;
+  final String expiresAt;
+  final bool current;
+  final String? revokedAt;
+
+  factory SecuritySession.fromJson(Map<String, dynamic> json) => SecuritySession(
+    id: '${json['id'] ?? ''}',
+    displayName: '${json['displayName'] ?? json['display_name'] ?? '设备'}',
+    userAgent: '${json['userAgent'] ?? json['user_agent'] ?? ''}',
+    ipAddress: '${json['ipAddress'] ?? json['ip_address'] ?? ''}',
+    createdAt: '${json['createdAt'] ?? json['created_at'] ?? ''}',
+    lastUsedAt: '${json['lastUsedAt'] ?? json['last_used_at'] ?? ''}',
+    expiresAt: '${json['expiresAt'] ?? json['expires_at'] ?? ''}',
+    current: _asBool(json['current']),
+    revokedAt: _asNullableString(json['revokedAt'] ?? json['revoked_at']),
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'displayName': displayName,
+    'userAgent': userAgent,
+    'ipAddress': ipAddress,
+    'createdAt': createdAt,
+    'lastUsedAt': lastUsedAt,
+    'expiresAt': expiresAt,
+    'current': current,
+    if (revokedAt != null) 'revokedAt': revokedAt,
+  };
+}
+
+class SecurityAuditEvent {
+  const SecurityAuditEvent({
+    required this.id,
+    required this.event,
+    required this.createdAt,
+    required this.metadata,
+  });
+
+  final String id;
+  final String event;
+  final String createdAt;
+  final Map<String, dynamic> metadata;
+
+  factory SecurityAuditEvent.fromJson(Map<String, dynamic> json) => SecurityAuditEvent(
+    id: '${json['id'] ?? ''}',
+    event: '${json['event'] ?? json['action'] ?? '安全事件'}',
+    createdAt: '${json['createdAt'] ?? json['created_at'] ?? ''}',
+    metadata: _asMap(json['metadata'] ?? json['details']),
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'event': event,
+    'createdAt': createdAt,
+    'metadata': metadata,
+  };
+}
+
+class SecurityAuditPage {
+  const SecurityAuditPage({
+    required this.events,
+    required this.hasMore,
+    this.nextCursor,
+  });
+
+  final List<SecurityAuditEvent> events;
+  final bool hasMore;
+  final String? nextCursor;
+
+  factory SecurityAuditPage.fromJson(Map<String, dynamic> json) => SecurityAuditPage(
+    events: _asMaps(json['events'])
+        .map(SecurityAuditEvent.fromJson)
+        .toList(growable: false),
+    hasMore: _asBool(json['hasMore'] ?? json['has_more']),
+    nextCursor: _asNullableString(json['nextCursor'] ?? json['next_cursor']),
+  );
+
+  Map<String, dynamic> toJson() => {
+    'events': events.map((item) => item.toJson()).toList(),
+    'hasMore': hasMore,
+    if (nextCursor != null) 'nextCursor': nextCursor,
+  };
+}
+
 int _asInt(Object? value) {
   if (value is int) return value;
   if (value is num) return value.round();
   return int.tryParse('$value') ?? 0;
+}
+
+String? _asNullableString(Object? value) {
+  if (value == null) return null;
+  final text = '$value'.trim();
+  return text.isEmpty ? null : text;
 }
 
 bool _asBool(Object? value) {
