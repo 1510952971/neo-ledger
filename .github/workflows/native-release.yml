@@ -14,6 +14,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: neo-ledger-native-${{ github.ref_name }}
+  cancel-in-progress: false
+
 env:
   FLUTTER_VERSION: '3.47.1'
 
@@ -64,18 +68,20 @@ jobs:
       - run: flutter pub get
       - name: Build Android artifacts
         env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.NEO_LEDGER_ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.NEO_LEDGER_ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.NEO_LEDGER_ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.NEO_LEDGER_ANDROID_KEY_PASSWORD }}
+          # Keep compatibility with the existing repository secrets while
+          # allowing the documented NEO_LEDGER_* names for new repositories.
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.NEO_LEDGER_ANDROID_KEYSTORE_BASE64 || secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.NEO_LEDGER_ANDROID_KEYSTORE_PASSWORD || secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.NEO_LEDGER_ANDROID_KEY_ALIAS || secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.NEO_LEDGER_ANDROID_KEY_PASSWORD || secrets.ANDROID_KEY_PASSWORD }}
         run: |
           VERSION=$(awk '/^version:/{print $2}' pubspec.yaml | cut -d+ -f1)
           GRADLE_ARGS=("-PneoLedgerAllowDebugSigning=true")
           if [[ "$GITHUB_REF" == refs/tags/native-v* ]]; then
-            : "${ANDROID_KEYSTORE_BASE64:?Missing NEO_LEDGER_ANDROID_KEYSTORE_BASE64}"
-            : "${ANDROID_KEYSTORE_PASSWORD:?Missing NEO_LEDGER_ANDROID_KEYSTORE_PASSWORD}"
-            : "${ANDROID_KEY_ALIAS:?Missing NEO_LEDGER_ANDROID_KEY_ALIAS}"
-            : "${ANDROID_KEY_PASSWORD:?Missing NEO_LEDGER_ANDROID_KEY_PASSWORD}"
+            : "${ANDROID_KEYSTORE_BASE64:?Missing Android keystore base64 secret (NEO_LEDGER_ANDROID_KEYSTORE_BASE64 or ANDROID_KEYSTORE_BASE64)}"
+            : "${ANDROID_KEYSTORE_PASSWORD:?Missing Android keystore password secret (NEO_LEDGER_ANDROID_KEYSTORE_PASSWORD or ANDROID_KEYSTORE_PASSWORD)}"
+            : "${ANDROID_KEY_ALIAS:?Missing Android key alias secret (NEO_LEDGER_ANDROID_KEY_ALIAS or ANDROID_KEY_ALIAS)}"
+            : "${ANDROID_KEY_PASSWORD:?Missing Android key password secret (NEO_LEDGER_ANDROID_KEY_PASSWORD or ANDROID_KEY_PASSWORD)}"
             KEYSTORE_PATH="$RUNNER_TEMP/neo-ledger-upload.jks"
             echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
             GRADLE_ARGS=(
@@ -156,6 +162,8 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/native-v')
     needs: [validate, android, windows, ios]
     runs-on: ubuntu-latest
+    environment:
+      name: release-approval
     permissions:
       contents: write
     steps:
