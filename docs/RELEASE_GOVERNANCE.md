@@ -1,6 +1,6 @@
 # Neo Ledger 发布治理与 GA 证据闸门
 
-发布工作流会先进入 GitHub `release-approval` 环境。环境必须配置至少两名审阅者（产品负责人、安全负责人或其代理），否则仅有 CI 绿灯不得创建公开 Release。
+发布工作流会先进入 GitHub `release-approval` 环境。原生客户端和 Web 工作流均已声明该环境；环境必须配置至少两名审阅者（产品负责人、安全负责人或其代理），否则仅有 CI 绿灯不得创建公开 Release。
 
 ## 发布级别
 
