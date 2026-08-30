@@ -49,7 +49,7 @@
 | Android APK | GitHub Actions | 可构建；正式发布需签名 | Android keystore 四项 Secrets、真实设备验收 |
 | Android AAB | GitHub Actions | 可构建；正式发布需签名 | 同上、Google Play 账号/审核（如上架） |
 | Windows | GitHub Actions | 可生成便携 ZIP | Windows 代码签名证书；MSIX 仍需单独发布流程 |
-| iOS / iPadOS | GitHub Actions | 可生成未签名归档 | Apple Developer、证书、Provisioning、TestFlight/App Store 审核 |
+| iOS / iPadOS | GitHub Actions | 可生成未签名模拟器验证包 | Apple Developer、证书、Provisioning、TestFlight/App Store 审核；模拟器包不能安装到真机 |
 | Web / PWA | GitHub Actions | 可构建并部署 | 生产域名、HTTPS、服务端部署配置 |
 | 应用内检查更新 | GitHub Releases API | 已实现版本检查与下载入口 | Release 必须为非草稿、非预发布的 `native-v*`，并上传对应资产 |
 

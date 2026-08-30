@@ -1780,7 +1780,7 @@ class LedgerController extends ChangeNotifier {
         final now = DateTime.now().toIso8601String();
         accounts = [
           for (final item in accounts)
-            if (item.id == target!.id)
+            if (item.id == target.id)
               item.copyWith(
                 balanceCents: item.balanceCents + cents,
                 updatedAt: now,
@@ -2863,7 +2863,7 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
                 children: [
                   _SettingRow(
                     label: '本月支出',
-                    value: _money(widget.controller.monthlyExpense),
+                    value: _moneyYuan(widget.controller.monthlyExpense),
                   ),
                   _SettingRow(
                     label: '待同步',
@@ -5574,8 +5574,8 @@ class _AutomationRuleEditorSheetState extends State<AutomationRuleEditorSheet> {
     final conditions = <String, dynamic>{
       if (merchant.text.trim().isNotEmpty) 'merchantContains': merchant.text.trim(),
       if (source.text.trim().isNotEmpty) 'source': source.text.trim(),
-      if (min != null) 'minAmount': min,
-      if (max != null) 'maxAmount': max,
+      if (min case final value?) 'minAmount': value,
+      if (max case final value?) 'maxAmount': value,
     };
     Navigator.pop(context, <String, dynamic>{
       'name': trimmedName,
@@ -5676,7 +5676,7 @@ class _AutomationRuleEditorSheetState extends State<AutomationRuleEditorSheet> {
             ),
             const SizedBox(height: 8),
             DropdownButtonFormField<String>(
-              value: selectedCategory,
+              initialValue: selectedCategory,
               decoration: const InputDecoration(
                 labelText: '支出分类',
                 prefixIcon: Icon(Icons.category_outlined),
@@ -5693,7 +5693,7 @@ class _AutomationRuleEditorSheetState extends State<AutomationRuleEditorSheet> {
             ),
             const SizedBox(height: 10),
             DropdownButtonFormField<String>(
-              value: mood,
+              initialValue: mood,
               decoration: const InputDecoration(
                 labelText: '消费情绪',
                 prefixIcon: Icon(Icons.mood_outlined),
@@ -10360,6 +10360,15 @@ String _money(int cents) => NumberFormat.currency(
   symbol: '¥',
   decimalDigits: 2,
 ).format(cents / 100);
+
+String _moneyYuan(double? amount) {
+  if (amount == null || !amount.isFinite) return '—';
+  return NumberFormat.currency(
+    locale: 'zh_CN',
+    symbol: '¥',
+    decimalDigits: 2,
+  ).format(amount);
+}
 
 String _date(String value) {
   final parsed = DateTime.tryParse(value);

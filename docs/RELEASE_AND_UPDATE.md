@@ -17,7 +17,7 @@
 | --- | --- | --- |
 | Android | `neo-ledger-android-X.Y.Z.apk`、`.aab` | 标签发布必须使用正式签名；普通分支构建仅用于 CI 验证 |
 | Windows | `neo-ledger-windows-X.Y.Z.zip` | 可运行的便携包，当前未签名，也不是 MSIX 安装器 |
-| iOS/iPadOS | Apple 签名后的 TestFlight/App Store 版本 | CI 仅上传 `neo-ledger-ios-unsigned-X.Y.Z.zip` 验证包，不进入稳定 Release |
+| iOS/iPadOS | Apple 签名后的 TestFlight/App Store 版本 | CI 仅上传 `neo-ledger-ios-unsigned-X.Y.Z.zip` 模拟器验证包，不进入稳定 Release；不能安装到 iPhone/iPad 真机 |
 | Web/NAS | `neo-ledger-web-X.Y.Z.tar.gz` | 可部署的 Flutter Web 静态文件 |
 
 ### Android 签名
@@ -43,7 +43,7 @@ git tag native-v1.2.0
 git push origin native-v1.2.0
 ```
 
-标签推送后，在 GitHub Actions 中确认 `Native client build and release` 的四个平台构建均成功，再检查稳定 Release 是否包含 APK、AAB、Windows ZIP、Web 压缩包、`RELEASE_STATUS.json` 和 `SHA256SUMS.txt`。iOS 未签名验证包只保留在 Actions artifact，不作为可安装版本发布。
+标签推送后，在 GitHub Actions 中确认 `Native client build and release` 的四个平台构建均成功，再检查稳定 Release 是否包含 APK、AAB、Windows ZIP、Web 压缩包、`RELEASE_STATUS.json` 和 `SHA256SUMS.txt`。iOS 模拟器验证包只保留在 Actions artifact，不作为可安装版本发布；真机版本仍必须走 Apple 签名和 TestFlight/App Store。
 
 ## 客户端更新语义
 
