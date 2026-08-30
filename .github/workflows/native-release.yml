@@ -127,7 +127,7 @@ jobs:
           path: apps/native/neo-ledger-windows-*.zip
 
   ios:
-    name: iOS archive (signing required for install)
+    name: iOS simulator validation (device signing required for install)
     runs-on: macos-latest
     defaults:
       run:
@@ -140,11 +140,12 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - name: Build unsigned iOS archive
+      - name: Build unsigned iOS simulator artifact
         run: |
           VERSION=$(awk '/^version:/{print $2}' pubspec.yaml | cut -d+ -f1)
-          flutter build ios --release --no-codesign --build-name "$VERSION" --build-number "${{ github.run_number }}"
-          ditto -c -k --sequesterRsrc --keepParent build/ios/iphoneos/Runner.app "neo-ledger-ios-unsigned-${VERSION}.zip"
+          flutter build ios --simulator --debug --build-name "$VERSION" --build-number "${{ github.run_number }}"
+          test -d build/ios/iphonesimulator/Runner.app
+          ditto -c -k --sequesterRsrc --keepParent build/ios/iphonesimulator/Runner.app "neo-ledger-ios-unsigned-${VERSION}.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: neo-ledger-ios-unsigned

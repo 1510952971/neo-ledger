@@ -254,6 +254,132 @@ class NeoLedgerApi {
     return data;
   }
 
+  Future<ExchangeRateSnapshot> fetchExchangeRates() async {
+    final data = await getJson('/api/exchange-rates');
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('汇率响应格式无效');
+    }
+    return ExchangeRateSnapshot.fromJson(data);
+  }
+
+  Future<List<AutomationRule>> fetchAutomationRules(int ledgerId) async {
+    final data = await getJson('/api/automation/rules?ledger=$ledgerId');
+    if (data is! List) throw const ApiException('自动化规则响应格式无效');
+    return data
+        .whereType<Map<String, dynamic>>()
+        .map(AutomationRule.fromJson)
+        .toList();
+  }
+
+  Future<void> createAutomationRule({
+    required int ledgerId,
+    required String name,
+    required int priority,
+    required bool enabled,
+    required Map<String, dynamic> conditions,
+    required Map<String, dynamic> actions,
+  }) async {
+    await postJson('/api/automation/rules', {
+      'ledgerId': ledgerId,
+      'name': name.trim(),
+      'priority': priority,
+      'enabled': enabled,
+      'conditions': conditions,
+      'actions': actions,
+    });
+  }
+
+  Future<void> updateAutomationRule({
+    required String id,
+    required int ledgerId,
+    String? name,
+    int? priority,
+    bool? enabled,
+    Map<String, dynamic>? conditions,
+    Map<String, dynamic>? actions,
+  }) async {
+    final body = <String, dynamic>{'id': id, 'ledgerId': ledgerId};
+    if (name != null) body['name'] = name.trim();
+    if (priority != null) body['priority'] = priority;
+    if (enabled != null) body['enabled'] = enabled;
+    if (conditions != null) body['conditions'] = conditions;
+    if (actions != null) body['actions'] = actions;
+    await patchJson('/api/automation/rules', body);
+  }
+
+  Future<void> deleteAutomationRule({
+    required String id,
+    required int ledgerId,
+  }) async {
+    await deleteJson('/api/automation/rules', {
+      'id': id,
+      'ledgerId': ledgerId,
+    });
+  }
+
+  Future<QuickSyncStatus> fetchQuickSyncStatus() async {
+    final data = await getJson('/api/integrations/quick-sync');
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('快捷同步响应格式无效');
+    }
+    return QuickSyncStatus.fromJson(data);
+  }
+
+  Future<String> createQuickSyncToken({
+    required String label,
+    required int expiresInDays,
+    required String scope,
+  }) async {
+    final data = await postJson('/api/integrations/quick-sync', {
+      'label': label.trim(),
+      'expiresInDays': expiresInDays,
+      'scope': scope,
+    });
+    if (data is Map<String, dynamic> && data['token'] is String) {
+      final token = (data['token'] as String).trim();
+      if (token.isNotEmpty) return token;
+    }
+    throw const ApiException('快捷同步未返回一次性密钥');
+  }
+
+  Future<void> revokeQuickSyncToken() async {
+    await _send('DELETE', '/api/integrations/quick-sync');
+  }
+
+  Future<List<SecuritySession>> fetchSecuritySessions() async {
+    final data = await getJson('/api/security/sessions');
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('登录会话响应格式无效');
+    }
+    return (data['sessions'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map(SecuritySession.fromJson)
+        .toList();
+  }
+
+  Future<void> revokeSecuritySession({
+    String? sessionId,
+    bool allExceptCurrent = false,
+  }) async {
+    final body = <String, dynamic>{};
+    if (sessionId != null && sessionId.trim().isNotEmpty) {
+      body['sessionId'] = sessionId.trim();
+    } else if (allExceptCurrent) {
+      body['allExceptCurrent'] = true;
+    } else {
+      throw const ApiException('缺少要撤销的会话');
+    }
+    await deleteJson('/api/security/sessions', body);
+  }
+
+  Future<SecurityAuditPage> fetchSecurityAudit() async {
+    final data = await getJson('/api/security/audit?limit=100');
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('安全审计响应格式无效');
+    }
+    return SecurityAuditPage.fromJson(data);
+  }
+
   Future<Member> createMember({
     required int ledgerId,
     required String name,
@@ -363,6 +489,29 @@ class NeoLedgerApi {
       queryParameters: {'id': '$id', 'expectedUpdatedAt': expectedUpdatedAt},
     ).toString();
     await _send('DELETE', path);
+  }
+
+  Future<void> transfer({
+    required int ledgerId,
+    required String kind,
+    required int fromAccountId,
+    required int toAccountId,
+    required double amount,
+    required String occurredAt,
+    required String originalTimezone,
+    String? note,
+  }) async {
+    await postJson('/api/transfers', {
+      'ledgerId': ledgerId,
+      'kind': kind,
+      'fromAccountId': fromAccountId,
+      'toAccountId': toAccountId,
+      'amount': amount,
+      'idempotencyKey': _idempotencyKey('native-transfer'),
+      'occurredAt': occurredAt,
+      'originalTimezone': originalTimezone,
+      if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+    });
   }
 
   Future<TransactionPage> fetchTransactions(int ledgerId) async {
@@ -495,6 +644,23 @@ class NeoLedgerApi {
     } else {
       await putJson('/api/assets', body);
     }
+  }
+
+  Future<void> liquidateAsset({
+    required int id,
+    required int ledgerId,
+    required double salePrice,
+    required int accountId,
+    required String expectedUpdatedAt,
+  }) async {
+    await patchJson('/api/assets', {
+      'id': id,
+      'ledgerId': ledgerId,
+      'salePrice': salePrice,
+      'accountId': accountId,
+      'expectedUpdatedAt': expectedUpdatedAt,
+      'idempotencyKey': _idempotencyKey('native-liquidation'),
+    });
   }
 
   String _idempotencyKey(String prefix) {

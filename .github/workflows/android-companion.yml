@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Verify Web and Android compatibility manifest
         working-directory: .
-        run: node scripts/verify-release-version.mjs --compatibility-file=release-compatibility.json --android-file=android-companion/app/build.gradle.kts
+        run: node scripts/verify-release-version.mjs --tag= --compatibility-file=release-compatibility.json --android-file=android-companion/app/build.gradle.kts
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
