@@ -5574,8 +5574,8 @@ class _AutomationRuleEditorSheetState extends State<AutomationRuleEditorSheet> {
     final conditions = <String, dynamic>{
       if (merchant.text.trim().isNotEmpty) 'merchantContains': merchant.text.trim(),
       if (source.text.trim().isNotEmpty) 'source': source.text.trim(),
-      if (min case final value?) 'minAmount': value,
-      if (max case final value?) 'maxAmount': value,
+      'minAmount': ?min,
+      'maxAmount': ?max,
     };
     Navigator.pop(context, <String, dynamic>{
       'name': trimmedName,
