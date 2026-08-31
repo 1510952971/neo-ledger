@@ -37,10 +37,10 @@
 
 ```bash
 git add apps/native .github/workflows/native-release.yml release-manifest.json docs/RELEASE_AND_UPDATE.md
-git commit -m "release: native v1.2.1"
+git commit -m "release: native v1.2.2"
 git push origin main
-git tag native-v1.2.1
-git push origin native-v1.2.1
+git tag native-v1.2.2
+git push origin native-v1.2.2
 ```
 
 标签推送后，在 GitHub Actions 中确认 `Native client build and release` 的四个平台构建均成功，再检查稳定 Release 是否包含 APK、AAB、Windows ZIP、Web 压缩包、`RELEASE_STATUS.json` 和 `SHA256SUMS.txt`。发布 job 会进入 `release-approval` 环境；仓库管理员仍需在 GitHub 项目设置中为该环境配置至少两名 Required reviewers。iOS 模拟器验证包只保留在 Actions artifact，不作为可安装版本发布；真机版本仍必须走 Apple 签名和 TestFlight/App Store。

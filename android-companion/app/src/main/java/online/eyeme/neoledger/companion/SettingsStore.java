@@ -68,22 +68,65 @@ final class SettingsStore {
     String lastStatus() { return preferences.getString("last_status", "尚未发送通知"); }
     String lastCaptured() { return preferences.getString("last_captured", "尚未捕获支付通知"); }
     long listenerConnectedAt() { return preferences.getLong("listener_connected_at", 0); }
+    int accessibilityEventCount() {
+        return preferences.getInt("accessibility_event_count", 0);
+    }
+    int accessibilityScanCount() {
+        return preferences.getInt("accessibility_scan_count", 0);
+    }
+    int accessibilityRecognizedCount() {
+        return preferences.getInt("accessibility_recognized_count", 0);
+    }
+    int accessibilityRejectedCount() {
+        return preferences.getInt("accessibility_rejected_count", 0);
+    }
+    String lastAccessibilityPackage() {
+        return preferences.getString("last_accessibility_package", "");
+    }
+    String lastAccessibilityReason() {
+        return preferences.getString("last_accessibility_reason", "");
+    }
+    long lastAccessibilityScanAt() {
+        return preferences.getLong("last_accessibility_scan_at", 0);
+    }
 
     void recordAccessibilityEvent(String source, int eventType) {
         preferences.edit()
                 .putInt("accessibility_event_count", preferences.getInt("accessibility_event_count", 0) + 1)
                 .putString("last_accessibility_source", source == null ? "支付应用" : source)
+                .putInt("last_accessibility_event_type", eventType)
                 .putLong("last_accessibility_event_at", System.currentTimeMillis())
                 .apply();
     }
 
     void recordAccessibilityScan(String source, boolean completed, String reason) {
-        String detail = completed ? "识别到支付完成页" : "收到界面但未判定为支付完成页（" + reason + "）";
-        preferences.edit()
+        recordAccessibilityScan(source, "", completed, reason, 0);
+    }
+
+    void recordAccessibilityScan(String source, String packageName, boolean completed,
+                                 String reason, int eventType) {
+        String safeSource = source == null || source.isEmpty() ? "支付应用" : source;
+        String safeReason = reason == null || reason.isEmpty() ? "未提供原因" : reason;
+        String detail = completed ? "识别到支付完成页" : "收到界面但未判定为支付完成页（" + safeReason + "）";
+        SharedPreferences.Editor editor = preferences.edit()
                 .putInt("accessibility_scan_count", preferences.getInt("accessibility_scan_count", 0) + 1)
-                .putString("last_accessibility_scan", (source == null ? "支付应用" : source)
-                        + "：" + detail)
-                .apply();
+                .putString("last_accessibility_scan", safeSource + "：" + detail)
+                .putString("last_accessibility_package", packageName == null ? "" : packageName)
+                .putString("last_accessibility_reason", safeReason)
+                .putLong("last_accessibility_scan_at", System.currentTimeMillis());
+        // OCR retries use eventType=0. Keep the last real accessibility
+        // event type so the diagnostic screen remains useful after a retry.
+        if (eventType > 0) {
+            editor.putInt("last_accessibility_scan_event_type", eventType);
+        }
+        if (completed) {
+            editor.putInt("accessibility_recognized_count",
+                    preferences.getInt("accessibility_recognized_count", 0) + 1);
+        } else {
+            editor.putInt("accessibility_rejected_count",
+                    preferences.getInt("accessibility_rejected_count", 0) + 1);
+        }
+        editor.apply();
     }
 
     String accessibilitySummary() {
@@ -91,7 +134,10 @@ final class SettingsStore {
         if (events == 0) return "无障碍事件：尚未收到已配置支付 App 的界面事件";
         String source = preferences.getString("last_accessibility_source", "支付应用");
         String scan = preferences.getString("last_accessibility_scan", "尚未完成界面解析");
-        return "无障碍事件：已收到 " + events + " 次，最近事件为 " + source + "；最近扫描：" + scan;
+        return "无障碍事件：已收到 " + events + " 次；扫描 "
+                + accessibilityScanCount() + " 次；识别成功 " + accessibilityRecognizedCount()
+                + " 次；拒绝 " + accessibilityRejectedCount() + " 次；最近事件为 " + source
+                + "；最近扫描：" + scan;
     }
 
     String token() {

@@ -29,7 +29,7 @@ import java.util.concurrent.Executor;
 public final class NeoPaymentAccessibilityService extends AccessibilityService {
     private static final int MAX_NODES = 240;
     private static final int MAX_TEXT_LENGTH = 8_000;
-    private static final long ACTIVE_WINDOW_POLL_MS = 900L;
+    private static final long ACTIVE_WINDOW_POLL_MS = 400L;
     // Payment result sheets in Douyin and some marketplace apps can disappear
     // in roughly one second. A single screenshot is therefore not reliable.
     private static final long SCREENSHOT_MIN_INTERVAL_MS = 260L;
@@ -44,6 +44,7 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
     private long lastCompletedAt;
     private String observedPackage;
     private long screenObservation;
+    private final PaymentObservationBuffer observationBuffer = new PaymentObservationBuffer();
     private final Runnable activeWindowPoll = new Runnable() {
         @Override public void run() {
             scanActiveWindow();
@@ -64,9 +65,7 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
     public void onAccessibilityEvent(AccessibilityEvent event) {
         if (event == null || event.getPackageName() == null) return;
         int type = event.getEventType();
-        if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-                && type != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
-                && type != AccessibilityEvent.TYPE_WINDOWS_CHANGED) return;
+        if (!isRelevantEvent(type)) return;
 
         String packageName = event.getPackageName().toString();
         SettingsStore store = new SettingsStore(this);
@@ -74,8 +73,7 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
 
         String source = PaymentAppCatalog.source(packageName);
         store.recordAccessibilityEvent(source, type);
-        scan(packageName, getRootInActiveWindow(), event.getText(), store, source, true,
-                type != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);
+        scan(packageName, getRootInActiveWindow(), event.getText(), store, source, true, type);
     }
 
     private void scanActiveWindow() {
@@ -84,12 +82,12 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
         String packageName = root.getPackageName().toString();
         SettingsStore store = new SettingsStore(this);
         if (!store.configured() || !PaymentNotificationParser.acceptsPackage(packageName, store)) return;
-        scan(packageName, root, null, store, PaymentAppCatalog.source(packageName), false, false);
+        scan(packageName, root, null, store, PaymentAppCatalog.source(packageName), false, 0);
     }
 
     private void scan(String packageName, AccessibilityNodeInfo root,
                       java.util.List<CharSequence> eventText, SettingsStore store, String source,
-                      boolean eventTriggered, boolean windowChanged) {
+                      boolean eventTriggered, int eventType) {
         long now = System.currentTimeMillis();
         if (packageName.equals(lastCompletedPackage)
                 && now - lastCompletedAt < COMPLETION_COOLDOWN_MS) return;
@@ -97,20 +95,21 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
         if (!packageName.equals(observedPackage)) {
             observedPackage = packageName;
             screenObservation++;
-        } else if (eventTriggered && windowChanged) {
-            // A new window within the same app invalidates delayed captures
-            // scheduled for the previous page.
-            screenObservation++;
+            observationBuffer.clear();
         }
         final long observation = screenObservation;
 
         String earlyEventText = eventText(eventText);
-        String text = visibleText(packageName, root);
-        if (!earlyEventText.isEmpty()) text += " " + earlyEventText;
+        String visible = visibleText(packageName, root);
+        boolean bufferChanged = observationBuffer.append(visible, now);
+        bufferChanged |= observationBuffer.append(earlyEventText, now);
+        String text = observationBuffer.text(now);
 
         boolean completed = PaymentScreenParser.isPaymentCompleted(packageName, text);
-        store.recordAccessibilityScan(source, completed,
-                PaymentScreenParser.rejectionReason(packageName, text));
+        if (eventTriggered || bufferChanged) {
+            store.recordAccessibilityScan(source, packageName, completed,
+                    PaymentScreenParser.rejectionReason(packageName, text), eventType);
+        }
         if (!completed) {
             // Capture after collecting accessibility text so OCR gets both the
             // canvas-rendered sheet and any semantic text exposed by the app.
@@ -162,7 +161,9 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
             handler.postDelayed(() -> {
                 if (observation != screenObservation || !isCurrentPackage(packageName)) return;
                 AccessibilityNodeInfo root = getRootInActiveWindow();
-                String text = visibleText(packageName, root);
+                long now = System.currentTimeMillis();
+                observationBuffer.append(visibleText(packageName, root), now);
+                String text = observationBuffer.text(now);
                 SettingsStore store = new SettingsStore(this);
                 if (PaymentScreenParser.isPaymentCompleted(packageName, text)) {
                     enqueueCompleted(packageName, source, text, store);
@@ -176,7 +177,23 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
 
     private boolean isCurrentPackage(String packageName) {
         AccessibilityNodeInfo root = getRootInActiveWindow();
-        return samePackage(packageName, root);
+        if (samePackage(packageName, root)) return true;
+        try {
+            List<AccessibilityWindowInfo> windows = getWindows();
+            if (windows != null) {
+                for (AccessibilityWindowInfo window : windows) {
+                    if (window == null) continue;
+                    AccessibilityNodeInfo windowRoot = window.getRoot();
+                    if (samePackage(packageName, windowRoot)) return true;
+                }
+            }
+        } catch (RuntimeException ignored) {
+            // Window enumeration is not reliable on every Android skin.
+        }
+        // A result sheet can briefly detach the active root while the app is
+        // still the observed foreground package. Keep OCR alive only for the
+        // bounded observation window, never indefinitely.
+        return packageName.equals(observedPackage) && observationBuffer.active(System.currentTimeMillis());
     }
 
     private void requestOcr(String packageName, String source, String accessibilityText,
@@ -200,12 +217,13 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
                         @Override
                         public void onFailure(int errorCode) {
                             screenshotInFlight = false;
-                            recordOcrDiagnostic(source, "截图失败（系统错误码 " + errorCode + "）");
+                            recordOcrDiagnostic(source, packageName,
+                                    "截图失败（系统错误码 " + errorCode + "）");
                         }
                     });
         } catch (RuntimeException ignored) {
             screenshotInFlight = false;
-            recordOcrDiagnostic(source, "截图调用失败");
+            recordOcrDiagnostic(source, packageName, "截图调用失败");
         }
     }
 
@@ -216,7 +234,8 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
         Bitmap bitmap = copyScreenshot(result);
         if (bitmap == null || textRecognizer == null) {
             screenshotInFlight = false;
-            recordOcrDiagnostic(source, bitmap == null ? "截图不可用" : "OCR 未初始化");
+            recordOcrDiagnostic(source, packageName,
+                    bitmap == null ? "截图不可用" : "OCR 未初始化");
             return;
         }
 
@@ -231,20 +250,22 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
         textRecognizer.process(image)
                 .addOnSuccessListener(screenshotExecutor, recognized -> {
                     String ocrText = recognized == null ? "" : recognized.getText();
-                    String combined = (accessibilityText == null ? "" : accessibilityText)
-                            + " " + ocrText;
                     if (observation != screenObservation || !isCurrentPackage(packageName)) {
                         return;
                     }
+                    long now = System.currentTimeMillis();
+                    observationBuffer.append(accessibilityText, now);
+                    observationBuffer.append(ocrText, now);
+                    String combined = observationBuffer.text(now);
                     SettingsStore store = new SettingsStore(this);
                     boolean completed = PaymentScreenParser.isPaymentCompleted(packageName, combined);
-                    store.recordAccessibilityScan(source, completed,
-                            PaymentScreenParser.rejectionReason(packageName, combined));
+                    store.recordAccessibilityScan(source, packageName, completed,
+                            PaymentScreenParser.rejectionReason(packageName, combined), 0);
                     if (completed) enqueueCompleted(packageName, source, combined, store);
                     sendBroadcast(new Intent(SettingsStore.ACTION_STATUS).setPackage(getPackageName()));
                 })
                 .addOnFailureListener(screenshotExecutor, ignored -> {
-                    recordOcrDiagnostic(source, "截图已获取，但 OCR 识别失败");
+                    recordOcrDiagnostic(source, packageName, "截图已获取，但 OCR 识别失败");
                 })
                 .addOnCompleteListener(screenshotExecutor, ignored -> {
                     screenshotInFlight = false;
@@ -268,9 +289,20 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
         }
     }
 
-    private void recordOcrDiagnostic(String source, String detail) {
-        new SettingsStore(this).recordAccessibilityScan(source, false, detail);
+    private void recordOcrDiagnostic(String source, String packageName, String detail) {
+        new SettingsStore(this).recordAccessibilityScan(source, packageName, false, detail, 0);
         sendBroadcast(new Intent(SettingsStore.ACTION_STATUS).setPackage(getPackageName()));
+    }
+
+    private boolean isRelevantEvent(int type) {
+        return type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                || type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                || type == AccessibilityEvent.TYPE_WINDOWS_CHANGED
+                || type == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
+                || type == AccessibilityEvent.TYPE_VIEW_SCROLLED
+                || type == AccessibilityEvent.TYPE_VIEW_SELECTED
+                || type == AccessibilityEvent.TYPE_VIEW_FOCUSED
+                || type == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED;
     }
 
     @Override

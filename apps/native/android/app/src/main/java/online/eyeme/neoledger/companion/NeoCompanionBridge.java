@@ -41,6 +41,13 @@ public final class NeoCompanionBridge {
         result.put("lastStatus", store.lastStatus());
         result.put("lastCaptured", store.lastCaptured());
         result.put("accessibilitySummary", store.accessibilitySummary());
+        result.put("accessibilityEventCount", store.accessibilityEventCount());
+        result.put("accessibilityScanCount", store.accessibilityScanCount());
+        result.put("accessibilityRecognizedCount", store.accessibilityRecognizedCount());
+        result.put("accessibilityRejectedCount", store.accessibilityRejectedCount());
+        result.put("lastAccessibilityPackage", store.lastAccessibilityPackage());
+        result.put("lastAccessibilityReason", store.lastAccessibilityReason());
+        result.put("lastAccessibilityScanAt", store.lastAccessibilityScanAt());
         result.put("deliverySummary", store.deliverySummary());
         return result;
     }
