@@ -3331,7 +3331,14 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
           platform == 'windows' &&
           asset != null &&
           assetName != null &&
-          assetName.toLowerCase().endsWith('.exe');
+          assetName.toLowerCase().endsWith('.exe') &&
+          latest.checksumManifestUrl != null;
+      final windowsMissingChecksum =
+          platform == 'windows' &&
+          asset != null &&
+          assetName != null &&
+          assetName.toLowerCase().endsWith('.exe') &&
+          latest.checksumManifestUrl == null;
       final iosNeedsAppleDistribution =
           platform == 'ios' &&
           (asset == null ||
@@ -3344,6 +3351,8 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
             child: Text(
               '${latest.notes.isEmpty ? '该版本包含功能和稳定性改进。' : latest.notes}\n\n当前平台：$platform\n${iosNeedsAppleDistribution
                   ? 'iOS/iPadOS 需要通过 TestFlight 或 App Store 安装，不能直接安装未签名 ZIP。'
+                  : windowsMissingChecksum
+                  ? 'Windows 发布缺少 SHA-256 校验清单，为安全起见不会直接安装，请打开发布页。'
                   : asset == null
                   ? '请打开发布页选择对应安装包。'
                   : canInstallAndroid
@@ -3361,12 +3370,16 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
             FilledButton(
               onPressed: () async {
                 Navigator.pop(dialogContext);
-                if (canInstallAndroid) {
+                if (canInstallAndroid && asset != null && assetName != null) {
                   await _installAndroidUpdate(latest, asset, assetName);
                   return;
                 }
-                if (canInstallWindows) {
-                  await _installWindowsUpdate(asset, assetName);
+                if (canInstallWindows && asset != null && assetName != null) {
+                  await _installWindowsUpdate(
+                    latest,
+                    asset,
+                    assetName,
+                  );
                   return;
                 }
                 final uri = Uri.tryParse(
@@ -3398,6 +3411,7 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
   }
 
   Future<void> _installWindowsUpdate(
+    UpdateInfo latest,
     String installerUrl,
     String installerName,
   ) async {
@@ -3408,6 +3422,7 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
       await downloadAndInstallWindowsUpdate(
         url: installerUrl,
         fileName: installerName,
+        checksumUrl: latest.checksumManifestUrl!,
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
