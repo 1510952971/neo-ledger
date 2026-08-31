@@ -1,6 +1,6 @@
 # Neo Ledger 完整使用手册
 
-适用版本：Neo Ledger 原生统一客户端 `1.2.6`，Web 端版本以 GitHub Release 为准。
+适用版本：Neo Ledger 原生统一客户端 `1.2.7`，Web 端版本以 GitHub Release 为准。
 
 本手册面向普通用户和家庭管理员，按“先能用，再配置高级功能”的顺序编写。文中“数据中心”指主界面侧栏中的数据库图标入口。
 

@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:neo_ledger/update_integrity.dart';
 
 void main() {
-  const installerName = 'neo-ledger-windows-1.2.6-setup.exe';
+  const installerName = 'neo-ledger-windows-1.2.7-setup.exe';
   final bytes = utf8.encode('installer bytes');
 
   test('finds regular sha256sum entries', () {

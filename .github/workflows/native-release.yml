@@ -39,6 +39,9 @@ jobs:
       - name: Verify native release metadata
         working-directory: .
         run: node scripts/verify-native-release-version.mjs
+      - name: Verify Android companion parity
+        working-directory: .
+        run: node scripts/verify-native-android-companion-parity.mjs
       - run: flutter analyze
       - run: flutter test
       - run: flutter build web --release
