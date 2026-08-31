@@ -254,14 +254,28 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
                         return;
                     }
                     long now = System.currentTimeMillis();
+                    // The payment-success sheet in some apps (notably Douyin) only
+                    // remains visible for a moment.  The accessibility tree can
+                    // still contain the order page behind that sheet, so parsing
+                    // the merged buffer first may incorrectly reject a real
+                    // success as an order/history page.  Give the current OCR
+                    // frame precedence when it independently contains a strict
+                    // success signal and amount; the merged buffer remains the
+                    // fallback for screens whose text is split across sources.
+                    String ocrCandidate = ocrText == null ? "" : ocrText.trim();
+                    boolean ocrCompleted = !ocrCandidate.isEmpty()
+                            && PaymentScreenParser.isPaymentCompleted(packageName, ocrCandidate, now);
                     observationBuffer.append(accessibilityText, now);
                     observationBuffer.append(ocrText, now);
                     String combined = observationBuffer.text(now);
                     SettingsStore store = new SettingsStore(this);
-                    boolean completed = PaymentScreenParser.isPaymentCompleted(packageName, combined);
+                    boolean combinedCompleted = PaymentScreenParser.isPaymentCompleted(
+                            packageName, combined, now);
+                    boolean completed = ocrCompleted || combinedCompleted;
+                    String candidate = ocrCompleted ? ocrCandidate : combined;
                     store.recordAccessibilityScan(source, packageName, completed,
-                            PaymentScreenParser.rejectionReason(packageName, combined), 0);
-                    if (completed) enqueueCompleted(packageName, source, combined, store);
+                            PaymentScreenParser.rejectionReason(packageName, candidate, now), 0);
+                    if (completed) enqueueCompleted(packageName, source, candidate, store);
                     sendBroadcast(new Intent(SettingsStore.ACTION_STATUS).setPackage(getPackageName()));
                 })
                 .addOnFailureListener(screenshotExecutor, ignored -> {

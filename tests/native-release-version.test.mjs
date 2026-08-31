@@ -7,5 +7,5 @@ const script = fileURLToPath(new URL("../scripts/verify-native-release-version.m
 
 test("native release metadata matches the Flutter client version", () => {
   const output = execFileSync(process.execPath, [script], { encoding: "utf8" });
-  assert.match(output, /Native release version verified: 1\.2\.5/u);
+  assert.match(output, /Native release version verified: 1\.2\.6/u);
 });
