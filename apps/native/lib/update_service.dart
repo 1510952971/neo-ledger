@@ -17,7 +17,7 @@ class NeoLedgerUpdateService {
 
   Future<UpdateInfo?> checkLatest() async {
     final uri = Uri.parse(
-      'https://api.github.com/repos/$repository/releases?per_page=30&ts=${DateTime.now().millisecondsSinceEpoch}',
+      'https://api.github.com/repos/$repository/releases?per_page=100&ts=${DateTime.now().millisecondsSinceEpoch}',
     );
     final response = await _client
         .get(

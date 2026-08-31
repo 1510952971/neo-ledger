@@ -74,6 +74,7 @@ void main() {
 
     expect(update?.version, '1.2.0');
     expect(client.requestedUri?.queryParameters['ts'], isNotEmpty);
+    expect(client.requestedUri?.queryParameters['per_page'], '100');
     expect(client.requestedHeaders?['cache-control'], 'no-cache, no-store');
     expect(client.requestedHeaders?['pragma'], 'no-cache');
     expect(client.requestedHeaders?['x-github-api-version'], '2022-11-28');

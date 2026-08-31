@@ -129,6 +129,7 @@ jobs:
           WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.NEO_LEDGER_WINDOWS_SIGNING_CERTIFICATE_PASSWORD || secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
         run: |
           $version = (Select-String -Path pubspec.yaml -Pattern '^version:' | ForEach-Object { $_.Line.Split(' ')[1].Split('+')[0] })
+          $signatureStatus = 'not-required'
           $buildDir = (Resolve-Path 'build\windows\x64\runner\Release').Path
           Compress-Archive -Path "$buildDir\*" -DestinationPath "neo-ledger-windows-$version.zip"
           $isccCandidates = @(
@@ -161,13 +162,20 @@ jobs:
             if (-not $signtool) { throw "Windows SDK signtool.exe was not found" }
             & $signtool.FullName sign /fd SHA256 /f $pfxPath /p $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD /tr http://timestamp.digicert.com /td SHA256 /d "Neo Ledger" $installer
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $signature = Get-AuthenticodeSignature -FilePath $installer
+            if ($signature.Status -ne 'Valid') {
+              throw "Windows installer signature validation failed: $($signature.Status)"
+            }
+            $signatureStatus = 'valid'
           }
+          Set-Content -Path 'windows-signature-status.txt' -Value $signatureStatus -NoNewline
       - uses: actions/upload-artifact@v4
         with:
           name: neo-ledger-windows
           path: |
             apps/native/neo-ledger-windows-*.zip
             apps/native/neo-ledger-windows-*-setup.exe
+            apps/native/windows-signature-status.txt
 
   ios:
     name: iOS simulator validation (device signing required for install)
@@ -219,6 +227,7 @@ jobs:
       - name: Collect assets and checksums
         run: |
           set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#native-v}"
           mkdir -p release-assets
           while IFS= read -r -d '' file; do
             name=$(basename "$file")
@@ -226,13 +235,28 @@ jobs:
               neo-ledger-ios-unsigned-*.zip)
                 echo "Keeping unsigned iOS validation artifact out of stable release: $name"
                 ;;
+              windows-signature-status.txt)
+                echo "Using Windows signature status marker for release validation"
+                ;;
               *)
                 cp "$file" "release-assets/$name"
                 ;;
             esac
           done < <(find artifacts -maxdepth 3 -type f -print0)
-          test -n "$(find release-assets -maxdepth 1 -type f \( -name 'neo-ledger-*.zip' -o -name 'neo-ledger-*.exe' -o -name 'neo-ledger-*.apk' -o -name 'neo-ledger-*.aab' -o -name 'neo-ledger-*.tar.gz' \) -print -quit)"
-          VERSION="${GITHUB_REF_NAME#native-v}"
+          signature_file=$(find artifacts -maxdepth 3 -type f -name 'windows-signature-status.txt' -print -quit)
+          test -n "$signature_file"
+          test "$(tr -d '\r\n' < "$signature_file")" = 'valid'
+          for required_asset in \
+            "neo-ledger-android-${VERSION}.apk" \
+            "neo-ledger-android-${VERSION}.aab" \
+            "neo-ledger-windows-${VERSION}.zip" \
+            "neo-ledger-windows-${VERSION}-setup.exe" \
+            "neo-ledger-web-${VERSION}.tar.gz"; do
+            test -f "release-assets/$required_asset" || {
+              echo "Missing required native release asset: $required_asset"
+              exit 1
+            }
+          done
           cat > release-assets/RELEASE_STATUS.json <<EOF
           {
             "schemaVersion": 1,
