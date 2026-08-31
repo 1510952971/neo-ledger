@@ -5692,6 +5692,20 @@ class _SettingsSheetState extends State<SettingsSheet> {
               label: Text(saving ? '保存中…' : '保存连接地址'),
             ),
             const SizedBox(height: 18),
+            if (controller.isAndroid) ...[
+              Text(
+                'Android 伴侣',
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '旧版 Android 伴侣能力已合并到当前 APK：通知监听、无障碍支付页识别、后台保活、待发送队列、测试账单和应用内更新都从这里管理。',
+                style: TextStyle(color: Colors.grey.shade500, height: 1.4),
+              ),
+              const SizedBox(height: 12),
+              _androidCaptureCard(controller),
+              const SizedBox(height: 12),
+            ],
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -5731,10 +5745,6 @@ class _SettingsSheetState extends State<SettingsSheet> {
                 ),
               ),
             ),
-            if (controller.isAndroid) ...[
-              const SizedBox(height: 12),
-              _androidCaptureCard(controller),
-            ],
             const SizedBox(height: 12),
             Card(
               child: ExpansionTile(
