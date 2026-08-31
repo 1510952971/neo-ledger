@@ -1048,7 +1048,7 @@ class LedgerController extends ChangeNotifier {
       type: type,
       title: title,
       category: category,
-      occurredAt: DateTime.now().toIso8601String(),
+      occurredAt: iso8601NowUtc(),
     );
     if (demoMode) {
       final item = TransactionItem(

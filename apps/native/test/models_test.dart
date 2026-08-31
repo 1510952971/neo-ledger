@@ -59,4 +59,25 @@ void main() {
     expect(asset.valueCents, 10000);
     expect(asset.currency, 'CNY');
   });
+
+  test('keeps an explicit timezone in offline sync payloads', () {
+    const entry = OfflineEntry(
+      offlineId: 'offline-1',
+      ledgerId: 1,
+      accountId: 2,
+      amount: 18.88,
+      type: '支出',
+      title: '抖音商城',
+      category: '餐饮',
+      occurredAt: '2026-08-23T17:39:00+08:00',
+    );
+
+    final json = entry.toJson();
+    expect(json['occurredAt'], '2026-08-23T17:39:00+08:00');
+    expect(json['originalTimezone'], 'Asia/Shanghai');
+  });
+
+  test('generates UTC ISO timestamps for new offline entries', () {
+    expect(iso8601NowUtc(), endsWith('Z'));
+  });
 }

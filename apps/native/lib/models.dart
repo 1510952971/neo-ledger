@@ -1062,6 +1062,12 @@ class OfflineEntry {
   );
 }
 
+/// Returns a timezone-qualified UTC timestamp for API sync payloads.
+///
+/// The server rejects local ISO strings without an explicit offset. Keeping
+/// this helper public also gives the offline queue a single contract to test.
+String iso8601NowUtc() => DateTime.now().toUtc().toIso8601String();
+
 class UpdateInfo {
   const UpdateInfo({
     required this.version,
