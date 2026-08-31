@@ -37,10 +37,10 @@
 
 ```bash
 git add apps/native .github/workflows/native-release.yml release-manifest.json docs/RELEASE_AND_UPDATE.md
-git commit -m "release: native v1.2.4"
+git commit -m "release: native v1.2.5"
 git push origin main
-git tag native-v1.2.4
-git push origin native-v1.2.4
+git tag native-v1.2.5
+git push origin native-v1.2.5
 ```
 
 标签推送后，在 GitHub Actions 中确认 `Native client build and release` 的四个平台构建均成功，再检查稳定 Release 是否包含 APK、AAB、Windows 安装器、Windows ZIP、Web 压缩包、`RELEASE_STATUS.json` 和 `SHA256SUMS.txt`。发布 job 会拒绝缺失任一安装资产的构建，并在发布前校验 Windows 安装器签名状态；未签名 iOS 模拟器包不会进入稳定 Release。发布 job 会进入 `release-approval` 环境；仓库管理员仍需在 GitHub 项目设置中为该环境配置至少两名 Required reviewers。iOS 真机版本需在 `iOS TestFlight distribution` 中使用 Apple 凭据单独构建和上传。
@@ -49,7 +49,7 @@ git push origin native-v1.2.4
 
 原生客户端只查询 GitHub Releases API 中“非草稿、非预发布、标签为 `native-v*`”的版本，并按语义版本比较。它不会把 Web 发布或 Android companion 的标签误当成原生客户端更新。
 
-当前更新流程是：检查版本 → 展示版本和更新说明 → 用户确认。Android 会优先选择规范命名的 APK，在应用内下载、校验 SHA-256，并交给系统安装器；首次安装仍需要用户允许“安装未知应用”，且系统始终会显示安装确认。iOS 必须通过 TestFlight/App Store；Windows 更新优先打开签名安装器，找不到安装器时才回退到便携 ZIP。
+当前更新流程是：检查版本 → 展示版本和更新说明 → 用户确认。Android 会优先选择规范命名的 APK，在应用内下载、校验 SHA-256，并交给系统安装器；首次安装仍需要用户允许“安装未知应用”，且系统始终会显示安装确认。iOS 必须通过 TestFlight/App Store；Windows 客户端会下载并启动规范命名的签名 EXE 安装器，安装器不可用时才打开发布页，且安装器路径仅允许位于系统临时目录。
 
 ## 三端正式验收清单
 

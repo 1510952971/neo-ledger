@@ -3,8 +3,12 @@
 
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
+#include <flutter/method_channel.h>
+#include <flutter/standard_method_codec.h>
+#include <shellapi.h>
 
 #include <memory>
+#include <string>
 
 #include "win32_window.h"
 
@@ -23,11 +27,26 @@ class FlutterWindow : public Win32Window {
                          LPARAM const lparam) noexcept override;
 
  private:
+  void ConfigurePlatformChannel();
+  void ConfigureTrayIcon();
+  void RemoveTrayIcon();
+  void HandleDroppedFiles(HDROP drop);
+  void ShowTrayMenu();
+
+  static std::string Utf8FromWide(const std::wstring& value);
+  static std::wstring WideFromUtf8(const std::string& value);
+
   // The project to run.
   flutter::DartProject project_;
 
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
+
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+      platform_channel_;
+  NOTIFYICONDATAW tray_icon_{};
+  bool tray_icon_added_ = false;
+  bool suppress_close_ = false;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

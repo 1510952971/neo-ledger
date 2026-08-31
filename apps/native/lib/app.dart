@@ -11,14 +11,17 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
 import 'feature_catalog.dart';
+import 'import_file_loader.dart';
 import 'import_parser.dart';
 import 'models.dart';
 import 'update_service.dart';
+import 'windows_platform.dart';
+import 'windows_update_service.dart';
 
 const _brand = Color(0xffa5ff4f);
 const _surface = Color(0xff15151d);
 const _surfaceAlt = Color(0xff20202a);
-const _nativeVersion = '1.2.4';
+const _nativeVersion = '1.2.5';
 const _queueKey = 'neo_ledger_offline_queue_v1';
 const _coreSnapshotKey = 'neo_ledger_core_snapshot_v1';
 const _assetTypes = [
@@ -2900,6 +2903,9 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
       const Duration(seconds: 15),
       (_) => _refreshInBackground(),
     );
+    unawaited(
+      NeoWindowsPlatform.setFilesDroppedHandler(_handleWindowsFilesDropped),
+    );
   }
 
   @override
@@ -2941,6 +2947,7 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
     _backgroundRefreshTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _billSearchController.dispose();
+    unawaited(NeoWindowsPlatform.clearFilesDroppedHandler());
     updateService.close();
     super.dispose();
   }
@@ -3320,6 +3327,11 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
           asset != null &&
           assetName != null &&
           assetName.toLowerCase().endsWith('.apk');
+      final canInstallWindows =
+          platform == 'windows' &&
+          asset != null &&
+          assetName != null &&
+          assetName.toLowerCase().endsWith('.exe');
       final iosNeedsAppleDistribution =
           platform == 'ios' &&
           (asset == null ||
@@ -3336,6 +3348,8 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
                   ? '请打开发布页选择对应安装包。'
                   : canInstallAndroid
                   ? '已找到 Android APK，可在应用内下载、校验并交给系统安装。'
+                  : canInstallWindows
+                  ? '已找到 Windows 安装器，可在应用内下载并启动安装。'
                   : '已找到当前平台安装包。'}',
             ),
           ),
@@ -3351,6 +3365,10 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
                   await _installAndroidUpdate(latest, asset, assetName);
                   return;
                 }
+                if (canInstallWindows) {
+                  await _installWindowsUpdate(asset, assetName);
+                  return;
+                }
                 final uri = Uri.tryParse(
                   iosNeedsAppleDistribution
                       ? latest.releaseUrl
@@ -3361,7 +3379,7 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
                 }
               },
               child: Text(
-                canInstallAndroid
+                canInstallAndroid || canInstallWindows
                     ? '下载并安装'
                     : iosNeedsAppleDistribution
                     ? '打开发布页'
@@ -3375,6 +3393,30 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('检查更新失败：$error')));
+      }
+    }
+  }
+
+  Future<void> _installWindowsUpdate(
+    String installerUrl,
+    String installerName,
+  ) async {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('正在下载 Windows 更新安装器…')));
+    try {
+      await downloadAndInstallWindowsUpdate(
+        url: installerUrl,
+        fileName: installerName,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('安装器已启动，请按 Windows 安装向导完成更新。')),
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Windows 更新失败：$error')));
       }
     }
   }
@@ -4248,13 +4290,41 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _openImport() async {
+  Future<void> _openImport({List<String>? filePaths}) async {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (_) => ImportSheet(controller: widget.controller),
+      builder: (_) => ImportSheet(
+        controller: widget.controller,
+        initialFilePaths: filePaths,
+      ),
     );
+  }
+
+  Future<void> _handleWindowsFilesDropped(List<String> paths) async {
+    final supported = paths
+        .where((path) {
+          final lower = path.toLowerCase();
+          return lower.endsWith('.json') ||
+              lower.endsWith('.csv') ||
+              lower.endsWith('.txt');
+        })
+        .toList(growable: false);
+    if (supported.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('仅支持拖放 JSON、CSV 或 TXT 账单文件')),
+        );
+      }
+      return;
+    }
+    if (supported.length > 1 && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已选择第一个账单文件，共收到 ${supported.length} 个文件')),
+      );
+    }
+    await _openImport(filePaths: <String>[supported.first]);
   }
 
   Future<void> _openSettlement() async {
@@ -8309,9 +8379,14 @@ class _WebDavSheetState extends State<WebDavSheet> {
 }
 
 class ImportSheet extends StatefulWidget {
-  const ImportSheet({required this.controller, super.key});
+  const ImportSheet({
+    required this.controller,
+    this.initialFilePaths,
+    super.key,
+  });
 
   final LedgerController controller;
+  final List<String>? initialFilePaths;
 
   @override
   State<ImportSheet> createState() => _ImportSheetState();
@@ -8328,6 +8403,12 @@ class _ImportSheetState extends State<ImportSheet> {
   void initState() {
     super.initState();
     rawText = TextEditingController();
+    final paths = widget.initialFilePaths;
+    if (paths != null && paths.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _loadImportPath(paths.first, showSnack: false);
+      });
+    }
   }
 
   @override
@@ -8339,6 +8420,28 @@ class _ImportSheetState extends State<ImportSheet> {
   List<Map<String, dynamic>> _decodeItems() =>
       LedgerImportParser.parse(rawText.text);
 
+  Future<void> _loadImportPath(String path, {required bool showSnack}) async {
+    try {
+      final text = await loadImportFile(path);
+      if (!mounted) return;
+      rawText.text = text;
+      setState(() {
+        preview = null;
+        normalizedItems = const [];
+      });
+      if (showSnack) {
+        final name = path.split(RegExp(r'[\\/]')).last;
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('已载入 $name，请预览并检查')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('读取账单文件失败：$error')));
+      }
+    }
+  }
+
   Future<void> _pickImportFile() async {
     try {
       final file = await FilePicker.pickFile(
@@ -8346,9 +8449,13 @@ class _ImportSheetState extends State<ImportSheet> {
         allowedExtensions: ['json', 'csv', 'txt'],
       );
       if (file == null) return;
+      if (file.path != null && file.path!.isNotEmpty) {
+        await _loadImportPath(file.path!, showSnack: true);
+        return;
+      }
       final bytes = await file.readAsBytes();
       if (bytes.isEmpty) {
-        throw const FormatException('所选文件为空');
+        throw const FormatException('所选文件为空或无法读取');
       }
       final text = utf8.decode(bytes, allowMalformed: false);
       if (!mounted) return;
