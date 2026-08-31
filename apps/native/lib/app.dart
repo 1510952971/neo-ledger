@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' hide Category;
@@ -6732,7 +6731,7 @@ class _DataCenterSheetState extends State<DataCenterSheet> {
       );
       if (file == null) return;
       final bytes = await file.readAsBytes();
-      if (bytes == null || bytes.isEmpty) {
+      if (bytes.isEmpty) {
         throw const FormatException('所选文件为空');
       }
       final text = utf8.decode(bytes, allowMalformed: false);
@@ -7954,10 +7953,11 @@ class _ImportSheetState extends State<ImportSheet> {
       );
       if (file == null) return;
       final bytes = await file.readAsBytes();
-      if (bytes == null || bytes.isEmpty) {
+      if (bytes.isEmpty) {
         throw const FormatException('所选文件为空');
       }
       final text = utf8.decode(bytes, allowMalformed: false);
+      if (!mounted) return;
       rawText.text = text;
       setState(() {
         preview = null;

@@ -7,8 +7,8 @@ import 'models.dart';
 class NeoLedgerUpdateService {
   NeoLedgerUpdateService({
     http.Client? client,
-    Duration timeout = const Duration(seconds: 15),
-  }) : _client = client ?? http.Client(), _timeout = timeout;
+    this._timeout = const Duration(seconds: 15),
+  }) : _client = client ?? http.Client();
 
   static const repository = '1510952971/neo-ledger';
   static const _githubApiVersion = '2022-11-28';
