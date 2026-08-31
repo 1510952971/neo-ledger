@@ -81,6 +81,57 @@ class NeoLedgerApi {
     return SessionUser.fromJson(user);
   }
 
+  Future<SessionUser> register({
+    required String username,
+    required String email,
+    required String displayName,
+    required String password,
+    String? code,
+  }) async {
+    final response = await _send(
+      'POST',
+      '/api/auth',
+      body: {
+        'action': 'register',
+        'username': username.trim(),
+        'email': email.trim(),
+        'displayName': displayName.trim(),
+        'password': password,
+        if (code != null && code.trim().isNotEmpty) 'code': code.trim(),
+      },
+      includeCookie: false,
+    );
+    _saveCookie(response);
+    final data = _decode(response);
+    final user = data['user'];
+    if (user is! Map<String, dynamic>) {
+      throw const ApiException('注册响应缺少用户信息');
+    }
+    return SessionUser.fromJson(user);
+  }
+
+  Future<void> requestEmailCode({
+    required String email,
+    required String purpose,
+  }) async {
+    await postJson('/api/auth/email-code', {
+      'email': email.trim(),
+      'purpose': purpose,
+    });
+  }
+
+  Future<void> resetPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    await postJson('/api/auth/reset-password', {
+      'email': email.trim(),
+      'code': code.trim(),
+      'newPassword': newPassword,
+    });
+  }
+
   Future<List<Ledger>> fetchLedgers() async {
     final data = await getJson('/api/ledgers');
     return data is List

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' hide Category;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,13 +10,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
+import 'import_parser.dart';
 import 'models.dart';
 import 'update_service.dart';
 
 const _brand = Color(0xffa5ff4f);
 const _surface = Color(0xff15151d);
 const _surfaceAlt = Color(0xff20202a);
-const _nativeVersion = '1.2.0';
+const _nativeVersion = '1.2.1';
 const _queueKey = 'neo_ledger_offline_queue_v1';
 const _coreSnapshotKey = 'neo_ledger_core_snapshot_v1';
 const _assetTypes = [
@@ -206,6 +208,85 @@ class LedgerController extends ChangeNotifier {
       loading = false;
       notifyListeners();
     }
+  }
+
+  Future<void> register({
+    required String url,
+    required String username,
+    required String email,
+    required String displayName,
+    required String password,
+    String? code,
+  }) async {
+    loading = true;
+    error = null;
+    notifyListeners();
+    try {
+      await api.setBaseUrl(url);
+      user = await api.register(
+        username: username,
+        email: email,
+        displayName: displayName,
+        password: password,
+        code: code,
+      );
+      await refresh();
+    } catch (value) {
+      user = null;
+      error = '$value';
+    } finally {
+      loading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> requestEmailCode({
+    required String url,
+    required String email,
+    required String purpose,
+  }) async {
+    loading = true;
+    error = null;
+    notifyListeners();
+    try {
+      await api.setBaseUrl(url);
+      await api.requestEmailCode(email: email, purpose: purpose);
+    } catch (value) {
+      error = '$value';
+    } finally {
+      loading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> resetPassword({
+    required String url,
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    loading = true;
+    error = null;
+    notifyListeners();
+    try {
+      await api.setBaseUrl(url);
+      await api.resetPassword(
+        email: email,
+        code: code,
+        newPassword: newPassword,
+      );
+    } catch (value) {
+      error = '$value';
+    } finally {
+      loading = false;
+      notifyListeners();
+    }
+  }
+
+  void clearError() {
+    if (error == null) return;
+    error = null;
+    notifyListeners();
   }
 
   void loadDemo() {
@@ -2407,21 +2488,147 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final url = TextEditingController(text: 'http://localhost:3000');
   final username = TextEditingController();
+  final email = TextEditingController();
+  final displayName = TextEditingController();
   final password = TextEditingController();
+  final passwordConfirm = TextEditingController();
+  final code = TextEditingController();
   final mfa = TextEditingController();
+  bool _registerMode = false;
+  bool _resetMode = false;
+  String? _validationError;
+  Timer? _codeTimer;
+  int _codeCooldown = 0;
 
   @override
   void dispose() {
+    _codeTimer?.cancel();
     url.dispose();
     username.dispose();
+    email.dispose();
+    displayName.dispose();
     password.dispose();
+    passwordConfirm.dispose();
+    code.dispose();
     mfa.dispose();
     super.dispose();
+  }
+
+  void _setMode({bool register = false, bool reset = false}) {
+    setState(() {
+      _registerMode = register;
+      _resetMode = reset;
+      _validationError = null;
+    });
+    widget.controller.clearError();
+  }
+
+  void _startCodeCooldown() {
+    _codeTimer?.cancel();
+    setState(() => _codeCooldown = 60);
+    _codeTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (_codeCooldown <= 1) {
+        timer.cancel();
+        setState(() => _codeCooldown = 0);
+      } else {
+        setState(() => _codeCooldown -= 1);
+      }
+    });
+  }
+
+  Future<void> _sendCode(String purpose) async {
+    if (_codeCooldown > 0 || widget.controller.loading) return;
+    final value = email.text.trim();
+    if (!value.contains('@')) {
+      setState(() => _validationError = '请输入有效邮箱地址');
+      return;
+    }
+    setState(() => _validationError = null);
+    await widget.controller.requestEmailCode(
+      url: url.text,
+      email: value,
+      purpose: purpose,
+    );
+    if (mounted && widget.controller.error == null) _startCodeCooldown();
+  }
+
+  Future<void> _submit() async {
+    setState(() => _validationError = null);
+    if (_resetMode) {
+      if (!email.text.trim().contains('@') || code.text.trim().isEmpty) {
+        setState(() => _validationError = '请输入邮箱和验证码');
+        return;
+      }
+      if (password.text != passwordConfirm.text) {
+        setState(() => _validationError = '两次输入的密码不一致');
+        return;
+      }
+      await widget.controller.resetPassword(
+        url: url.text,
+        email: email.text,
+        code: code.text,
+        newPassword: password.text,
+      );
+      if (mounted && widget.controller.error == null) _setMode();
+      return;
+    }
+    if (_registerMode) {
+      if (password.text != passwordConfirm.text) {
+        setState(() => _validationError = '两次输入的密码不一致');
+        return;
+      }
+      await widget.controller.register(
+        url: url.text,
+        username: username.text,
+        email: email.text,
+        displayName: displayName.text,
+        password: password.text,
+        code: code.text,
+      );
+      return;
+    }
+    await widget.controller.login(
+      url: url.text,
+      username: username.text,
+      password: password.text,
+      mfaCode: mfa.text,
+    );
+  }
+
+  Widget _codeField(String purpose) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: TextField(
+            controller: code,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: '邮箱验证码'),
+          ),
+        ),
+        const SizedBox(width: 10),
+        SizedBox(
+          height: 56,
+          child: OutlinedButton(
+            onPressed: widget.controller.loading || _codeCooldown > 0
+                ? null
+                : () => _sendCode(purpose),
+            child: Text(_codeCooldown > 0 ? '${_codeCooldown}s' : '发送验证码'),
+          ),
+        ),
+      ],
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 640;
+    final error = _validationError ?? widget.controller.error;
+    final title = _resetMode ? '找回密码' : _registerMode ? '创建账号' : '登录账号';
     return Scaffold(
       body: Center(
         child: SingleChildScrollView(
@@ -2459,27 +2666,89 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    TextField(
-                      controller: username,
-                      decoration: const InputDecoration(labelText: '用户名或邮箱'),
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 14),
+                    if (!_resetMode)
+                      SegmentedButton<bool>(
+                        segments: const [
+                          ButtonSegment(value: false, label: Text('登录')),
+                          ButtonSegment(value: true, label: Text('注册')),
+                        ],
+                        selected: {_registerMode},
+                        onSelectionChanged: (values) => _setMode(
+                          register: values.first,
+                        ),
+                      ),
+                    if (!_resetMode) const SizedBox(height: 14),
+                    if (_registerMode && !_resetMode) ...[
+                      TextField(
+                        controller: displayName,
+                        decoration: const InputDecoration(labelText: '显示名称'),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    if (!_resetMode) ...[
+                      TextField(
+                        controller: username,
+                        decoration: InputDecoration(
+                          labelText: _registerMode ? '账号' : '用户名或邮箱',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    if (_registerMode || _resetMode) ...[
+                      TextField(
+                        controller: email,
+                        keyboardType: TextInputType.emailAddress,
+                        onChanged: (_) => setState(() {}),
+                        decoration: InputDecoration(
+                          labelText: _registerMode ? '邮箱（选填）' : '注册邮箱',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    if (_registerMode && email.text.trim().isNotEmpty) ...[
+                      _codeField('register'),
+                      const SizedBox(height: 12),
+                    ],
+                    if (_resetMode) ...[
+                      _codeField('reset'),
+                      const SizedBox(height: 12),
+                    ],
                     TextField(
                       controller: password,
                       obscureText: true,
-                      decoration: const InputDecoration(labelText: '密码'),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: mfa,
-                      decoration: const InputDecoration(
-                        labelText: 'MFA 验证码（可选）',
+                      decoration: InputDecoration(
+                        labelText: _resetMode ? '新密码' : '密码',
                       ),
                     ),
-                    if (widget.controller.error != null) ...[
+                    if (_registerMode || _resetMode) ...[
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: passwordConfirm,
+                        obscureText: true,
+                        decoration: const InputDecoration(labelText: '确认密码'),
+                      ),
+                    ],
+                    if (!_registerMode && !_resetMode) ...[
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: mfa,
+                        decoration: const InputDecoration(
+                          labelText: 'MFA 验证码（可选）',
+                        ),
+                      ),
+                    ],
+                    if (error != null) ...[
                       const SizedBox(height: 16),
                       Text(
-                        widget.controller.error!,
+                        error,
                         style: TextStyle(
                           color: Theme.of(context).colorScheme.error,
                         ),
@@ -2489,16 +2758,38 @@ class _LoginPageState extends State<LoginPage> {
                     FilledButton(
                       onPressed: widget.controller.loading
                           ? null
-                          : () => widget.controller.login(
-                              url: url.text,
-                              username: username.text,
-                              password: password.text,
-                              mfaCode: mfa.text,
-                            ),
-                      child: Text(widget.controller.loading ? '连接中…' : '登录并同步'),
+                          : _submit,
+                      child: Text(
+                        widget.controller.loading
+                            ? '处理中…'
+                            : _resetMode
+                            ? '重置密码'
+                            : _registerMode
+                            ? '创建账号并同步'
+                            : '登录并同步',
+                      ),
                     ),
-                    const SizedBox(height: 10),
-                    OutlinedButton(
+                    if (!_resetMode && !_registerMode) ...[
+                      const SizedBox(height: 8),
+                      TextButton(
+                        onPressed: widget.controller.loading
+                            ? null
+                            : () => _setMode(reset: true),
+                        child: const Text('忘记密码？'),
+                      ),
+                    ],
+                    if (_resetMode) ...[
+                      const SizedBox(height: 8),
+                      TextButton(
+                        onPressed: widget.controller.loading
+                            ? null
+                            : _setMode,
+                        child: const Text('返回登录'),
+                      ),
+                    ],
+                    if (!_resetMode) const SizedBox(height: 10),
+                    if (!_resetMode)
+                      OutlinedButton(
                       onPressed: widget.controller.loading
                           ? null
                           : widget.controller.loadDemo,
@@ -2506,7 +2797,7 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                     const SizedBox(height: 18),
                     Text(
-                      '电脑端可填 localhost；手机/平板请填写电脑或 NAS 的局域网地址。部署到网站后使用 HTTPS 地址。',
+                      '原生客户端与网页端共用同一个账本服务。电脑可填 localhost；手机/平板请填写电脑或 NAS 地址，公网部署请使用 HTTPS。',
                       style: TextStyle(
                         color: Colors.grey.shade500,
                         height: 1.45,
@@ -2592,6 +2883,7 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
     _backgroundRefreshTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _billSearchController.dispose();
+    updateService.close();
     super.dispose();
   }
 
@@ -6403,6 +6695,62 @@ class _DataCenterSheetState extends State<DataCenterSheet> {
     }
   }
 
+  Future<void> _saveBackupFile() async {
+    final backup = exportedBackup;
+    if (backup == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先生成完整备份')),
+      );
+      return;
+    }
+    try {
+      final uri = await FilePicker.saveFile(
+        fileName:
+            'neo-ledger-backup-${DateFormat('yyyyMMdd-HHmmss').format(DateTime.now())}.json',
+        bytes: Uint8List.fromList(utf8.encode(backup)),
+        mimeType: 'application/json',
+      );
+      if (mounted && uri != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('备份文件已保存')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('保存备份文件失败：$error')));
+      }
+    }
+  }
+
+  Future<void> _pickRestoreFile() async {
+    try {
+      final file = await FilePicker.pickFile(
+        type: FileType.custom,
+        allowedExtensions: ['json', 'txt'],
+      );
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) {
+        throw const FormatException('所选文件为空');
+      }
+      final text = utf8.decode(bytes, allowMalformed: false);
+      if (!mounted) return;
+      setState(() {
+        restoreText.text = text;
+        restorePlan = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已载入 ${file.name}，请先预检')),
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('读取备份文件失败：$error')));
+      }
+    }
+  }
+
   Future<void> _preflightRestore() async {
     final raw = restoreText.text.trim();
     if (raw.isEmpty) {
@@ -6588,8 +6936,22 @@ class _DataCenterSheetState extends State<DataCenterSheet> {
                         icon: const Icon(Icons.copy_outlined),
                         label: const Text('复制备份 JSON'),
                       ),
+                      const SizedBox(height: 8),
+                      FilledButton.tonalIcon(
+                        onPressed: _saveBackupFile,
+                        icon: const Icon(Icons.save_alt_outlined),
+                        label: const Text('保存备份文件'),
+                      ),
                     ],
                     const Divider(height: 28),
+                    OutlinedButton.icon(
+                      onPressed: restoring || checkingRestore
+                          ? null
+                          : _pickRestoreFile,
+                      icon: const Icon(Icons.folder_open_outlined),
+                      label: const Text('选择备份 JSON 文件'),
+                    ),
+                    const SizedBox(height: 10),
                     TextField(
                       controller: restoreText,
                       minLines: 5,
@@ -7338,6 +7700,24 @@ class _WebDavSheetState extends State<WebDavSheet> {
     }
   }
 
+  Future<void> _saveDownloaded() async {
+    final raw = downloaded;
+    if (raw == null) return;
+    final stamp = DateTime.now()
+        .toIso8601String()
+        .replaceAll(RegExp(r'[^0-9]'), '')
+        .substring(0, 14);
+    final path = await FilePicker.saveFile(
+      fileName: 'neo-ledger-webdav-$stamp.json',
+      bytes: Uint8List.fromList(utf8.encode(raw)),
+      mimeType: 'application/json',
+    );
+    if (mounted && path != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('云端备份文件已保存')));
+    }
+  }
+
   Future<void> _preflight() async {
     final raw = downloaded;
     if (raw == null || raw.trim().isEmpty) return;
@@ -7484,6 +7864,11 @@ class _WebDavSheetState extends State<WebDavSheet> {
                 label: const Text('复制下载的备份 JSON'),
               ),
               OutlinedButton.icon(
+                onPressed: _saveDownloaded,
+                icon: const Icon(Icons.save_alt_outlined),
+                label: const Text('保存下载的备份文件'),
+              ),
+              OutlinedButton.icon(
                 onPressed: syncing ? null : _preflight,
                 icon: const Icon(Icons.fact_check_outlined),
                 label: const Text('预检下载内容'),
@@ -7557,50 +7942,36 @@ class _ImportSheetState extends State<ImportSheet> {
     super.dispose();
   }
 
-  List<Map<String, dynamic>> _decodeItems() {
-    final decoded = jsonDecode(rawText.text.trim());
-    final rawItems = decoded is List
-        ? decoded
-        : decoded is Map
-        ? (decoded['items'] ?? decoded['transactions'] ?? decoded['data'])
-        : null;
-    if (rawItems is! List) {
-      throw const FormatException('JSON 必须是流水数组，或包含 items/transactions 数组');
+  List<Map<String, dynamic>> _decodeItems() =>
+      LedgerImportParser.parse(rawText.text);
+
+  Future<void> _pickImportFile() async {
+    try {
+      final file = await FilePicker.pickFile(
+        type: FileType.custom,
+        allowedExtensions: ['json', 'csv', 'txt'],
+      );
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) {
+        throw const FormatException('所选文件为空');
+      }
+      final text = utf8.decode(bytes, allowMalformed: false);
+      if (!mounted) return;
+      rawText.text = text;
+      setState(() {
+        preview = null;
+        normalizedItems = const [];
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已载入 ${file.name}，请预览并检查')),
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('读取账单文件失败：$error')));
+      }
     }
-    return rawItems.whereType<Map>().map((value) {
-      final raw = Map<String, dynamic>.from(value);
-      final isWebExport =
-          raw.containsKey('title') && !raw.containsKey('merchant');
-      final occurredAt =
-          '${raw['occurredAt'] ?? raw['occurred_at'] ?? DateTime.now().toIso8601String()}'
-              .replaceFirst('T', ' ')
-              .replaceFirst(RegExp(r'\.\d+Z$'), '')
-              .replaceFirst(RegExp(r'\+\d\d:\d\d$'), '');
-      final rawAmount = raw['amountCents'] ?? raw['amount'];
-      final parsedAmount = double.tryParse('$rawAmount');
-      final amount = isWebExport && parsedAmount != null
-          ? parsedAmount / 100
-          : parsedAmount;
-      return <String, dynamic>{
-        'occurredAt': occurredAt.length >= 19
-            ? occurredAt.substring(0, 19)
-            : occurredAt,
-        'merchant': '${raw['merchant'] ?? raw['title'] ?? ''}'.trim(),
-        'amount': amount,
-        'type': raw['type'] == '收入' ? '收入' : '支出',
-        'source': '${raw['source'] ?? raw['sourceName'] ?? 'generic'}',
-        'sourceName': '${raw['sourceName'] ?? raw['source'] ?? '通用账单'}',
-        'sourceCategory': '${raw['sourceCategory'] ?? raw['category'] ?? ''}',
-        'category': '${raw['category'] ?? ''}',
-        'incomeCategory': '${raw['incomeCategory'] ?? ''}',
-        'paymentMethod': '${raw['paymentMethod'] ?? raw['accountName'] ?? ''}',
-        'status': '${raw['status'] ?? ''}',
-        'externalId': '${raw['externalId'] ?? raw['syncId'] ?? ''}',
-        'currency': '${raw['currency'] ?? 'CNY'}',
-        if (raw['accountId'] != null) 'accountId': raw['accountId'],
-        if (raw['accountName'] != null) 'accountName': raw['accountName'],
-      };
-    }).toList();
   }
 
   int _number(String key) {
@@ -7614,7 +7985,7 @@ class _ImportSheetState extends State<ImportSheet> {
       items = _decodeItems();
     } catch (error) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('JSON 解析失败：$error')));
+          .showSnackBar(SnackBar(content: Text('账单文件解析失败：$error')));
       return;
     }
     if (items.isEmpty) {
@@ -7693,17 +8064,23 @@ class _ImportSheetState extends State<ImportSheet> {
             Text('导入账单', style: Theme.of(context).textTheme.headlineSmall),
             const SizedBox(height: 8),
             Text(
-              '支持 Web 导出的 transactions JSON，也支持通用流水数组。预览会先识别重复项和账户映射，确认后才写入当前账本。',
+              '支持 Web 导出的 transactions JSON、通用 JSON 流水数组和 CSV 文件。预览会先识别重复项和账户映射，确认后才写入当前账本。',
               style: TextStyle(color: Colors.grey.shade500, height: 1.4),
             ),
             const SizedBox(height: 14),
+            OutlinedButton.icon(
+              onPressed: previewing || importing ? null : _pickImportFile,
+              icon: const Icon(Icons.folder_open_outlined),
+              label: const Text('选择 JSON / CSV 文件'),
+            ),
+            const SizedBox(height: 10),
             TextField(
               controller: rawText,
               minLines: 8,
               maxLines: 16,
               keyboardType: TextInputType.multiline,
               decoration: const InputDecoration(
-                labelText: '流水 JSON',
+                labelText: '流水 JSON / CSV（也可粘贴）',
                 hintText: '[{"occurredAt":"2026-08-27 12:00:00","merchant":"午餐","amount":25.5,"type":"支出","source":"generic","accountName":"现金"}]',
                 alignLabelWithHint: true,
                 border: OutlineInputBorder(),

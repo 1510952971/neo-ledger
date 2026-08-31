@@ -5,7 +5,8 @@ Neo Ledger 是一个数据自主、自托管优先的个人账本，支持多账
 ## 使用文档
 
 - [完整使用手册](docs/USER_MANUAL.md)：从首次启动到 Android 自动记账、苹果快捷指令、附近同步、坚果云和 NAS 部署。
-- [Android 自动记账伴侣说明](android-companion/README.md)：Android 工程、权限、构建和平台边界。
+- [原生统一客户端说明](apps/native/README.md)：Windows、Android、iOS/iPadOS、平板和 Web/PWA 的统一客户端、构建与发布边界。
+- [Android 自动记账伴侣说明](android-companion/README.md)：仅用于 Android 通知/无障碍采集的兼容工程、权限和平台边界。
 - [环境变量模板](.env.example)：邮件、OAuth、自动记账、Ollama 和局域网配置。
 - [Docker Compose](docker-compose.yml)：NAS 持久化部署入口。
 
@@ -77,7 +78,7 @@ ALIPAY_PUBLIC_KEY=
 
 外部 API 的 OpenAPI 3.1 文档由实例自身发布在 `/api/openapi.json`，包含认证、64KB 正文上限、字段约束、统一错误码和响应头。旧 `/api/external/quick-sync` 在 2026-12-31 前保留兼容，响应会携带 `Deprecation`、`Sunset` 和 `Link`；新集成不得再使用旧路径。
 
-Android 手机和平板可使用仓库中的 `android-companion`：它通过系统通知权限监听支付通知，也可开启 Android 无障碍服务识别当前前台支付 App 的付款完成界面。只有明确支付成功结果和金额才会记账，账单列表、历史记录、照片和支付前页面会被忽略；服务不会点击或发起支付。断网时先保存在本机队列，恢复后自动发送。在“自动记账连接”点击“生成并复制安卓配置”，再在伴侣应用完成配置并分别开启所需权限即可。iOS 不允许第三方 App 读取其他 App 的通知，因此 iPhone/iPad 使用快捷指令或共享入口发送到同一接口。
+Android 手机和平板的完整功能应使用 `apps/native` 原生统一客户端；其中已集成通知监听和无障碍支付界面识别能力，也可以继续使用 `android-companion` 作为兼容采集端。只有明确支付成功结果和金额才会记账，账单列表、历史记录、照片和支付前页面会被忽略；服务不会点击或发起支付。断网时先保存在本机队列，恢复后自动发送。首次使用时在“自动记账连接”生成账号专用配置并开启所需权限。iOS 不允许第三方 App 读取其他 App 的通知，因此 iPhone/iPad 使用快捷指令、共享入口或账单导入发送到同一接口。
 
 ### NAS / Docker
 
