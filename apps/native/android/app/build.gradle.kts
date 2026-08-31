@@ -20,6 +20,13 @@ android {
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
+    // The shared companion sources use the generated application version for
+    // their HTTP headers and diagnostics. Flutter/AGP no longer enables this
+    // class by default, so opt in explicitly.
+    buildFeatures {
+        buildConfig = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
