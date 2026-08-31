@@ -3371,28 +3371,18 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
               onPressed: () async {
                 Navigator.pop(dialogContext);
                 if (canInstallAndroid) {
-                  final androidAsset = asset;
-                  final androidAssetName = assetName;
-                  if (androidAsset == null || androidAssetName == null) {
-                    return;
-                  }
                   await _installAndroidUpdate(
                     latest,
-                    androidAsset,
-                    androidAssetName,
+                    asset,
+                    assetName,
                   );
                   return;
                 }
                 if (canInstallWindows) {
-                  final windowsAsset = asset;
-                  final windowsAssetName = assetName;
-                  if (windowsAsset == null || windowsAssetName == null) {
-                    return;
-                  }
                   await _installWindowsUpdate(
                     latest,
-                    windowsAsset,
-                    windowsAssetName,
+                    asset,
+                    assetName,
                   );
                   return;
                 }
