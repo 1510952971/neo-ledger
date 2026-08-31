@@ -1,7 +1,7 @@
 {
   "webVersion": "1.1.0",
   "androidCompanionVersion": "1.1.14",
-  "nativeClientVersion": "1.2.0",
+  "nativeClientVersion": "1.2.1",
   "minimumWebVersion": "1.1.0",
   "apiVersion": "v1"
 }

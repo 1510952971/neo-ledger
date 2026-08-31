@@ -5,20 +5,32 @@ import 'package:http/http.dart' as http;
 import 'models.dart';
 
 class NeoLedgerUpdateService {
-  NeoLedgerUpdateService({http.Client? client})
-    : _client = client ?? http.Client();
+  NeoLedgerUpdateService({
+    http.Client? client,
+    Duration timeout = const Duration(seconds: 15),
+  }) : _client = client ?? http.Client(), _timeout = timeout;
 
   static const repository = '1510952971/neo-ledger';
+  static const _githubApiVersion = '2022-11-28';
   final http.Client _client;
+  final Duration _timeout;
 
   Future<UpdateInfo?> checkLatest() async {
     final uri = Uri.parse(
-      'https://api.github.com/repos/$repository/releases?per_page=30',
+      'https://api.github.com/repos/$repository/releases?per_page=30&ts=${DateTime.now().millisecondsSinceEpoch}',
     );
-    final response = await _client.get(
-      uri,
-      headers: const {'Accept': 'application/vnd.github+json'},
-    );
+    final response = await _client
+        .get(
+          uri,
+          headers: const {
+            'Accept': 'application/vnd.github+json',
+            'X-GitHub-Api-Version': _githubApiVersion,
+            'Cache-Control': 'no-cache, no-store',
+            'Pragma': 'no-cache',
+            'User-Agent': 'Neo-Ledger-Native',
+          },
+        )
+        .timeout(_timeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('GitHub 更新检查失败（HTTP ${response.statusCode}）');
     }
@@ -27,7 +39,9 @@ class NeoLedgerUpdateService {
     final releases = decoded
         .whereType<Map<String, dynamic>>()
         .where(
-          (release) => '${release['tag_name'] ?? ''}'.startsWith('native-v'),
+          (release) => RegExp(
+            r'^native-v\d+\.\d+\.\d+$',
+          ).hasMatch('${release['tag_name'] ?? ''}'),
         )
         .where(
           (release) =>
@@ -39,6 +53,8 @@ class NeoLedgerUpdateService {
     releases.sort((a, b) => _versionCompare(b.version, a.version));
     return releases.first;
   }
+
+  void close() => _client.close();
 
   static int _versionCompare(String left, String right) {
     List<int> parse(String value) => value
