@@ -3370,15 +3370,15 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
             FilledButton(
               onPressed: () async {
                 Navigator.pop(dialogContext);
-                if (canInstallAndroid && asset != null && assetName != null) {
-                  await _installAndroidUpdate(latest, asset, assetName);
+                if (canInstallAndroid) {
+                  await _installAndroidUpdate(latest, asset!, assetName!);
                   return;
                 }
-                if (canInstallWindows && asset != null && assetName != null) {
+                if (canInstallWindows) {
                   await _installWindowsUpdate(
                     latest,
-                    asset,
-                    assetName,
+                    asset!,
+                    assetName!,
                   );
                   return;
                 }
