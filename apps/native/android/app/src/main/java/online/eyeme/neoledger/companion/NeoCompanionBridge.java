@@ -52,6 +52,37 @@ public final class NeoCompanionBridge {
         return result;
     }
 
+    /**
+     * Sends the same deterministic connection test used by the legacy
+     * companion UI.  Keeping this in the bridge means the full client uses
+     * the exact same pending queue, idempotency key, and delivery accounting
+     * as the notification/accessibility services.
+     */
+    public interface ActionCallback {
+        void complete(Map<String, Object> result);
+    }
+
+    public static void sendTest(Context context, ActionCallback callback) {
+        Context app = context.getApplicationContext();
+        SettingsStore.TestEvent event = new SettingsStore(app).testEvent();
+        HttpSender.sendNowAsync(
+                app,
+                "支付宝支付，自动记账连接测试消费0.01元",
+                "android-companion-test",
+                event.id,
+                event.occurredAt,
+                (ok, message) -> {
+                    Map<String, Object> result = status(app);
+                    result.put("ok", ok);
+                    result.put("message", message);
+                    if (callback != null) callback.complete(result);
+                });
+    }
+
+    public static void flushPending(Context context) {
+        SyncScheduler.schedule(context.getApplicationContext(), true);
+    }
+
     public interface UpdateCallback {
         void complete(Map<String, Object> result);
     }

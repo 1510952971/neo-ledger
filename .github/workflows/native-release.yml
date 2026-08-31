@@ -124,13 +124,50 @@ jobs:
           flutter build windows --release --build-name $version --build-number ${{ github.run_number }}
       - name: Package Windows build
         shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.NEO_LEDGER_WINDOWS_SIGNING_CERTIFICATE_BASE64 || secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.NEO_LEDGER_WINDOWS_SIGNING_CERTIFICATE_PASSWORD || secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
         run: |
           $version = (Select-String -Path pubspec.yaml -Pattern '^version:' | ForEach-Object { $_.Line.Split(' ')[1].Split('+')[0] })
-          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath "neo-ledger-windows-$version.zip"
+          $buildDir = (Resolve-Path 'build\windows\x64\runner\Release').Path
+          Compress-Archive -Path "$buildDir\*" -DestinationPath "neo-ledger-windows-$version.zip"
+          $isccCandidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $isccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup --no-progress --yes
+            $iscc = $isccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $iscc) { throw "Inno Setup compiler was not found" }
+          $env:NEO_LEDGER_VERSION = $version
+          $env:NEO_LEDGER_WINDOWS_BUILD_DIR = $buildDir
+          $env:NEO_LEDGER_WINDOWS_OUTPUT_DIR = (Get-Location).Path
+          & $iscc 'windows\installer\neo-ledger.iss'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $installer = "neo-ledger-windows-$version-setup.exe"
+          if (-not (Test-Path $installer)) { throw "Windows installer was not produced: $installer" }
+          if ($env:GITHUB_REF -like 'refs/tags/native-v*') {
+            if (-not $env:WINDOWS_SIGNING_CERTIFICATE_BASE64) {
+              throw "Missing Windows signing certificate secret (NEO_LEDGER_WINDOWS_SIGNING_CERTIFICATE_BASE64 or WINDOWS_SIGNING_CERTIFICATE_BASE64)"
+            }
+            if (-not $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD) {
+              throw "Missing Windows signing certificate password secret (NEO_LEDGER_WINDOWS_SIGNING_CERTIFICATE_PASSWORD or WINDOWS_SIGNING_CERTIFICATE_PASSWORD)"
+            }
+            $pfxPath = Join-Path $env:RUNNER_TEMP 'neo-ledger-signing.pfx'
+            [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERTIFICATE_BASE64))
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $signtool) { throw "Windows SDK signtool.exe was not found" }
+            & $signtool.FullName sign /fd SHA256 /f $pfxPath /p $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD /tr http://timestamp.digicert.com /td SHA256 /d "Neo Ledger" $installer
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: neo-ledger-windows
-          path: apps/native/neo-ledger-windows-*.zip
+          path: |
+            apps/native/neo-ledger-windows-*.zip
+            apps/native/neo-ledger-windows-*-setup.exe
 
   ios:
     name: iOS simulator validation (device signing required for install)
@@ -194,7 +231,7 @@ jobs:
                 ;;
             esac
           done < <(find artifacts -maxdepth 3 -type f -print0)
-          test -n "$(find release-assets -maxdepth 1 -type f \( -name 'neo-ledger-*.zip' -o -name 'neo-ledger-*.apk' -o -name 'neo-ledger-*.aab' -o -name 'neo-ledger-*.tar.gz' \) -print -quit)"
+          test -n "$(find release-assets -maxdepth 1 -type f \( -name 'neo-ledger-*.zip' -o -name 'neo-ledger-*.exe' -o -name 'neo-ledger-*.apk' -o -name 'neo-ledger-*.aab' -o -name 'neo-ledger-*.tar.gz' \) -print -quit)"
           VERSION="${GITHUB_REF_NAME#native-v}"
           cat > release-assets/RELEASE_STATUS.json <<EOF
           {
@@ -205,7 +242,11 @@ jobs:
             "channel": "stable",
             "installable": {
               "android": true,
-              "windows": "portable-zip",
+              "windows": {
+                "portable": true,
+                "installer": true,
+                "installerSigned": true
+              },
               "web": true,
               "ios": false
             },

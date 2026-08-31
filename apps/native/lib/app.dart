@@ -18,7 +18,7 @@ import 'update_service.dart';
 const _brand = Color(0xffa5ff4f);
 const _surface = Color(0xff15151d);
 const _surfaceAlt = Color(0xff20202a);
-const _nativeVersion = '1.2.2';
+const _nativeVersion = '1.2.4';
 const _queueKey = 'neo_ledger_offline_queue_v1';
 const _coreSnapshotKey = 'neo_ledger_core_snapshot_v1';
 const _assetTypes = [
@@ -754,6 +754,46 @@ class LedgerController extends ChangeNotifier {
       await _companionChannel.invokeMethod<void>('openAccessibilitySettings');
     } on PlatformException catch (error) {
       throw ApiException(error.message ?? '无法打开无障碍设置');
+    }
+  }
+
+  Future<void> openAndroidAutostartSettings() async {
+    if (!isAndroid) return;
+    try {
+      await _companionChannel.invokeMethod<void>('openAutostartSettings');
+    } on PlatformException catch (error) {
+      throw ApiException(error.message ?? '无法打开厂商自启动设置');
+    }
+  }
+
+  Future<void> openAndroidBatterySettings() async {
+    if (!isAndroid) return;
+    try {
+      await _companionChannel.invokeMethod<void>('openBatterySettings');
+    } on PlatformException catch (error) {
+      throw ApiException(error.message ?? '无法打开系统省电设置');
+    }
+  }
+
+  Future<Map<String, dynamic>> sendAndroidTestBill() async {
+    if (!isAndroid) throw const ApiException('当前客户端不是 Android');
+    try {
+      final value = await _companionChannel.invokeMethod<dynamic>('sendTest');
+      if (value is Map) {
+        return value.map((key, item) => MapEntry('$key', item));
+      }
+      return const {};
+    } on PlatformException catch (error) {
+      throw ApiException(error.message ?? '无法发送 Android 测试账单');
+    }
+  }
+
+  Future<void> flushAndroidPending() async {
+    if (!isAndroid) return;
+    try {
+      await _companionChannel.invokeMethod<void>('flushPending');
+    } on PlatformException catch (error) {
+      throw ApiException(error.message ?? '无法发送待处理账单');
     }
   }
 
@@ -4977,10 +5017,12 @@ class _SettingsSheetState extends State<SettingsSheet> {
   bool syncing = false;
   bool companionLoading = false;
   bool companionSaving = false;
+  bool companionActionLoading = false;
   bool captureWechat = true;
   bool captureAlipay = true;
   bool captureMarketApps = true;
   Map<String, dynamic> companionStatus = const {};
+  Timer? companionRefreshTimer;
 
   @override
   void initState() {
@@ -4990,7 +5032,12 @@ class _SettingsSheetState extends State<SettingsSheet> {
       text: widget.controller.api.autoLogSecret,
     );
     extraPackages = TextEditingController();
-    if (widget.controller.isAndroid) _loadCompanionStatus();
+    if (widget.controller.isAndroid) {
+      _loadCompanionStatus();
+      companionRefreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        _loadCompanionStatus(showLoading: false);
+      });
+    }
   }
 
   @override
@@ -4998,12 +5045,14 @@ class _SettingsSheetState extends State<SettingsSheet> {
     baseUrl.dispose();
     autoLogSecret.dispose();
     extraPackages.dispose();
+    companionRefreshTimer?.cancel();
     super.dispose();
   }
 
-  Future<void> _loadCompanionStatus() async {
+  Future<void> _loadCompanionStatus({bool showLoading = true}) async {
     if (!widget.controller.isAndroid) return;
-    if (mounted) setState(() => companionLoading = true);
+    if (companionLoading) return;
+    if (showLoading && mounted) setState(() => companionLoading = true);
     try {
       final status = await widget.controller.androidCaptureStatus();
       if (!mounted) return;
@@ -5024,13 +5073,13 @@ class _SettingsSheetState extends State<SettingsSheet> {
         }
       });
     } catch (error) {
-      if (mounted) {
+      if (showLoading && mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('读取 Android 自动记账状态失败：$error')));
       }
     } finally {
-      if (mounted) setState(() => companionLoading = false);
+      if (showLoading && mounted) setState(() => companionLoading = false);
     }
   }
 
@@ -5076,16 +5125,159 @@ class _SettingsSheetState extends State<SettingsSheet> {
     }
   }
 
+  Future<void> _pasteCompanionConfiguration({
+    required bool openNotificationSettings,
+  }) async {
+    if (companionActionLoading) return;
+    setState(() => companionActionLoading = true);
+    try {
+      final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
+      final raw = clipboard?.text?.trim() ?? '';
+      if (raw.isEmpty) throw const ApiException('剪贴板中没有 Android 配置');
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) {
+        throw const ApiException('剪贴板内容不是有效的 Android 配置');
+      }
+      final type = '${decoded['type'] ?? ''}'.trim();
+      if (type != 'neo-ledger-android-config-v1') {
+        throw const ApiException('请从 Neo Ledger 的“复制安卓配置”按钮复制配置');
+      }
+      final endpoint = '${decoded['url'] ?? decoded['endpoint'] ?? ''}'.trim();
+      final secret = '${decoded['token'] ?? decoded['secret'] ?? ''}'.trim();
+      if (endpoint.isEmpty) throw const ApiException('配置中缺少服务地址');
+      if (secret.length < 20) throw const ApiException('配置中缺少有效的自动记账密钥');
+      final pastedLedgerId = switch (decoded['ledgerId']) {
+        int value => value,
+        num value => value.toInt(),
+        String value => int.tryParse(value.trim()),
+        _ => null,
+      };
+      final selectedLedgerId = widget.controller.selectedLedger?.id;
+      if (pastedLedgerId != null &&
+          selectedLedgerId != null &&
+          pastedLedgerId != selectedLedgerId) {
+        throw ApiException(
+          '配置属于账本 $pastedLedgerId，当前选择的是账本 $selectedLedgerId；请先切换账本后再粘贴',
+        );
+      }
+
+      await widget.controller.saveBaseUrl(endpoint);
+      baseUrl.text = widget.controller.api.baseUrl;
+      autoLogSecret.text = secret;
+      await widget.controller.configureAndroidCapture(
+        secret: secret,
+        wechat: captureWechat,
+        alipay: captureAlipay,
+        marketApps: captureMarketApps,
+        extraPackages: extraPackages.text,
+      );
+      await Clipboard.setData(const ClipboardData(text: ''));
+      await _loadCompanionStatus();
+      if (openNotificationSettings) {
+        await widget.controller.openAndroidNotificationSettings();
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              openNotificationSettings
+                  ? '配置已粘贴并保存，请在系统页面开启通知使用权'
+                  : 'Android 自动记账配置已粘贴并保存',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('粘贴 Android 配置失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => companionActionLoading = false);
+    }
+  }
+
+  Future<void> _sendAndroidTest() async {
+    if (companionActionLoading || companionSaving) return;
+    setState(() => companionActionLoading = true);
+    try {
+      await widget.controller.configureAndroidCapture(
+        secret: autoLogSecret.text,
+        wechat: captureWechat,
+        alipay: captureAlipay,
+        marketApps: captureMarketApps,
+        extraPackages: extraPackages.text,
+      );
+      final result = await widget.controller.sendAndroidTestBill();
+      await _loadCompanionStatus();
+      final ok = result['ok'] == true;
+      final message = '${result['message'] ?? (ok ? '测试账单已发送' : '测试账单发送失败')}';
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ok ? message : '测试账单发送失败：$message')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('发送测试账单失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => companionActionLoading = false);
+    }
+  }
+
+  Future<void> _flushAndroidPending() async {
+    if (companionActionLoading) return;
+    setState(() => companionActionLoading = true);
+    try {
+      await widget.controller.flushAndroidPending();
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      await _loadCompanionStatus();
+      await Future<void>.delayed(const Duration(milliseconds: 750));
+      await _loadCompanionStatus();
+      if (mounted) {
+        final pending = companionStatus['pending'] ?? 0;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('已触发待处理账单发送，当前剩余 $pending 条')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('发送待处理账单失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => companionActionLoading = false);
+    }
+  }
+
+  Future<void> _openAndroidSystemSettings({required bool battery}) async {
+    try {
+      if (battery) {
+        await widget.controller.openAndroidBatterySettings();
+      } else {
+        await widget.controller.openAndroidAutostartSettings();
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('打开系统设置失败：$error')));
+      }
+    }
+  }
+
   Widget _androidCaptureCard(LedgerController controller) {
     final configured = companionStatus['configured'] == true;
     final notificationEnabled = companionStatus['notificationEnabled'] == true;
     final accessibilityEnabled =
         companionStatus['accessibilityEnabled'] == true;
-    final pending = companionStatus['pending'] ?? 0;
+    final pending = (companionStatus['pending'] as num?)?.toInt() ?? 0;
     final lastStatus = '${companionStatus['lastStatus'] ?? ''}'.trim();
     final lastCaptured = '${companionStatus['lastCaptured'] ?? ''}'.trim();
     final accessibilitySummary =
         '${companionStatus['accessibilitySummary'] ?? ''}'.trim();
+    final companionLedgerId = companionStatus['ledgerId'];
     final accessibilityEvents = companionStatus['accessibilityEventCount'] ?? 0;
     final accessibilityScans = companionStatus['accessibilityScanCount'] ?? 0;
     final accessibilityRecognized =
@@ -5096,6 +5288,9 @@ class _SettingsSheetState extends State<SettingsSheet> {
         '${companionStatus['lastAccessibilityPackage'] ?? ''}'.trim();
     final lastAccessibilityReason =
         '${companionStatus['lastAccessibilityReason'] ?? ''}'.trim();
+    final deliverySummary = '${companionStatus['deliverySummary'] ?? ''}'
+        .trim();
+    final actionBusy = companionActionLoading || companionSaving;
 
     return Card(
       child: Padding(
@@ -5171,7 +5366,7 @@ class _SettingsSheetState extends State<SettingsSheet> {
             ),
             const SizedBox(height: 10),
             FilledButton.icon(
-              onPressed: companionSaving ? null : _saveCompanion,
+              onPressed: actionBusy ? null : _saveCompanion,
               icon: companionSaving
                   ? const SizedBox(
                       width: 18,
@@ -5191,7 +5386,11 @@ class _SettingsSheetState extends State<SettingsSheet> {
               label: '无障碍支付识别',
               value: accessibilityEnabled ? '已开启' : '未开启',
             ),
+            if (companionLedgerId != null)
+              _SettingRow(label: '自动记账账本', value: '$companionLedgerId'),
             _SettingRow(label: '待发送', value: '$pending 条'),
+            if (deliverySummary.isNotEmpty)
+              _SettingRow(label: '发送统计', value: deliverySummary),
             if (lastStatus.isNotEmpty && lastStatus != '尚未发送通知')
               Text(
                 '发送状态：$lastStatus',
@@ -5234,15 +5433,71 @@ class _SettingsSheetState extends State<SettingsSheet> {
               spacing: 8,
               runSpacing: 8,
               children: [
+                FilledButton.icon(
+                  onPressed: actionBusy
+                      ? null
+                      : () => _pasteCompanionConfiguration(
+                          openNotificationSettings: true,
+                        ),
+                  icon: const Icon(Icons.content_paste_go_outlined),
+                  label: const Text('一键粘贴配置并开启通知权限'),
+                ),
                 OutlinedButton.icon(
-                  onPressed: () => _openAndroidSettings(accessibility: false),
+                  onPressed: actionBusy
+                      ? null
+                      : () => _pasteCompanionConfiguration(
+                          openNotificationSettings: false,
+                        ),
+                  icon: const Icon(Icons.content_paste_outlined),
+                  label: const Text('从 Neo Ledger 粘贴配置'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: actionBusy
+                      ? null
+                      : () => _openAndroidSettings(accessibility: false),
                   icon: const Icon(Icons.notifications_outlined),
                   label: const Text('通知使用权'),
                 ),
                 OutlinedButton.icon(
-                  onPressed: () => _openAndroidSettings(accessibility: true),
+                  onPressed: actionBusy
+                      ? null
+                      : () => _openAndroidSettings(accessibility: true),
                   icon: const Icon(Icons.accessibility_new),
                   label: const Text('无障碍服务'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: actionBusy
+                      ? null
+                      : () => _openAndroidSystemSettings(battery: false),
+                  icon: const Icon(Icons.restart_alt_outlined),
+                  label: const Text('厂商自启动 / 后台设置'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: actionBusy
+                      ? null
+                      : () => _openAndroidSystemSettings(battery: true),
+                  icon: const Icon(Icons.battery_saver_outlined),
+                  label: const Text('系统省电设置'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: actionBusy ? null : _sendAndroidTest,
+                  icon: const Icon(Icons.receipt_long_outlined),
+                  label: const Text('发送 ¥0.01 测试账单'),
+                ),
+                FilledButton.icon(
+                  onPressed: actionBusy ? null : _flushAndroidPending,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: pending > 0
+                        ? Theme.of(context).colorScheme.primary
+                        : Theme.of(context).colorScheme.surfaceContainerHighest,
+                    foregroundColor: pending > 0
+                        ? Theme.of(context).colorScheme.onPrimary
+                        : Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                  icon: const Icon(Icons.cloud_upload_outlined),
+                  label: Text(
+                    pending > 0 ? '立即发送待处理账单（$pending 条）' : '立即发送待处理账单',
+                  ),
                 ),
               ],
             ),

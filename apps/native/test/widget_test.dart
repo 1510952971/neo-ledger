@@ -52,4 +52,31 @@ void main() {
     expect(update.assetNameFor('android'), 'neo-ledger-android-1.3.0.apk');
     expect(update.assetFor('android'), 'https://example.com/app.apk');
   });
+
+  test('native updater prefers Windows installer over portable ZIP', () {
+    final update = UpdateInfo.fromGitHub({
+      'tag_name': 'native-v1.3.0',
+      'html_url':
+          'https://github.com/1510952971/neo-ledger/releases/tag/native-v1.3.0',
+      'assets': [
+        {
+          'name': 'neo-ledger-windows-1.3.0.zip',
+          'browser_download_url': 'https://example.com/neo-ledger.zip',
+        },
+        {
+          'name': 'neo-ledger-windows-1.3.0-setup.exe',
+          'browser_download_url': 'https://example.com/neo-ledger-setup.exe',
+        },
+      ],
+    });
+
+    expect(
+      update.assetNameFor('windows'),
+      'neo-ledger-windows-1.3.0-setup.exe',
+    );
+    expect(
+      update.assetFor('windows'),
+      'https://example.com/neo-ledger-setup.exe',
+    );
+  });
 }
