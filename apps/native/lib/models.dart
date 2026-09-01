@@ -1089,6 +1089,8 @@ class UpdateInfo {
     final tag = '${json['tag_name'] ?? ''}';
     final version = tag.startsWith('native-v')
         ? tag.substring('native-v'.length)
+        : tag.startsWith('windows-preview-v')
+        ? tag.substring('windows-preview-v'.length)
         : tag;
     final rawAssets = (json['assets'] as List<dynamic>? ?? const [])
         .whereType<Map<String, dynamic>>();

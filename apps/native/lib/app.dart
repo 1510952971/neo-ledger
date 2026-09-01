@@ -3313,13 +3313,42 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
     try {
       final latest = await updateService.checkLatest();
       if (!mounted) return;
+      final platform = _platformName();
       if (latest == null || !latest.isNewerThan(_nativeVersion)) {
+        if (platform == 'windows') {
+          final preview = await updateService.checkLatestWindowsPreview();
+          if (!mounted) return;
+          if (preview != null && preview.isNewerThan(_nativeVersion)) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  '稳定通道暂无更高版本；检测到 Windows 预览版 v${preview.version}。预览版未签名，不会自动安装。',
+                ),
+                action: SnackBarAction(
+                  label: '打开预览页',
+                  onPressed: () {
+                    final uri = Uri.tryParse(preview.releaseUrl);
+                    if (uri != null) {
+                      launchUrl(uri, mode: LaunchMode.externalApplication);
+                    }
+                  },
+                ),
+              ),
+            );
+            return;
+          }
+        }
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('当前已经是最新版本（仅检查 native-v* 原生客户端发布）')),
+          SnackBar(
+            content: Text(
+              platform == 'windows'
+                  ? '当前版本 v$_nativeVersion；稳定通道没有更高版本。Windows 预览包不会自动安装。'
+                  : '当前已经是最新版本（仅检查 native-v* 原生客户端发布）',
+            ),
+          ),
         );
         return;
       }
-      final platform = _platformName();
       final asset = latest.assetFor(platform);
       final assetName = latest.assetNameFor(platform);
       final canInstallAndroid =

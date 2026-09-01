@@ -16,6 +16,26 @@ class NeoLedgerUpdateService {
   final Duration _timeout;
 
   Future<UpdateInfo?> checkLatest() async {
+    final releases = await _fetchReleases();
+    return _selectRelease(
+      releases,
+      tagPattern: RegExp(r'^native-v\d+\.\d+\.\d+$'),
+      includePrerelease: false,
+    );
+  }
+
+  /// Preview builds stay out of the stable update channel so a production
+  /// client never installs an unsigned test package silently.
+  Future<UpdateInfo?> checkLatestWindowsPreview() async {
+    final releases = await _fetchReleases();
+    return _selectRelease(
+      releases,
+      tagPattern: RegExp(r'^windows-preview-v\d+\.\d+\.\d+$'),
+      includePrerelease: true,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchReleases() async {
     final uri = Uri.parse(
       'https://api.github.com/repos/$repository/releases?per_page=100&ts=${DateTime.now().millisecondsSinceEpoch}',
     );
@@ -36,22 +56,28 @@ class NeoLedgerUpdateService {
     }
     final decoded = jsonDecode(utf8.decode(response.bodyBytes));
     if (decoded is! List) throw const FormatException('GitHub 更新响应格式无效');
-    final releases = decoded
-        .whereType<Map<String, dynamic>>()
+    return decoded.whereType<Map<String, dynamic>>().toList();
+  }
+
+  UpdateInfo? _selectRelease(
+    List<Map<String, dynamic>> releases, {
+    required RegExp tagPattern,
+    required bool includePrerelease,
+  }) {
+    final matchingReleases = releases
         .where(
-          (release) => RegExp(
-            r'^native-v\d+\.\d+\.\d+$',
-          ).hasMatch('${release['tag_name'] ?? ''}'),
+          (release) => tagPattern.hasMatch('${release['tag_name'] ?? ''}'),
         )
         .where(
           (release) =>
-              release['draft'] != true && release['prerelease'] != true,
+              release['draft'] != true &&
+              (includePrerelease || release['prerelease'] != true),
         )
         .map(UpdateInfo.fromGitHub)
         .toList();
-    if (releases.isEmpty) return null;
-    releases.sort((a, b) => _versionCompare(b.version, a.version));
-    return releases.first;
+    if (matchingReleases.isEmpty) return null;
+    matchingReleases.sort((a, b) => _versionCompare(b.version, a.version));
+    return matchingReleases.first;
   }
 
   void close() => _client.close();

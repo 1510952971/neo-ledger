@@ -93,6 +93,34 @@ void main() {
     expect(await service.checkLatest(), isNull);
   });
 
+  test(
+    'finds the highest Windows preview release without treating it as stable',
+    () async {
+      final service = NeoLedgerUpdateService(
+        client: _FakeClient([
+          {
+            'tag_name': 'windows-preview-v1.2.8',
+            'draft': false,
+            'prerelease': true,
+            'html_url':
+                'https://github.com/1510952971/neo-ledger/releases/tag/windows-preview-v1.2.8',
+          },
+          {
+            'tag_name': 'windows-preview-v1.2.7',
+            'draft': false,
+            'prerelease': true,
+          },
+        ]),
+      );
+      addTearDown(service.close);
+
+      expect(await service.checkLatest(), isNull);
+      final preview = await service.checkLatestWindowsPreview();
+      expect(preview?.version, '1.2.8');
+      expect(preview?.tagName, 'windows-preview-v1.2.8');
+    },
+  );
+
   test('surfaces GitHub HTTP errors', () async {
     final service = NeoLedgerUpdateService(
       client: _FakeClient({'message': 'rate limited'}, statusCode: 403),
