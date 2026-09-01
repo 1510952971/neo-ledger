@@ -183,6 +183,54 @@ jobs:
             apps/native/neo-ledger-windows-*-setup.exe
             apps/native/windows-signature-status.txt
 
+  windows-preview-release:
+    name: Publish Windows preview
+    if: github.ref == 'refs/heads/main'
+    needs: [validate, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read native client version
+        id: version
+        run: |
+          VERSION=$(awk '/^version:/{print $2}' apps/native/pubspec.yaml | cut -d+ -f1)
+          test -n "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          name: neo-ledger-windows
+          path: release-assets
+      - name: Prepare preview assets
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd release-assets
+          test -f "neo-ledger-windows-${VERSION}.zip"
+          test -f "neo-ledger-windows-${VERSION}-setup.exe"
+          rm -f windows-signature-status.txt
+          sha256sum -- neo-ledger-windows-*.zip neo-ledger-windows-*-setup.exe > SHA256SUMS.txt
+      - name: Create or update Windows preview release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG="windows-preview-v${VERSION}"
+          if gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --repo "$REPOSITORY" --clobber
+          else
+            gh release create "$TAG" release-assets/* \
+              --repo "$REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Neo Ledger Windows preview ${VERSION}" \
+              --notes "Windows 预览版 ${VERSION}。该版本未配置代码签名，仅用于测试。" \
+              --prerelease
+          fi
+
   ios:
     name: iOS simulator validation (device signing required for install)
     runs-on: macos-latest
