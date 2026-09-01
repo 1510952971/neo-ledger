@@ -47,9 +47,9 @@
 
 | 交付物 | GitHub 构建 | 当前可交付状态 | 仍需外部条件 |
 | --- | --- | --- | --- |
-| Android APK | GitHub Actions | 可构建；正式发布需签名 | Android keystore 四项 Secrets、真实设备验收 |
-| Android AAB | GitHub Actions | 可构建；正式发布需签名 | 同上、Google Play 账号/审核（如上架） |
-| Windows | GitHub Actions | 已发布 v1.2.11 Inno Setup 安装器和便携 ZIP；Release 会校验并公开安装器签名状态 | 当前 v1.2.11 未签名；生产分发需 Windows 代码签名证书；MSIX 仍需单独发布流程 |
+| Android APK | GitHub Actions | 已发布 `native-v1.2.16` 正式签名 APK；同签名版本支持覆盖更新 | 后续发布需继续使用同一正式 keystore；真实设备验收仍需完成 |
+| Android AAB | GitHub Actions | 已发布 `native-v1.2.16` 正式签名 AAB | 后续发布需继续使用同一正式 keystore；Google Play 账号/审核（如上架） |
+| Windows | GitHub Actions | 已发布 v1.2.16 Inno Setup 安装器和便携 ZIP；Release 会校验并公开安装器签名状态 | 当前 v1.2.16 未签名；生产分发需 Windows 代码签名证书；MSIX 仍需单独发布流程 |
 | iOS / iPadOS | GitHub Actions | 可生成未签名模拟器验证包 | Apple Developer、证书、Provisioning、TestFlight/App Store 审核；模拟器包不能安装到真机 |
 | Web / PWA | GitHub Actions | 可构建并部署 | 生产域名、HTTPS、服务端部署配置 |
 | 应用内检查更新 | GitHub Releases API | 已实现版本检查与下载入口 | Release 必须为非草稿、非预发布的 `native-v*`，并上传对应资产 |
@@ -60,7 +60,7 @@
 
 要宣布“面向用户的 100% 发布完成”，还必须逐项完成：
 
-1. 配置 Android 签名 Secrets，发布正式 APK/AAB。
+1. `native-v1.2.16` 已发布正式签名 APK/AAB；后续版本必须继续使用同一正式签名并验证覆盖升级，不能改用临时 debug key。
 2. 配置 Apple 签名与开发者账号，完成 iPhone/iPad 真机和 TestFlight 验收。
 3. 配置 Windows 签名证书（如需要 MSIX，则补齐 MSIX 发布链路）。
 4. 在真实 Android 设备上验证微信、支付宝、抖音、淘宝、京东、美团、小红书、闲鱼等页面变体，并记录识别结果。

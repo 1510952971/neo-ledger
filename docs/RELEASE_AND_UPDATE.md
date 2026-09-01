@@ -64,6 +64,6 @@ git push origin native-v1.2.7
 ## 当前明确未完成的外部条件
 
 - Apple Developer 证书、Provisioning Profile 和 TestFlight/App Store 发布凭据不应提交到仓库，需配置在 `ios-distribution` Environment Secrets。
-- Windows 安装器构建已纳入 CI；当前 `native-v1.2.11` 的 EXE 未签名但已明确标记，生产分发仍需配置 Windows 代码签名证书和密码。
+- Windows 安装器构建已纳入 CI；当前 `native-v1.2.16` 的 EXE 未签名但已明确标记，生产分发仍需配置 Windows 代码签名证书和密码。
 - GitHub 正式标签发布是否成功取决于仓库 Secrets 和 Actions 实际运行结果。
 - 本地原生客户端的完整跨平台自动化能力仍需在真实 Android、iOS/iPadOS、Windows 设备上验收；Web/API 层通过不等于系统级能力已经交付。

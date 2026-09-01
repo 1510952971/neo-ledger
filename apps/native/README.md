@@ -15,7 +15,7 @@ flutter run -d android
 
 Android、Web 和 Windows 当前已在 GitHub Actions 完成构建流程验证；本地 Android 包必须显式启用 debug 签名参数，因此仅是测试包。iOS 需要完整 Xcode 与 Apple 签名；Windows 构建需要 Windows runner。两者由 `.github/workflows/native-release.yml` 在 GitHub Actions 上构建。
 
-Windows 当前稳定 Release `native-v1.2.11` 已同时提供便携 ZIP 和 Inno Setup 安装器，完整桌面客户端可直接安装或解压使用。该 Release 的 EXE 未配置代码签名，Windows 可能显示 SmartScreen 警告；生产分发版本仍应配置代码签名。GitHub Actions 仍会在 `neo-ledger-windows` artifact 中提供同类构建产物。
+Windows 当前稳定 Release `native-v1.2.16` 已同时提供便携 ZIP 和 Inno Setup 安装器，完整桌面客户端可直接安装或解压使用。该 Release 的 EXE 未配置代码签名，Windows 可能显示 SmartScreen 警告；生产分发版本仍应配置代码签名。GitHub Actions 仍会在 `neo-ledger-windows` artifact 中提供同类构建产物。
 
 ## 发布与更新
 
@@ -36,4 +36,4 @@ git push origin native-v1.2.9
 
 ## 版本更新规则
 
-原生客户端只识别正式 GitHub Release 中的 `native-v*` 标签。例如 `native-v1.2.11` 会被 Android、Windows、iOS/iPadOS 和桌面端的检查更新识别；普通 `v*` 是 Web 发布，`android-v*` 是 Android 伴侣发布。Android 标签构建必须提供正式签名参数；Windows 标签构建会强制记录签名状态，未签名包只能用于测试。当前 Windows v1.2.11 已发布但未签名。iOS 真机安装必须通过 Apple 签名和 TestFlight/App Store，不能用模拟器归档代替。
+原生客户端只识别正式 GitHub Release 中的 `native-v*` 标签。例如 `native-v1.2.16` 会被 Android、Windows、iOS/iPadOS 和桌面端的检查更新识别；普通 `v*` 是 Web 发布，`android-v*` 是 Android 伴侣发布。Android 稳定标签构建必须使用正式发布签名；Windows 标签构建会强制记录签名状态，未签名包只能用于测试。当前 Windows v1.2.16 已发布但未签名。iOS 真机安装必须通过 Apple 签名和 TestFlight/App Store，不能用模拟器归档代替。
