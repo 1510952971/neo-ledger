@@ -13,6 +13,10 @@ import java.util.Map;
  * same APK that owns the full ledger UI.
  */
 public final class NeoCompanionBridge {
+    /** Broadcast emitted by the notification/accessibility services after a state change. */
+    public static final String ACTION_STATUS =
+            "online.eyeme.neoledger.companion.STATUS";
+
     private NeoCompanionBridge() {}
 
     public static void configure(Context context, String endpoint, String secret, int ledgerId,

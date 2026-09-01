@@ -114,6 +114,9 @@ class LedgerController extends ChangeNotifier {
   static const _companionChannel = MethodChannel(
     'online.eyeme.neo_ledger/companion',
   );
+  static const _companionStatusEvents = EventChannel(
+    'online.eyeme.neo_ledger/companion_status',
+  );
 
   final NeoLedgerApi api;
   SessionUser? user;
@@ -5221,6 +5224,8 @@ class _SettingsSheetState extends State<SettingsSheet> {
   bool captureMarketApps = true;
   Map<String, dynamic> companionStatus = const {};
   Timer? companionRefreshTimer;
+  StreamSubscription<dynamic>? companionStatusSubscription;
+  bool companionStatusRequestActive = false;
 
   @override
   void initState() {
@@ -5231,8 +5236,14 @@ class _SettingsSheetState extends State<SettingsSheet> {
     );
     extraPackages = TextEditingController();
     if (widget.controller.isAndroid) {
+      companionStatusSubscription = LedgerController._companionStatusEvents
+          .receiveBroadcastStream()
+          .listen(
+            _applyCompanionStatus,
+            onError: (Object _, StackTrace __) {},
+          );
       _loadCompanionStatus();
-      companionRefreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      companionRefreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
         _loadCompanionStatus(showLoading: false);
       });
     }
@@ -5244,32 +5255,41 @@ class _SettingsSheetState extends State<SettingsSheet> {
     autoLogSecret.dispose();
     extraPackages.dispose();
     companionRefreshTimer?.cancel();
+    companionStatusSubscription?.cancel();
     super.dispose();
+  }
+
+  void _applyCompanionStatus(dynamic raw) {
+    if (raw is! Map || !mounted) return;
+    final status = <String, dynamic>{
+      for (final entry in raw.entries) '${entry.key}': entry.value,
+    };
+    setState(() {
+      companionStatus = status;
+      if (status['wechat'] is bool) {
+        captureWechat = status['wechat'] as bool;
+      }
+      if (status['alipay'] is bool) {
+        captureAlipay = status['alipay'] as bool;
+      }
+      if (status['marketApps'] is bool) {
+        captureMarketApps = status['marketApps'] as bool;
+      }
+      final packages = status['extraPackages'];
+      if (packages is String && extraPackages.text.isEmpty) {
+        extraPackages.text = packages;
+      }
+    });
   }
 
   Future<void> _loadCompanionStatus({bool showLoading = true}) async {
     if (!widget.controller.isAndroid) return;
-    if (companionLoading) return;
+    if (companionStatusRequestActive) return;
+    companionStatusRequestActive = true;
     if (showLoading && mounted) setState(() => companionLoading = true);
     try {
       final status = await widget.controller.androidCaptureStatus();
-      if (!mounted) return;
-      setState(() {
-        companionStatus = status;
-        if (status['wechat'] is bool) {
-          captureWechat = status['wechat'] as bool;
-        }
-        if (status['alipay'] is bool) {
-          captureAlipay = status['alipay'] as bool;
-        }
-        if (status['marketApps'] is bool) {
-          captureMarketApps = status['marketApps'] as bool;
-        }
-        final packages = status['extraPackages'];
-        if (packages is String && extraPackages.text.isEmpty) {
-          extraPackages.text = packages;
-        }
-      });
+      _applyCompanionStatus(status);
     } catch (error) {
       if (showLoading && mounted) {
         ScaffoldMessenger.of(
@@ -5277,6 +5297,7 @@ class _SettingsSheetState extends State<SettingsSheet> {
         ).showSnackBar(SnackBar(content: Text('读取 Android 自动记账状态失败：$error')));
       }
     } finally {
+      companionStatusRequestActive = false;
       if (showLoading && mounted) setState(() => companionLoading = false);
     }
   }

@@ -33,6 +33,10 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
     // Payment result sheets in Douyin and some marketplace apps can disappear
     // in roughly one second. A single screenshot is therefore not reliable.
     private static final long SCREENSHOT_MIN_INTERVAL_MS = 260L;
+    // Keep a short OCR probe alive after a window transition. Some versions of
+    // Douyin show the payment result as a canvas overlay without emitting a
+    // second content-change event before navigating to the order result page.
+    private static final long ACTIVE_OCR_PROBE_WINDOW_MS = 2_600L;
     private static final long[] OCR_RETRY_DELAYS_MS = {280L, 760L, 1_280L};
     private static final long COMPLETION_COOLDOWN_MS = 5_000L;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -44,6 +48,8 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
     private long lastCompletedAt;
     private String observedPackage;
     private long screenObservation;
+    private String ocrProbePackage;
+    private long ocrProbeUntil;
     private final PaymentObservationBuffer observationBuffer = new PaymentObservationBuffer();
     private final Runnable activeWindowPoll = new Runnable() {
         @Override public void run() {
@@ -73,6 +79,12 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
 
         String source = PaymentAppCatalog.source(packageName);
         store.recordAccessibilityEvent(source, type);
+        if (isWindowTransitionEvent(type)) {
+            ocrProbePackage = packageName;
+            ocrProbeUntil = Math.max(
+                    ocrProbeUntil,
+                    System.currentTimeMillis() + ACTIVE_OCR_PROBE_WINDOW_MS);
+        }
         scan(packageName, getRootInActiveWindow(), event.getText(), store, source, true, type);
     }
 
@@ -113,9 +125,12 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
         if (!completed) {
             // Capture after collecting accessibility text so OCR gets both the
             // canvas-rendered sheet and any semantic text exposed by the app.
-            if (eventTriggered) {
+            boolean activeOcrProbe = packageName.equals(ocrProbePackage) && now < ocrProbeUntil;
+            if (eventTriggered || activeOcrProbe) {
                 requestOcr(packageName, source, text, observation);
-                scheduleOcrRetries(packageName, source, observation);
+                if (eventTriggered) {
+                    scheduleOcrRetries(packageName, source, observation);
+                }
             }
             sendBroadcast(new Intent(SettingsStore.ACTION_STATUS).setPackage(getPackageName()));
             return;
@@ -317,6 +332,11 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
                 || type == AccessibilityEvent.TYPE_VIEW_SELECTED
                 || type == AccessibilityEvent.TYPE_VIEW_FOCUSED
                 || type == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED;
+    }
+
+    private boolean isWindowTransitionEvent(int type) {
+        return type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                || type == AccessibilityEvent.TYPE_WINDOWS_CHANGED;
     }
 
     @Override

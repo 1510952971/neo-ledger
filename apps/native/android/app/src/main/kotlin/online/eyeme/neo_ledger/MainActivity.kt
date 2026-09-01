@@ -1,19 +1,27 @@
 package online.eyeme.neo_ledger
 
+import android.content.BroadcastReceiver
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import online.eyeme.neoledger.companion.NeoCompanionBridge
 
 class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "online.eyeme.neo_ledger/companion"
+        private const val STATUS_CHANNEL = "online.eyeme.neo_ledger/companion_status"
     }
+
+    private var companionStatusSink: EventChannel.EventSink? = null
+    private var companionStatusReceiver: BroadcastReceiver? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -100,6 +108,51 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, STATUS_CHANNEL)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    unregisterCompanionStatusReceiver()
+                    companionStatusSink = events
+                    val receiver = object : BroadcastReceiver() {
+                        override fun onReceive(context: Context?, intent: Intent?) {
+                            companionStatusSink?.success(
+                                NeoCompanionBridge.status(this@MainActivity),
+                            )
+                        }
+                    }
+                    companionStatusReceiver = receiver
+                    val filter = IntentFilter(NeoCompanionBridge.ACTION_STATUS)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                    } else {
+                        registerReceiver(receiver, filter)
+                    }
+                    events?.success(NeoCompanionBridge.status(this@MainActivity))
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    unregisterCompanionStatusReceiver()
+                    companionStatusSink = null
+                }
+            })
+    }
+
+    private fun unregisterCompanionStatusReceiver() {
+        companionStatusReceiver?.let { receiver ->
+            try {
+                unregisterReceiver(receiver)
+            } catch (_: IllegalArgumentException) {
+                // The receiver may already have been unregistered by the engine.
+            }
+        }
+        companionStatusReceiver = null
+    }
+
+    override fun onDestroy() {
+        unregisterCompanionStatusReceiver()
+        companionStatusSink = null
+        super.onDestroy()
     }
 
     private fun openBatterySettings() {

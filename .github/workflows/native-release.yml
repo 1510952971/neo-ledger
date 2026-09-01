@@ -156,23 +156,27 @@ jobs:
           $installer = "neo-ledger-windows-$version-setup.exe"
           if (-not (Test-Path $installer)) { throw "Windows installer was not produced: $installer" }
           if ($env:GITHUB_REF -like 'refs/tags/native-v*') {
-            if (-not $env:WINDOWS_SIGNING_CERTIFICATE_BASE64) {
-              throw "Missing Windows signing certificate secret (NEO_LEDGER_WINDOWS_SIGNING_CERTIFICATE_BASE64 or WINDOWS_SIGNING_CERTIFICATE_BASE64)"
+            $hasCertificate = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_BASE64)
+            $hasPassword = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD)
+            if ($hasCertificate -xor $hasPassword) {
+              throw "Windows signing requires both certificate and password secrets"
             }
-            if (-not $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD) {
-              throw "Missing Windows signing certificate password secret (NEO_LEDGER_WINDOWS_SIGNING_CERTIFICATE_PASSWORD or WINDOWS_SIGNING_CERTIFICATE_PASSWORD)"
+            if ($hasCertificate -and $hasPassword) {
+              $pfxPath = Join-Path $env:RUNNER_TEMP 'neo-ledger-signing.pfx'
+              [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERTIFICATE_BASE64))
+              $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+              if (-not $signtool) { throw "Windows SDK signtool.exe was not found" }
+              & $signtool.FullName sign /fd SHA256 /f $pfxPath /p $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD /tr http://timestamp.digicert.com /td SHA256 /d "Neo Ledger" $installer
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $signature = Get-AuthenticodeSignature -FilePath $installer
+              if ($signature.Status -ne 'Valid') {
+                throw "Windows installer signature validation failed: $($signature.Status)"
+              }
+              $signatureStatus = 'valid'
+            } else {
+              Write-Warning "Windows signing secrets are not configured; stable release will contain an unsigned installer"
+              $signatureStatus = 'unsigned'
             }
-            $pfxPath = Join-Path $env:RUNNER_TEMP 'neo-ledger-signing.pfx'
-            [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERTIFICATE_BASE64))
-            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if (-not $signtool) { throw "Windows SDK signtool.exe was not found" }
-            & $signtool.FullName sign /fd SHA256 /f $pfxPath /p $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD /tr http://timestamp.digicert.com /td SHA256 /d "Neo Ledger" $installer
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            $signature = Get-AuthenticodeSignature -FilePath $installer
-            if ($signature.Status -ne 'Valid') {
-              throw "Windows installer signature validation failed: $($signature.Status)"
-            }
-            $signatureStatus = 'valid'
           }
           Set-Content -Path 'windows-signature-status.txt' -Value $signatureStatus -NoNewline
       - uses: actions/upload-artifact@v4
@@ -299,7 +303,16 @@ jobs:
           done < <(find artifacts -maxdepth 3 -type f -print0)
           signature_file=$(find artifacts -maxdepth 3 -type f -name 'windows-signature-status.txt' -print -quit)
           test -n "$signature_file"
-          test "$(tr -d '\r\n' < "$signature_file")" = 'valid'
+          signature_status=$(tr -d '\r\n' < "$signature_file")
+          case "$signature_status" in
+            valid|unsigned) ;;
+            *)
+              echo "Unexpected Windows installer signature status: $signature_status"
+              exit 1
+              ;;
+          esac
+          windows_installer_signed=false
+          if [ "$signature_status" = 'valid' ]; then windows_installer_signed=true; fi
           for required_asset in \
             "neo-ledger-android-${VERSION}.apk" \
             "neo-ledger-android-${VERSION}.aab" \
@@ -323,7 +336,7 @@ jobs:
               "windows": {
                 "portable": true,
                 "installer": true,
-                "installerSigned": true
+                "installerSigned": $windows_installer_signed
               },
               "web": true,
               "ios": false
