@@ -22,7 +22,7 @@ import 'windows_update_service.dart';
 const _brand = Color(0xffa5ff4f);
 const _surface = Color(0xff15151d);
 const _surfaceAlt = Color(0xff20202a);
-const _nativeVersion = '1.2.9';
+const _nativeVersion = '1.2.11';
 const _queueKey = 'neo_ledger_offline_queue_v1';
 const _coreSnapshotKey = 'neo_ledger_core_snapshot_v1';
 const _shortcutChannel = MethodChannel('online.eyeme.neo_ledger/shortcuts');
@@ -4539,7 +4539,10 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (_) => SettingsSheet(controller: widget.controller),
+      builder: (_) => SettingsSheet(
+        controller: widget.controller,
+        onCheckForUpdate: _checkForUpdate,
+      ),
     );
   }
 
@@ -5202,9 +5205,14 @@ class _AccountSheetState extends State<AccountSheet> {
 }
 
 class SettingsSheet extends StatefulWidget {
-  const SettingsSheet({required this.controller, super.key});
+  const SettingsSheet({
+    required this.controller,
+    this.onCheckForUpdate,
+    super.key,
+  });
 
   final LedgerController controller;
+  final Future<void> Function()? onCheckForUpdate;
 
   @override
   State<SettingsSheet> createState() => _SettingsSheetState();
@@ -5783,6 +5791,49 @@ class _SettingsSheetState extends State<SettingsSheet> {
     }
   }
 
+  Widget _appUpdateCard() {
+    final checkForUpdate = widget.onCheckForUpdate;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.system_update_alt_outlined),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '应用更新',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '当前版本 v$_nativeVersion · 从 GitHub 原生客户端发布检查更新',
+                    style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+                  ),
+                  const SizedBox(height: 10),
+                  FilledButton.icon(
+                    onPressed: checkForUpdate == null
+                        ? null
+                        : () {
+                            Navigator.pop(context);
+                            checkForUpdate();
+                          },
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('检查新版并安装'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
@@ -5800,6 +5851,8 @@ class _SettingsSheetState extends State<SettingsSheet> {
               style: TextStyle(color: Colors.grey.shade500, height: 1.4),
             ),
             const SizedBox(height: 18),
+            _appUpdateCard(),
+            const SizedBox(height: 12),
             TextField(
               controller: baseUrl,
               keyboardType: TextInputType.url,

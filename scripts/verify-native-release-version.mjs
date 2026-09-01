@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const pubspecFile = resolve(root, "apps/native/pubspec.yaml");
+const appSourceFile = resolve(root, "apps/native/lib/app.dart");
 const releaseManifestFile = resolve(root, "release-manifest.json");
 const compatibilityFile = resolve(root, "release-compatibility.json");
 
@@ -24,12 +25,14 @@ function fail(message) {
   process.exitCode = 1;
 }
 
-if (![pubspecFile, releaseManifestFile, compatibilityFile].every(existsSync)) {
+if (![pubspecFile, appSourceFile, releaseManifestFile, compatibilityFile].every(existsSync)) {
   fail("原生客户端版本校验文件不存在");
 } else {
   try {
     const pubspec = readFileSync(pubspecFile, "utf8");
+    const appSource = readFileSync(appSourceFile, "utf8");
     const nativeVersion = pubspec.match(/^version:\s+(\d+\.\d+\.\d+)/mu)?.[1];
+    const appVersion = appSource.match(/const _nativeVersion = ['"](\d+\.\d+\.\d+)['"]/u)?.[1];
     const releaseManifest = JSON.parse(readFileSync(releaseManifestFile, "utf8"));
     const compatibility = JSON.parse(readFileSync(compatibilityFile, "utf8"));
     const manifestVersion = releaseManifest?.nativeClientVersion;
@@ -38,13 +41,14 @@ if (![pubspecFile, releaseManifestFile, compatibilityFile].every(existsSync)) {
 
     if (
       !semverPattern.test(nativeVersion ?? "") ||
+      appVersion !== nativeVersion ||
       manifestVersion !== nativeVersion ||
       compatibilityVersion !== nativeVersion ||
       !semverPattern.test(minimumVersion ?? "") ||
       compareVersions(nativeVersion, minimumVersion) < 0
     ) {
       fail(
-        `原生客户端版本与发布清单不一致：pubspec=${nativeVersion ?? "unknown"}, ` +
+        `原生客户端版本与发布清单不一致：pubspec=${nativeVersion ?? "unknown"}, app.dart=${appVersion ?? "unknown"}, ` +
           `manifest=${manifestVersion ?? "unknown"}, compatibility=${compatibilityVersion ?? "unknown"}, ` +
           `minimum=${minimumVersion ?? "unknown"}`,
       );
