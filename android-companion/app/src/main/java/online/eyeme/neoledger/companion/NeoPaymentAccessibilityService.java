@@ -90,6 +90,7 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
 
     private void scanActiveWindow() {
         AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null) root = findForegroundRoot();
         if (root == null || root.getPackageName() == null) return;
         String packageName = root.getPackageName().toString();
         SettingsStore store = new SettingsStore(this);
@@ -112,6 +113,23 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
         final long observation = screenObservation;
 
         String earlyEventText = eventText(eventText);
+        // Payment result sheets in Douyin and some marketplace apps can be
+        // exposed as a separate accessibility window for only one or two
+        // seconds. Do not merge every same-package window before deciding:
+        // the order page behind the sheet can contain "订单" / "历史" text
+        // and poison an otherwise valid payment-success result.
+        String completedCandidate = firstCompletedWindowCandidate(
+                packageName, root, earlyEventText, now);
+        if (completedCandidate != null) {
+            observationBuffer.clear();
+            observationBuffer.append(completedCandidate, now);
+            store.recordAccessibilityScan(source, packageName, true,
+                    PaymentScreenParser.rejectionReason(packageName, completedCandidate, now), eventType);
+            enqueueCompleted(packageName, source, completedCandidate, store);
+            sendBroadcast(new Intent(SettingsStore.ACTION_STATUS).setPackage(getPackageName()));
+            return;
+        }
+
         String visible = visibleText(packageName, root);
         boolean bufferChanged = observationBuffer.append(visible, now);
         bufferChanged |= observationBuffer.append(earlyEventText, now);
@@ -177,9 +195,18 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
                 if (observation != screenObservation || !isCurrentPackage(packageName)) return;
                 AccessibilityNodeInfo root = getRootInActiveWindow();
                 long now = System.currentTimeMillis();
+                String completedCandidate = firstCompletedWindowCandidate(
+                        packageName, root, "", now);
+                SettingsStore store = new SettingsStore(this);
+                if (completedCandidate != null) {
+                    observationBuffer.clear();
+                    observationBuffer.append(completedCandidate, now);
+                    enqueueCompleted(packageName, source, completedCandidate, store);
+                    sendBroadcast(new Intent(SettingsStore.ACTION_STATUS).setPackage(getPackageName()));
+                    return;
+                }
                 observationBuffer.append(visibleText(packageName, root), now);
                 String text = observationBuffer.text(now);
-                SettingsStore store = new SettingsStore(this);
                 if (PaymentScreenParser.isPaymentCompleted(packageName, text)) {
                     enqueueCompleted(packageName, source, text, store);
                     sendBroadcast(new Intent(SettingsStore.ACTION_STATUS).setPackage(getPackageName()));
@@ -209,6 +236,76 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
         // still the observed foreground package. Keep OCR alive only for the
         // bounded observation window, never indefinitely.
         return packageName.equals(observedPackage) && observationBuffer.active(System.currentTimeMillis());
+    }
+
+    /**
+     * Returns a completed-payment candidate from one visible window at a time.
+     * Window order is important: active/focused overlays are checked before
+     * the underlying merchant/order window. This keeps a transient payment
+     * sheet from being rejected because unrelated background text was merged
+     * into the same snapshot.
+     */
+    private String firstCompletedWindowCandidate(String packageName,
+                                                 AccessibilityNodeInfo fallbackRoot,
+                                                 String earlyEventText,
+                                                 long nowMillis) {
+        try {
+            List<AccessibilityWindowInfo> windows = getWindows();
+            if (windows != null) {
+                for (int pass = 0; pass < 2; pass++) {
+                    for (AccessibilityWindowInfo window : windows) {
+                        if (window == null) continue;
+                        boolean priority = window.isActive() || window.isFocused();
+                        if ((pass == 0) != priority) continue;
+                        String candidate = completedCandidateForRoot(
+                                packageName, window.getRoot(), earlyEventText, nowMillis);
+                        if (candidate != null) return candidate;
+                    }
+                }
+            }
+        } catch (RuntimeException ignored) {
+            // Some Android builds expose getWindows only intermittently.
+        }
+
+        String fallbackCandidate = completedCandidateForRoot(
+                packageName, fallbackRoot, earlyEventText, nowMillis);
+        if (fallbackCandidate != null) return fallbackCandidate;
+        return completedCandidateForRoot(packageName, null, earlyEventText, nowMillis);
+    }
+
+    private String completedCandidateForRoot(String packageName,
+                                             AccessibilityNodeInfo root,
+                                             String earlyEventText,
+                                             long nowMillis) {
+        if (root != null && !samePackage(packageName, root)) return null;
+        StringBuilder candidate = new StringBuilder();
+        int[] count = new int[]{0};
+        if (root != null) collect(root, candidate, count);
+        append(candidate, earlyEventText);
+        String text = candidate.toString().trim();
+        return !text.isEmpty()
+                && PaymentScreenParser.isPaymentCompleted(packageName, text, nowMillis)
+                ? text
+                : null;
+    }
+
+    private AccessibilityNodeInfo findForegroundRoot() {
+        try {
+            List<AccessibilityWindowInfo> windows = getWindows();
+            if (windows == null) return null;
+            for (int pass = 0; pass < 2; pass++) {
+                for (AccessibilityWindowInfo window : windows) {
+                    if (window == null) continue;
+                    boolean priority = window.isActive() || window.isFocused();
+                    if ((pass == 0) != priority) continue;
+                    AccessibilityNodeInfo root = window.getRoot();
+                    if (root != null) return root;
+                }
+            }
+        } catch (RuntimeException ignored) {
+            // Fall back to the next poll when the window list is unavailable.
+        }
+        return null;
     }
 
     private void requestOcr(String packageName, String source, String accessibilityText,
@@ -357,17 +454,19 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
         int[] count = new int[]{0};
         try {
             List<AccessibilityWindowInfo> windows = getWindows();
-            for (int pass = 0; pass < 2; pass++) {
-                for (AccessibilityWindowInfo window : windows) {
-                    if (window == null) continue;
-                    boolean priority = window.isActive() || window.isFocused();
-                    if ((pass == 0) != priority) continue;
-                    AccessibilityNodeInfo windowRoot = window.getRoot();
-                    if (!samePackage(packageName, windowRoot)) continue;
-                    collect(windowRoot, result, count);
+            if (windows != null) {
+                for (int pass = 0; pass < 2; pass++) {
+                    for (AccessibilityWindowInfo window : windows) {
+                        if (window == null) continue;
+                        boolean priority = window.isActive() || window.isFocused();
+                        if ((pass == 0) != priority) continue;
+                        AccessibilityNodeInfo windowRoot = window.getRoot();
+                        if (!samePackage(packageName, windowRoot)) continue;
+                        collect(windowRoot, result, count);
+                        if (count[0] >= MAX_NODES || result.length() >= MAX_TEXT_LENGTH) break;
+                    }
                     if (count[0] >= MAX_NODES || result.length() >= MAX_TEXT_LENGTH) break;
                 }
-                if (count[0] >= MAX_NODES || result.length() >= MAX_TEXT_LENGTH) break;
             }
         } catch (RuntimeException ignored) {
             // Some Android builds expose getWindows only intermittently.

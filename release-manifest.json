@@ -3,7 +3,7 @@
   "product": "Neo Ledger",
   "repository": "1510952971/neo-ledger",
   "releaseTagPrefix": "native-v",
-  "nativeClientVersion": "1.2.15",
+  "nativeClientVersion": "1.2.16",
   "minimumNativeClientVersion": "1.2.7",
   "apiVersion": "v1",
   "signedReleaseRequired": false,
@@ -13,7 +13,7 @@
     "ios": "separate-apple-distribution"
   },
   "currentRelease": {
-    "tag": "native-v1.2.15",
+    "tag": "native-v1.2.16",
     "windowsInstallerSigned": false,
     "windowsInstallerNote": "当前 Release 的 Windows EXE 未配置代码签名，仅用于测试；生产分发应配置证书。"
   },
