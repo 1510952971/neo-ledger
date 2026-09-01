@@ -12,6 +12,7 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
+import online.eyeme.neoledger.companion.MainActivity as LegacyCompanionActivity
 import online.eyeme.neoledger.companion.NeoCompanionBridge
 
 class MainActivity : FlutterActivity() {
@@ -75,6 +76,11 @@ class MainActivity : FlutterActivity() {
 
                     "openBatterySettings" -> {
                         openBatterySettings()
+                        result.success(null)
+                    }
+
+                    "openLegacyCompanion" -> {
+                        startActivity(Intent(this, LegacyCompanionActivity::class.java))
                         result.success(null)
                     }
 

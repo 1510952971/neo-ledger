@@ -35,6 +35,16 @@
             </intent-filter>
         </activity>
 
+        <!-- The legacy companion console is compiled into this same APK. Keep
+             it as an explicit entry point so users can still access every
+             old control (configuration, permission shortcuts, diagnostics,
+             queue retry and the legacy update screen) after upgrading. -->
+        <activity
+            android:name="online.eyeme.neoledger.companion.MainActivity"
+            android:exported="false"
+            android:label="Neo Ledger Android 伴侣兼容控制台"
+            android:theme="@style/NormalTheme" />
+
         <!-- Android notification and payment-screen capture are part of the
              full client; no companion APK is required. Both services are
              read-only with respect to payment apps and never click/type/pay. -->

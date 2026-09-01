@@ -22,7 +22,7 @@ import 'windows_update_service.dart';
 const _brand = Color(0xffa5ff4f);
 const _surface = Color(0xff15151d);
 const _surfaceAlt = Color(0xff20202a);
-const _nativeVersion = '1.2.12';
+const _nativeVersion = '1.2.13';
 const _queueKey = 'neo_ledger_offline_queue_v1';
 const _coreSnapshotKey = 'neo_ledger_core_snapshot_v1';
 const _shortcutChannel = MethodChannel('online.eyeme.neo_ledger/shortcuts');
@@ -780,6 +780,15 @@ class LedgerController extends ChangeNotifier {
       await _companionChannel.invokeMethod<void>('openBatterySettings');
     } on PlatformException catch (error) {
       throw ApiException(error.message ?? '无法打开系统省电设置');
+    }
+  }
+
+  Future<void> openAndroidLegacyCompanion() async {
+    if (!isAndroid) return;
+    try {
+      await _companionChannel.invokeMethod<void>('openLegacyCompanion');
+    } on PlatformException catch (error) {
+      throw ApiException(error.message ?? '无法打开完整 Android 伴侣控制台');
     }
   }
 
@@ -5525,6 +5534,22 @@ class _SettingsSheetState extends State<SettingsSheet> {
     }
   }
 
+  Future<void> _openLegacyCompanion() async {
+    if (companionActionLoading) return;
+    setState(() => companionActionLoading = true);
+    try {
+      await widget.controller.openAndroidLegacyCompanion();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('打开完整 Android 伴侣控制台失败：$error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => companionActionLoading = false);
+    }
+  }
+
   Widget _androidCaptureCard(LedgerController controller) {
     final configured = companionStatus['configured'] == true;
     final notificationEnabled = companionStatus['notificationEnabled'] == true;
@@ -5583,6 +5608,46 @@ class _SettingsSheetState extends State<SettingsSheet> {
                 color: Colors.grey.shade600,
                 fontSize: 12,
                 height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '完整 Android 伴侣控制台',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '旧版逐项配置、系统设置入口、测试账单、发送状态和队列重试已内置到当前 APK，并与这里共用同一份配置。',
+                    style: TextStyle(
+                      color: Colors.grey.shade600,
+                      fontSize: 12,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: actionBusy ? null : _openLegacyCompanion,
+                    icon: const Icon(Icons.tune_outlined),
+                    label: const Text('打开完整伴侣控制台'),
+                  ),
+                  Text(
+                    '统一 APK 更新请使用本页“应用更新”；兼容控制台里的旧版更新按钮仅用于旧伴侣发布通道。',
+                    style: TextStyle(
+                      color: Colors.grey.shade600,
+                      fontSize: 11,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 12),
