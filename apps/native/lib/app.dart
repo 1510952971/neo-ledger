@@ -14,6 +14,7 @@ import 'feature_catalog.dart';
 import 'import_file_loader.dart';
 import 'import_parser.dart';
 import 'models.dart';
+import 'shortcut_entry.dart';
 import 'update_service.dart';
 import 'windows_platform.dart';
 import 'windows_update_service.dart';
@@ -21,9 +22,10 @@ import 'windows_update_service.dart';
 const _brand = Color(0xffa5ff4f);
 const _surface = Color(0xff15151d);
 const _surfaceAlt = Color(0xff20202a);
-const _nativeVersion = '1.2.8';
+const _nativeVersion = '1.2.9';
 const _queueKey = 'neo_ledger_offline_queue_v1';
 const _coreSnapshotKey = 'neo_ledger_core_snapshot_v1';
+const _shortcutChannel = MethodChannel('online.eyeme.neo_ledger/shortcuts');
 const _assetTypes = [
   '房产',
   '车辆',
@@ -1037,11 +1039,18 @@ class LedgerController extends ChangeNotifier {
     required String title,
     required String category,
     required String type,
+    String? occurredAt,
   }) async {
     final ledger = selectedLedger;
     final account = accounts.isEmpty ? null : accounts.first;
     if (ledger == null || account == null) {
       throw const ApiException('没有可用的账本账户');
+    }
+    final occurredAtValue = occurredAt == null
+        ? iso8601NowUtc()
+        : DateTime.tryParse(occurredAt)?.toUtc().toIso8601String();
+    if (occurredAtValue == null) {
+      throw const ApiException('流水时间格式无效');
     }
     final entry = OfflineEntry(
       offlineId: 'native-${DateTime.now().microsecondsSinceEpoch}',
@@ -1051,7 +1060,7 @@ class LedgerController extends ChangeNotifier {
       type: type,
       title: title,
       category: category,
-      occurredAt: iso8601NowUtc(),
+      occurredAt: occurredAtValue,
     );
     if (demoMode) {
       final item = TransactionItem(
@@ -2894,6 +2903,9 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
   String _billType = '全部';
   Timer? _backgroundRefreshTimer;
   AppLifecycleState _lifecycleState = AppLifecycleState.resumed;
+  final _shortcutUrls = <String>[];
+  final _queuedShortcutUrls = <String>{};
+  bool _drainingShortcutUrls = false;
 
   @override
   void initState() {
@@ -2906,6 +2918,73 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
     unawaited(
       NeoWindowsPlatform.setFilesDroppedHandler(_handleWindowsFilesDropped),
     );
+    _shortcutChannel.setMethodCallHandler(_handleShortcutMethodCall);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_loadPendingShortcutUrls());
+    });
+  }
+
+  Future<void> _loadPendingShortcutUrls() async {
+    try {
+      final pending = await _shortcutChannel.invokeMethod<List<dynamic>>(
+        'getPendingShortcutUrls',
+      );
+      if (pending == null) return;
+      for (final value in pending) {
+        if (value is String) _enqueueShortcutUrl(value);
+      }
+    } on MissingPluginException {
+      // The iOS bridge is not present on Android, Windows, or Web.
+    } on PlatformException {
+      // A missing native bridge must not interrupt the ledger UI.
+    }
+  }
+
+  Future<dynamic> _handleShortcutMethodCall(MethodCall call) async {
+    if (call.method == 'openShortcutUrl' && call.arguments is String) {
+      _enqueueShortcutUrl(call.arguments as String);
+    }
+    return null;
+  }
+
+  void _enqueueShortcutUrl(String raw) {
+    final normalized = raw.trim();
+    if (normalized.isEmpty || !_queuedShortcutUrls.add(normalized)) return;
+    _shortcutUrls.add(normalized);
+    unawaited(_drainShortcutUrls());
+  }
+
+  Future<void> _drainShortcutUrls() async {
+    if (_drainingShortcutUrls || !mounted) return;
+    _drainingShortcutUrls = true;
+    try {
+      while (mounted && _shortcutUrls.isNotEmpty) {
+        final raw = _shortcutUrls.removeAt(0);
+        try {
+          final draft = parseShortcutEntryUri(raw);
+          if (draft == null) {
+            if (!mounted) break;
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('快捷指令数据无效，未写入账本')),
+            );
+            continue;
+          }
+          await showModalBottomSheet<void>(
+            context: context,
+            isScrollControlled: true,
+            showDragHandle: true,
+            builder: (_) => EntrySheet(
+              controller: widget.controller,
+              initialDraft: draft,
+            ),
+          );
+        } finally {
+          _queuedShortcutUrls.remove(raw);
+        }
+      }
+    } finally {
+      _drainingShortcutUrls = false;
+    }
   }
 
   @override
@@ -2948,6 +3027,7 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _billSearchController.dispose();
     unawaited(NeoWindowsPlatform.clearFilesDroppedHandler());
+    _shortcutChannel.setMethodCallHandler(null);
     updateService.close();
     super.dispose();
   }
@@ -10607,9 +10687,10 @@ class _SavingsGoalSheetState extends State<SavingsGoalSheet> {
 }
 
 class EntrySheet extends StatefulWidget {
-  const EntrySheet({required this.controller, super.key});
+  const EntrySheet({required this.controller, this.initialDraft, super.key});
 
   final LedgerController controller;
+  final ShortcutEntryDraft? initialDraft;
 
   @override
   State<EntrySheet> createState() => _EntrySheetState();
@@ -10621,6 +10702,18 @@ class _EntrySheetState extends State<EntrySheet> {
   final category = TextEditingController(text: '餐饮');
   String type = '支出';
   bool saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final draft = widget.initialDraft;
+    if (draft != null) {
+      amount.text = draft.amount.toStringAsFixed(2);
+      title.text = draft.title;
+      category.text = draft.category;
+      type = draft.type;
+    }
+  }
 
   @override
   void dispose() {
@@ -10643,6 +10736,13 @@ class _EntrySheetState extends State<EntrySheet> {
               '记一笔',
               style: TextStyle(fontSize: 25, fontWeight: FontWeight.bold),
             ),
+            if (widget.initialDraft != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                '来自 ${widget.initialDraft!.source} · 信息已预填，请核对后保存',
+                style: TextStyle(color: Colors.grey.shade400),
+              ),
+            ],
             const SizedBox(height: 16),
             SegmentedButton<String>(
               segments: const [
@@ -10712,6 +10812,7 @@ class _EntrySheetState extends State<EntrySheet> {
         title: title.text.trim().isEmpty ? '未命名流水' : title.text.trim(),
         category: category.text.trim().isEmpty ? '其他' : category.text.trim(),
         type: type,
+        occurredAt: widget.initialDraft?.occurredAt?.toIso8601String(),
       );
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
