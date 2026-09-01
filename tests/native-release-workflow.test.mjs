@@ -21,5 +21,14 @@ test("native release requires every installable asset and excludes unsigned iOS"
   assert.match(workflow, /neo-ledger-windows-\$\{VERSION\}-setup\.exe/u);
   assert.match(workflow, /neo-ledger-web-\$\{VERSION\}\.tar\.gz/u);
   assert.match(workflow, /neo-ledger-ios-unsigned-\*\.zip/u);
-  assert.match(workflow, /installerSigned": true/u);
+  assert.match(
+    workflow,
+    /case "\$signature_status" in[\s\S]*valid\|unsigned\) ;;[\s\S]*esac/u,
+  );
+  assert.match(workflow, /windows_installer_signed=false/u);
+  assert.match(
+    workflow,
+    /if \[ "\$signature_status" = 'valid' \]; then windows_installer_signed=true; fi/u,
+  );
+  assert.match(workflow, /"installerSigned": \$windows_installer_signed/u);
 });
