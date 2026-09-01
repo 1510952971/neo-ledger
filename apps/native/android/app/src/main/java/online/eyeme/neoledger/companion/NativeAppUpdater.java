@@ -2,6 +2,9 @@ package online.eyeme.neoledger.companion;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.Signature;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
@@ -21,6 +24,8 @@ import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -83,6 +88,7 @@ public final class NativeAppUpdater {
                         throw new Exception("APK 校验失败，已拒绝安装");
                     }
                 }
+                verifyCompatibleSignature(app, apk);
                 install(app, apk);
                 result = new Result(true, true, version, "新版已下载，已交给系统安装");
             } catch (Exception error) {
@@ -126,6 +132,56 @@ public final class NativeAppUpdater {
             if (!temporary.renameTo(target)) throw new Exception("无法保存更新包");
         }
         return target;
+    }
+
+    /**
+     * Android only allows an in-place upgrade when the package name and
+     * signing certificate match the installed application. Checking this
+     * before launching the system installer turns the otherwise opaque
+     * INSTALL_FAILED_UPDATE_INCOMPATIBLE (-7) result into an actionable error.
+     */
+    private static void verifyCompatibleSignature(Context context, File apk) throws Exception {
+        PackageManager packageManager = context.getPackageManager();
+        int flags = Build.VERSION.SDK_INT >= 28
+                ? PackageManager.GET_SIGNING_CERTIFICATES
+                : PackageManager.GET_SIGNATURES;
+        PackageInfo installed = packageManager.getPackageInfo(context.getPackageName(), flags);
+        PackageInfo candidate = packageManager.getPackageArchiveInfo(apk.getAbsolutePath(), flags);
+        if (candidate == null) throw new Exception("无法读取更新包信息，已拒绝安装");
+        if (!context.getPackageName().equals(candidate.packageName)) {
+            throw new Exception("更新包包名与当前应用不一致，已拒绝安装");
+        }
+
+        Set<String> installedCertificates = certificateFingerprints(installed);
+        Set<String> candidateCertificates = certificateFingerprints(candidate);
+        if (installedCertificates.isEmpty()
+                || candidateCertificates.isEmpty()
+                || !installedCertificates.equals(candidateCertificates)) {
+            throw new Exception(
+                    "更新包签名与当前安装版本不同，Android 不允许覆盖安装。"
+                            + "请先备份数据，再卸载旧版并安装同一发布签名版本；后续同一签名版本可直接更新");
+        }
+    }
+
+    private static Set<String> certificateFingerprints(PackageInfo packageInfo) throws Exception {
+        Signature[] signatures;
+        if (Build.VERSION.SDK_INT >= 28 && packageInfo.signingInfo != null) {
+            if (packageInfo.signingInfo.hasMultipleSigners()) {
+                signatures = packageInfo.signingInfo.getApkContentsSigners();
+            } else {
+                signatures = packageInfo.signingInfo.getSigningCertificateHistory();
+            }
+        } else {
+            signatures = packageInfo.signatures;
+        }
+
+        Set<String> fingerprints = new TreeSet<>();
+        if (signatures != null) {
+            for (Signature signature : signatures) {
+                fingerprints.add(sha256(signature.toByteArray()));
+            }
+        }
+        return fingerprints;
     }
 
     private static void install(Context context, File apk) throws Exception {
@@ -214,6 +270,13 @@ public final class NativeAppUpdater {
         }
         StringBuilder result = new StringBuilder();
         for (byte value : digest.digest()) result.append(String.format("%02x", value));
+        return result.toString();
+    }
+
+    private static String sha256(byte[] value) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        StringBuilder result = new StringBuilder();
+        for (byte item : digest.digest(value)) result.append(String.format("%02x", item));
         return result.toString();
     }
 
