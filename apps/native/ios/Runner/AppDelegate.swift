@@ -72,7 +72,7 @@ final class ShortcutBridge {
     ShortcutBridge.shared.install(using: engineBridge)
   }
 
-  func application(
+  override func application(
     _ application: UIApplication,
     open url: URL,
     options: [UIApplication.OpenURLOptionsKey: Any] = [:]
@@ -80,7 +80,7 @@ final class ShortcutBridge {
     ShortcutBridge.shared.handle(url)
   }
 
-  func application(
+  override func application(
     _ application: UIApplication,
     configurationForConnecting connectingSceneSession: UISceneSession,
     options: UIScene.ConnectionOptions
