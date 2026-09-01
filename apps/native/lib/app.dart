@@ -5240,7 +5240,7 @@ class _SettingsSheetState extends State<SettingsSheet> {
           .receiveBroadcastStream()
           .listen(
             _applyCompanionStatus,
-            onError: (Object _, StackTrace __) {},
+            onError: (Object _, StackTrace _) {},
           );
       _loadCompanionStatus();
       companionRefreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
