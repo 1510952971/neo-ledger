@@ -22,7 +22,7 @@ import 'windows_update_service.dart';
 const _brand = Color(0xffa5ff4f);
 const _surface = Color(0xff15151d);
 const _surfaceAlt = Color(0xff20202a);
-const _nativeVersion = '1.2.11';
+const _nativeVersion = '1.2.12';
 const _queueKey = 'neo_ledger_offline_queue_v1';
 const _coreSnapshotKey = 'neo_ledger_core_snapshot_v1';
 const _shortcutChannel = MethodChannel('online.eyeme.neo_ledger/shortcuts');
@@ -2906,6 +2906,8 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
   String _billType = '全部';
   Timer? _backgroundRefreshTimer;
   AppLifecycleState _lifecycleState = AppLifecycleState.resumed;
+  bool _backgroundRefreshInFlight = false;
+  bool _hasObservedBackgroundCounts = false;
   final _shortcutUrls = <String>[];
   final _queuedShortcutUrls = <String>{};
   bool _drainingShortcutUrls = false;
@@ -2967,19 +2969,16 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
           final draft = parseShortcutEntryUri(raw);
           if (draft == null) {
             if (!mounted) break;
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('快捷指令数据无效，未写入账本')),
-            );
+            ScaffoldMessenger.of(context)
+                .showSnackBar(const SnackBar(content: Text('快捷指令数据无效，未写入账本')));
             continue;
           }
           await showModalBottomSheet<void>(
             context: context,
             isScrollControlled: true,
             showDragHandle: true,
-            builder: (_) => EntrySheet(
-              controller: widget.controller,
-              initialDraft: draft,
-            ),
+            builder: (_) =>
+                EntrySheet(controller: widget.controller, initialDraft: draft),
           );
         } finally {
           _queuedShortcutUrls.remove(raw);
@@ -3001,26 +3000,69 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
         _lifecycleState != AppLifecycleState.resumed ||
         widget.controller.demoMode ||
         !widget.controller.authenticated ||
-        widget.controller.loading) {
+        widget.controller.loading ||
+        _backgroundRefreshInFlight) {
       return;
     }
+    _backgroundRefreshInFlight = true;
     unawaited(_refreshSilently());
   }
 
   Future<void> _refreshSilently() async {
     try {
-      if (widget.controller.queue.isNotEmpty) {
-        await widget.controller.syncQueue(silent: true);
-      } else {
-        await widget.controller.refresh(silent: true);
-      }
-    } catch (_) {
-      // A failed sync remains queued; still try to refresh server-side data.
+      final oldUnreadCount = widget.controller.unreadNotificationCount;
+      final oldPendingServerCount = widget.controller.pendingServerCount;
+      var refreshed = false;
       try {
-        await widget.controller.refresh(silent: true);
+        if (widget.controller.queue.isNotEmpty) {
+          await widget.controller.syncQueue(silent: true);
+        } else {
+          await widget.controller.refresh(silent: true);
+        }
+        refreshed = true;
       } catch (_) {
-        // Background work must not interrupt the current page or show a toast.
+        // A failed sync remains queued; still try to refresh server-side data.
+        try {
+          await widget.controller.refresh(silent: true);
+          refreshed = true;
+        } catch (_) {
+          // Background work must not interrupt the current page or show a toast.
+        }
       }
+
+      if (refreshed) {
+        final newUnreadCount = widget.controller.unreadNotificationCount;
+        final newPendingServerCount = widget.controller.pendingServerCount;
+        if (_hasObservedBackgroundCounts) {
+          await _notifyWindowsActivity(
+            unreadDelta: newUnreadCount - oldUnreadCount,
+            pendingDelta: newPendingServerCount - oldPendingServerCount,
+          );
+        }
+        _hasObservedBackgroundCounts = true;
+      }
+    } finally {
+      _backgroundRefreshInFlight = false;
+    }
+  }
+
+  Future<void> _notifyWindowsActivity({
+    required int unreadDelta,
+    required int pendingDelta,
+  }) async {
+    if (unreadDelta <= 0 && pendingDelta <= 0) return;
+    final changes = <String>[];
+    if (unreadDelta > 0) changes.add('新增通知 $unreadDelta 条');
+    if (pendingDelta > 0) changes.add('新增待处理账单 $pendingDelta 笔');
+    try {
+      await NeoWindowsPlatform.showTrayNotification(
+        title: 'Neo Ledger 有新内容',
+        message: '${changes.join('，')}，打开应用查看',
+      );
+    } on MissingPluginException {
+      // The Windows tray bridge is unavailable on other platforms/build modes.
+    } on PlatformException {
+      // A desktop notification failure must not interrupt background refresh.
     }
   }
 
@@ -3483,19 +3525,11 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
               onPressed: () async {
                 Navigator.pop(dialogContext);
                 if (canInstallAndroid) {
-                  await _installAndroidUpdate(
-                    latest,
-                    asset,
-                    assetName,
-                  );
+                  await _installAndroidUpdate(latest, asset, assetName);
                   return;
                 }
                 if (canInstallWindows) {
-                  await _installWindowsUpdate(
-                    latest,
-                    asset,
-                    assetName,
-                  );
+                  await _installWindowsUpdate(latest, asset, assetName);
                   return;
                 }
                 final uri = Uri.tryParse(
@@ -5246,10 +5280,7 @@ class _SettingsSheetState extends State<SettingsSheet> {
     if (widget.controller.isAndroid) {
       companionStatusSubscription = LedgerController._companionStatusEvents
           .receiveBroadcastStream()
-          .listen(
-            _applyCompanionStatus,
-            onError: (Object _, StackTrace _) {},
-          );
+          .listen(_applyCompanionStatus, onError: (Object _, StackTrace _) {});
       _loadCompanionStatus();
       companionRefreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
         _loadCompanionStatus(showLoading: false);

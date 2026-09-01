@@ -30,6 +30,8 @@ class FlutterWindow : public Win32Window {
   void ConfigurePlatformChannel();
   void ConfigureTrayIcon();
   void RemoveTrayIcon();
+  bool ShowTrayNotification(const std::wstring& title,
+                            const std::wstring& message);
   void HandleDroppedFiles(HDROP drop);
   void ShowTrayMenu();
 

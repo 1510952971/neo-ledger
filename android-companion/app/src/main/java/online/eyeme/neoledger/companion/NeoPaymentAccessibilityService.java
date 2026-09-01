@@ -331,7 +331,9 @@ public final class NeoPaymentAccessibilityService extends AccessibilityService {
                 || type == AccessibilityEvent.TYPE_VIEW_SCROLLED
                 || type == AccessibilityEvent.TYPE_VIEW_SELECTED
                 || type == AccessibilityEvent.TYPE_VIEW_FOCUSED
-                || type == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED;
+                || type == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED
+                || type == AccessibilityEvent.TYPE_VIEW_CLICKED
+                || type == AccessibilityEvent.TYPE_VIEW_LONG_CLICKED;
     }
 
     private boolean isWindowTransitionEvent(int type) {

@@ -148,6 +148,39 @@ void FlutterWindow::ConfigurePlatformChannel() {
           return;
         }
 
+        if (call.method_name() == "showTrayNotification") {
+          const auto* arguments =
+              std::get_if<flutter::EncodableMap>(call.arguments());
+          if (arguments == nullptr) {
+            result->Error("invalid_argument", "缺少托盘提示内容");
+            return;
+          }
+          const auto title_value =
+              arguments->find(flutter::EncodableValue("title"));
+          const auto message_value =
+              arguments->find(flutter::EncodableValue("message"));
+          if (title_value == arguments->end() ||
+              message_value == arguments->end()) {
+            result->Error("invalid_argument", "缺少托盘提示内容");
+            return;
+          }
+          const auto* title = std::get_if<std::string>(&title_value->second);
+          const auto* message =
+              std::get_if<std::string>(&message_value->second);
+          if (title == nullptr || message == nullptr || title->empty() ||
+              message->empty()) {
+            result->Error("invalid_argument", "托盘提示内容无效");
+            return;
+          }
+          if (!ShowTrayNotification(WideFromUtf8(*title),
+                                    WideFromUtf8(*message))) {
+            result->Error("notify_failed", "无法显示 Windows 托盘提示");
+          } else {
+            result->Success();
+          }
+          return;
+        }
+
         if (call.method_name() == "installWindowsUpdate") {
           const auto* arguments =
               std::get_if<flutter::EncodableMap>(call.arguments());
@@ -219,6 +252,20 @@ void FlutterWindow::RemoveTrayIcon() {
     DestroyIcon(tray_icon_.hIcon);
     tray_icon_.hIcon = nullptr;
   }
+}
+
+bool FlutterWindow::ShowTrayNotification(const std::wstring& title,
+                                         const std::wstring& message) {
+  if (!tray_icon_added_) return false;
+
+  NOTIFYICONDATAW notification = tray_icon_;
+  notification.uFlags |= NIF_INFO;
+  wcsncpy_s(notification.szInfoTitle, std::size(notification.szInfoTitle),
+            title.c_str(), _TRUNCATE);
+  wcsncpy_s(notification.szInfo, std::size(notification.szInfo),
+            message.c_str(), _TRUNCATE);
+  notification.dwInfoFlags = NIIF_INFO;
+  return Shell_NotifyIconW(NIM_MODIFY, &notification) == TRUE;
 }
 
 void FlutterWindow::HandleDroppedFiles(HDROP drop) {

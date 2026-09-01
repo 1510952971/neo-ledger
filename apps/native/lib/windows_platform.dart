@@ -19,6 +19,17 @@ class NeoWindowsPlatform {
     await _channel.invokeMethod<void>('openDataDirectory');
   }
 
+  static Future<void> showTrayNotification({
+    required String title,
+    required String message,
+  }) async {
+    if (!supported) return;
+    await _channel.invokeMethod<void>('showTrayNotification', <String, dynamic>{
+      'title': title,
+      'message': message,
+    });
+  }
+
   static Future<void> installWindowsUpdate({
     required String installerPath,
   }) async {
