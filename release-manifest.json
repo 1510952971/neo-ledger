@@ -6,7 +6,17 @@
   "nativeClientVersion": "1.2.10",
   "minimumNativeClientVersion": "1.2.7",
   "apiVersion": "v1",
-  "signedReleaseRequired": true,
+  "signedReleaseRequired": false,
+  "signingPolicy": {
+    "android": "required-for-stable",
+    "windows": "when-configured; status-marker-required",
+    "ios": "separate-apple-distribution"
+  },
+  "currentRelease": {
+    "tag": "native-v1.2.10",
+    "windowsInstallerSigned": false,
+    "windowsInstallerNote": "当前 Release 的 Windows EXE 未配置代码签名，仅用于测试；生产分发应配置证书。"
+  },
   "platforms": {
     "android": {
       "assetPatterns": [
@@ -21,9 +31,11 @@
         "neo-ledger-windows-*-setup.exe",
         "neo-ledger-windows-*.zip"
       ],
-      "distribution": "GitHub Releases (signed installer and portable ZIP)",
-      "requiresSigningSecrets": true,
-      "signedInstaller": true
+      "distribution": "GitHub Releases (installer and portable ZIP; signature status in RELEASE_STATUS.json)",
+      "requiresSigningSecrets": false,
+      "signingSecretsRecommended": true,
+      "signingPolicy": "when-configured",
+      "currentInstallerSigned": false
     },
     "ios": {
       "assetPattern": null,
