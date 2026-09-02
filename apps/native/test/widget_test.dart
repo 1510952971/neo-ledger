@@ -79,4 +79,24 @@ void main() {
       'https://example.com/neo-ledger-setup.exe',
     );
   });
+
+  test('native updater prefers macOS DMG over portable ZIP', () {
+    final update = UpdateInfo.fromGitHub({
+      'tag_name': 'native-v1.3.0',
+      'html_url':
+          'https://github.com/1510952971/neo-ledger/releases/tag/native-v1.3.0',
+      'assets': [
+        {
+          'name': 'neo-ledger-macos-1.3.0.zip',
+          'browser_download_url': 'https://example.com/macos.zip',
+        },
+        {
+          'name': 'neo-ledger-macos-1.3.0.dmg',
+          'browser_download_url': 'https://example.com/macos.dmg',
+        },
+      ],
+    });
+
+    expect(update.assetNameFor('macos'), 'neo-ledger-macos-1.3.0.dmg');
+  });
 }

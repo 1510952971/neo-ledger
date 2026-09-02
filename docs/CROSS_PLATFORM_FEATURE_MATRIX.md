@@ -1,6 +1,6 @@
 # Neo Ledger 三端功能验收矩阵
 
-更新时间：2026-09-01
+更新时间：2026-09-03
 
 这份矩阵把“代码已实现”“构建可交付”和“平台/真机已验收”分开记录。平台限制或账号资质不属于代码缺陷，不以模拟界面或静态检查代替验收。
 
@@ -13,10 +13,10 @@
 
 ## 核心功能矩阵
 
-| 功能域 | Web / PWA | Android 手机 | iOS / iPadOS | 平板 / 桌面 | 验收结论 |
+| 功能域 | Web / PWA | Android 手机 | iOS / iPadOS | 平板 / Windows / macOS 桌面 | 验收结论 |
 | --- | --- | --- | --- | --- | --- |
 | 登录、账本与成员 | 已实现 | 已实现 | 已实现 | 已实现 | 共用 API 与数据模型 |
-| 记一笔、分类、转账、资产处置 | 已实现 | 已实现 | 已实现 | 已实现 | 原生端提供统一编辑/确认流程 |
+| 记一笔、分类、转账、资产处置 | 已实现 | 已实现 | 已实现 | 已实现 | Windows/macOS/移动端共用 API 与数据模型，原生端提供统一编辑/确认流程 |
 | 账单列表、搜索、日期筛选、统计 | 已实现 | 已实现 | 已实现 | 已实现 | 响应式布局随端适配 |
 | 预算、订阅、分期、存钱目标 | 已实现 | 已实现 | 已实现 | 已实现 | 原生设置与数据面板已接入 |
 | AI 财务助手与分析 | 已实现 | 已实现 | 已实现 | 已实现 | 需配置可用的服务端能力 |
@@ -50,9 +50,10 @@
 | Android APK | GitHub Actions | 已发布 `native-v1.2.16` 正式签名 APK；同签名版本支持覆盖更新 | 后续发布需继续使用同一正式 keystore；真实设备验收仍需完成 |
 | Android AAB | GitHub Actions | 已发布 `native-v1.2.16` 正式签名 AAB | 后续发布需继续使用同一正式 keystore；Google Play 账号/审核（如上架） |
 | Windows | GitHub Actions | 已发布 v1.2.16 Inno Setup 安装器和便携 ZIP；Release 会校验并公开安装器签名状态 | 当前 v1.2.16 未签名；生产分发需 Windows 代码签名证书；MSIX 仍需单独发布流程 |
+| macOS | GitHub Actions | main 会生成 `macos-preview-v1.2.16` 预览 Release，包含 DMG 和便携 `.app` ZIP；下一次 `native-v*` 稳定 Release 纳入正式资产 | 当前预览包未 Developer ID 签名/公证，仅适合测试；生产分发需签名、公证并完成 Gatekeeper 验收 |
 | iOS / iPadOS | GitHub Actions | 可生成未签名模拟器验证包 | Apple Developer、证书、Provisioning、TestFlight/App Store 审核；模拟器包不能安装到真机 |
 | Web / PWA | GitHub Actions | 可构建并部署 | 生产域名、HTTPS、服务端部署配置 |
-| 应用内检查更新 | GitHub Releases API | 已实现版本检查与下载入口 | Release 必须为非草稿、非预发布的 `native-v*`，并上传对应资产 |
+| 应用内检查更新 | GitHub Releases API | 已实现版本检查与下载入口；macOS 优先选择 DMG，预览版不混入稳定更新结果 | 稳定 Release 必须为非草稿、非预发布的 `native-v*`，并上传对应资产；macOS 安装仍需用户确认 |
 
 ## 100% 完成的判定口径
 
@@ -65,6 +66,6 @@
 3. 配置 Windows 签名证书（如需要 MSIX，则补齐 MSIX 发布链路）。
 4. 在真实 Android 设备上验证微信、支付宝、抖音、淘宝、京东、美团、小红书、闲鱼等页面变体，并记录识别结果。
 5. 在真实网络下验证 NAS/公网 HTTPS、三端同步、离线补发、重复事件幂等和版本升级回滚。
-6. 创建正式 GitHub Release 后，再用每个平台安装包执行一次应用内检查更新和安装验证。
+6. 创建正式 GitHub Release 后，再用 Android、Windows、macOS 安装包执行一次应用内检查更新和安装验证；iOS/iPadOS 走 TestFlight/App Store 更新验证。
 
 详细命令、Secrets 和回滚流程见 [`RELEASE_AND_UPDATE.md`](./RELEASE_AND_UPDATE.md)。

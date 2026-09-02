@@ -10,12 +10,17 @@
   "signingPolicy": {
     "android": "required-for-stable",
     "windows": "when-configured; status-marker-required",
-    "ios": "separate-apple-distribution"
+    "ios": "separate-apple-distribution",
+    "macos": "when-configured; unsigned-test-allowed"
   },
   "currentRelease": {
     "tag": "native-v1.2.16",
     "windowsInstallerSigned": false,
-    "windowsInstallerNote": "当前 Release 的 Windows EXE 未配置代码签名，仅用于测试；生产分发应配置证书。"
+    "windowsInstallerNote": "当前 Release 的 Windows EXE 未配置代码签名，仅用于测试；生产分发应配置证书。",
+    "macosPreviewTag": "macos-preview-v1.2.16",
+    "macosPackageSigned": false,
+    "macosPackageNotarized": false,
+    "macosPackageNote": "macOS 预览包未配置 Developer ID 签名/公证，仅用于测试；下一次 native-v* 稳定发布将包含 DMG/ZIP。"
   },
   "platforms": {
     "android": {
@@ -44,6 +49,19 @@
       "distributionWorkflow": ".github/workflows/ios-testflight.yml",
       "requiresAppleSigningSecrets": true,
       "installable": false
+    },
+    "macos": {
+      "assetPatterns": [
+        "neo-ledger-macos-*.dmg",
+        "neo-ledger-macos-*.zip"
+      ],
+      "distribution": "GitHub Releases (DMG and portable app ZIP)",
+      "requiresSigningSecrets": false,
+      "signingSecretsRecommended": true,
+      "signingPolicy": "when-configured; unsigned-test-allowed",
+      "currentPackageSigned": false,
+      "currentPackageNotarized": false,
+      "installable": true
     },
     "web": {
       "assetPattern": "neo-ledger-web-*.tar.gz",

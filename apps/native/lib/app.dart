@@ -3496,6 +3496,12 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
           assetName != null &&
           assetName.toLowerCase().endsWith('.exe') &&
           latest.checksumManifestUrl != null;
+      final hasMacosPackage =
+          platform == 'macos' &&
+          asset != null &&
+          assetName != null &&
+          (assetName.toLowerCase().endsWith('.dmg') ||
+              assetName.toLowerCase().endsWith('.zip'));
       final windowsMissingChecksum =
           platform == 'windows' &&
           asset != null &&
@@ -3522,6 +3528,8 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
                   ? '已找到 Android APK，可在应用内下载、校验并交给系统安装。'
                   : canInstallWindows
                   ? '已找到 Windows 安装器，可在应用内下载并启动安装。'
+                  : hasMacosPackage
+                  ? '已找到 macOS 安装包。点击后打开 GitHub 下载；当前测试包未 Developer ID 签名/公证，首次安装请在 Finder 中右键应用并选择“打开”。'
                   : '已找到当前平台安装包。'}',
             ),
           ),
@@ -3553,6 +3561,8 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
               child: Text(
                 canInstallAndroid || canInstallWindows
                     ? '下载并安装'
+                    : hasMacosPackage
+                    ? '打开 macOS 下载'
                     : iosNeedsAppleDistribution
                     ? '打开发布页'
                     : '打开下载页',

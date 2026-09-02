@@ -1132,6 +1132,11 @@ class UpdateInfo {
               : normalized.endsWith('.zip')
               ? 2
               : 10,
+        'macos' => normalized.endsWith('.dmg')
+            ? 0
+            : normalized.endsWith('.zip')
+            ? 1
+            : 10,
         'web' => normalized.endsWith('.tar.gz') ? 0 : 10,
         'ios' => normalized.contains('unsigned') ? 10 : 0,
         _ => 10,

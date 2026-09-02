@@ -260,10 +260,103 @@ jobs:
           name: neo-ledger-ios-unsigned
           path: apps/native/neo-ledger-ios-*.zip
 
+  macos:
+    name: macOS native app package
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: apps/native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Build macOS client
+        run: |
+          set -euo pipefail
+          VERSION=$(awk '/^version:/{print $2}' pubspec.yaml | cut -d+ -f1)
+          flutter build macos --release \
+            --build-name "$VERSION" \
+            --build-number "${{ github.run_number }}"
+      - name: Package macOS client
+        run: |
+          set -euo pipefail
+          VERSION=$(awk '/^version:/{print $2}' pubspec.yaml | cut -d+ -f1)
+          APP_PATH=$(find build/macos/Build/Products/Release -maxdepth 1 -type d -name '*.app' -print -quit)
+          test -n "$APP_PATH"
+          test -d "$APP_PATH"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$APP_PATH" "neo-ledger-macos-${VERSION}.zip"
+          hdiutil create \
+            -volname "Neo Ledger ${VERSION}" \
+            -srcfolder "$APP_PATH" \
+            -ov -format UDZO \
+            "neo-ledger-macos-${VERSION}.dmg"
+          # Test packages are intentionally unsigned. Production distribution
+          # should replace this marker with Developer ID signing/notarization.
+          printf 'unsigned\n' > macos-signature-status.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neo-ledger-macos
+          path: |
+            apps/native/neo-ledger-macos-*.dmg
+            apps/native/neo-ledger-macos-*.zip
+            apps/native/macos-signature-status.txt
+
+  macos-preview-release:
+    name: Publish macOS preview
+    if: github.ref == 'refs/heads/main'
+    needs: [validate, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read native client version
+        id: version
+        run: |
+          VERSION=$(awk '/^version:/{print $2}' apps/native/pubspec.yaml | cut -d+ -f1)
+          test -n "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          name: neo-ledger-macos
+          path: release-assets
+      - name: Prepare macOS preview assets
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          test -f "release-assets/neo-ledger-macos-${VERSION}.dmg"
+          test -f "release-assets/neo-ledger-macos-${VERSION}.zip"
+          rm -f release-assets/macos-signature-status.txt
+          (cd release-assets && sha256sum neo-ledger-macos-*.dmg neo-ledger-macos-*.zip > SHA256SUMS.txt)
+      - name: Create or update macOS preview release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG="macos-preview-v${VERSION}"
+          if gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --repo "$REPOSITORY" --clobber
+          else
+            gh release create "$TAG" release-assets/* \
+              --repo "$REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Neo Ledger macOS preview ${VERSION}" \
+              --notes "macOS 预览包。当前未配置 Developer ID 签名/公证，首次安装请在 Finder 中右键应用并选择‘打开’。" \
+              --prerelease
+          fi
+
   release:
     name: Publish native release
     if: startsWith(github.ref, 'refs/tags/native-v')
-    needs: [validate, android, windows, ios]
+    needs: [validate, android, windows, ios, macos]
     runs-on: ubuntu-latest
     environment:
       name: release-approval
@@ -296,6 +389,9 @@ jobs:
               windows-signature-status.txt)
                 echo "Using Windows signature status marker for release validation"
                 ;;
+              macos-signature-status.txt)
+                echo "Using macOS signature status marker for release validation"
+                ;;
               *)
                 cp "$file" "release-assets/$name"
                 ;;
@@ -313,11 +409,25 @@ jobs:
           esac
           windows_installer_signed=false
           if [ "$signature_status" = 'valid' ]; then windows_installer_signed=true; fi
+          macos_signature_file=$(find artifacts -maxdepth 3 -type f -name 'macos-signature-status.txt' -print -quit)
+          test -n "$macos_signature_file"
+          macos_signature_status=$(tr -d '\r\n' < "$macos_signature_file")
+          case "$macos_signature_status" in
+            valid|unsigned) ;;
+            *)
+              echo "Unexpected macOS package signature status: $macos_signature_status"
+              exit 1
+              ;;
+          esac
+          macos_package_signed=false
+          if [ "$macos_signature_status" = 'valid' ]; then macos_package_signed=true; fi
           for required_asset in \
             "neo-ledger-android-${VERSION}.apk" \
             "neo-ledger-android-${VERSION}.aab" \
             "neo-ledger-windows-${VERSION}.zip" \
             "neo-ledger-windows-${VERSION}-setup.exe" \
+            "neo-ledger-macos-${VERSION}.dmg" \
+            "neo-ledger-macos-${VERSION}.zip" \
             "neo-ledger-web-${VERSION}.tar.gz"; do
             test -f "release-assets/$required_asset" || {
               echo "Missing required native release asset: $required_asset"
@@ -338,10 +448,17 @@ jobs:
                 "installer": true,
                 "installerSigned": $windows_installer_signed
               },
+              "macos": {
+                "dmg": true,
+                "portable": true,
+                "packageSigned": $macos_package_signed,
+                "packageNotarized": false
+              },
               "web": true,
               "ios": false
             },
-            "iosDistribution": "TestFlight or App Store after Apple signing"
+            "iosDistribution": "TestFlight or App Store after Apple signing",
+            "macosDistribution": "DMG or app ZIP; Developer ID signing/notarization recommended"
           }
           EOF
           (
@@ -352,6 +469,8 @@ jobs:
               "neo-ledger-android-${VERSION}.aab" \
               "neo-ledger-windows-${VERSION}.zip" \
               "neo-ledger-windows-${VERSION}-setup.exe" \
+              "neo-ledger-macos-${VERSION}.dmg" \
+              "neo-ledger-macos-${VERSION}.zip" \
               "neo-ledger-web-${VERSION}.tar.gz"; do
               awk -v file="$required_asset" \
                 '$2 == file || $2 == "*" file { found = 1 } END { exit !found }' \
