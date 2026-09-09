@@ -43,6 +43,15 @@ dependencies:
   shared_preferences: ^2.5.3
   url_launcher: ^6.3.2
 
+dependency_overrides:
+  # Pin the upstream-reviewed Xcode 26.6 compatibility fix until the next
+  # flutter_inappwebview beta includes it.
+  flutter_inappwebview_macos:
+    git:
+      url: https://github.com/heralight/flutter_inappwebview.git
+      ref: 8db1d528a2dc467112ec5e1a5233172f3dd828b4
+      path: flutter_inappwebview_macos
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
