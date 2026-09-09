@@ -51,3 +51,5 @@ tsconfig.tsbuildinfo
 /android-companion/.gradle/
 /android-companion/local.properties
 /android-companion/app/build/
+/apps/native/android/build/
+/apps/native/dist/

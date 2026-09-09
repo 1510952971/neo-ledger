@@ -1,0 +1,36 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "neo-ledger-production",
+  "main": "dist/server/index.js",
+  "compatibility_date": "2026-08-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "dist/client",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "neo-ledger-production",
+      "database_id": "f8da72f5-6bc6-49d5-a1c6-c0cb442d8419"
+    }
+  ],
+  "vars": {
+    "DEPLOYMENT_MODE": "self_hosted",
+    "NEO_HSTS": "true",
+    "NEO_TRUSTED_AUTH_HEADERS": "false",
+    "NEO_ALLOWED_HOSTS": "neo-ledger-production.neo-ledger.workers.dev",
+    "AUTH_PUBLIC_ORIGIN": "https://neo-ledger-production.neo-ledger.workers.dev",
+    "NEO_GITHUB_REPOSITORY": "1510952971/neo-ledger",
+    "NEO_UPDATER_TOKEN": "",
+    "WECHAT_APP_ID": "",
+    "WECHAT_APP_SECRET": "",
+    "ALIPAY_APP_ID": "",
+    "ALIPAY_PRIVATE_KEY": "",
+    "ALIPAY_PUBLIC_KEY": "",
+    "NEO_WEBDAV_ALLOWED_HOSTS": ""
+  },
+  "observability": {
+    "enabled": true
+  }
+}

@@ -109,6 +109,7 @@ import { useAppUpdateControl, type AppUpdateInfo } from "./app-update-control";
 import { useQuickSyncState } from "./quick-sync-state";
 import {
   buildAndroidCompanionConfig,
+  configureInstalledAndroidClient,
   buildQuickSyncExample,
   buildQuickSyncTemplate,
   createQuickSyncToken as createQuickSyncTokenRequest,
@@ -1762,9 +1763,12 @@ export function LedgerApp({
         ledgerId: currentLedgerId,
       });
       const copied = await copyToClipboard(config);
+      const configured = await configureInstalledAndroidClient(config);
       setQuickSyncMessage(
         origin.includes("localhost") || origin.includes("127.0.0.1")
           ? "配置已生成，但当前是本机地址；请先开启局域网访问后重新复制。"
+          : configured
+            ? "安卓自动记账已配置，正在打开系统权限设置。"
           : copied
             ? "安卓配置已生成并复制；打开伴侣 App 粘贴即可。"
             : "安卓配置已生成，请手动复制后粘贴到伴侣 App。",
@@ -1829,10 +1833,13 @@ export function LedgerApp({
       ledgerId: currentLedgerId,
     });
     await copyToClipboard(config);
+    const configured = await configureInstalledAndroidClient(config);
     setQuickSyncMessage(
       origin.includes("localhost") || origin.includes("127.0.0.1")
         ? "配置已复制，但当前是本机地址；请先启动局域网访问，再复制给手机。"
-        : "安卓配置已复制；在手机伴侣中点击“从 Neo Ledger 粘贴配置”。",
+        : configured
+          ? "安卓自动记账已配置，正在打开系统权限设置。"
+          : "安卓配置已复制；在手机伴侣中点击“从 Neo Ledger 粘贴配置”。",
     );
   }
   async function testQuickSyncConnection() {

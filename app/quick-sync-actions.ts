@@ -67,6 +67,27 @@ export function buildAndroidCompanionConfig(input: {
   });
 }
 
+export async function configureInstalledAndroidClient(config: string) {
+  const bridge = (window as unknown as {
+    flutter_inappwebview?: {
+      callHandler: (
+        name: string,
+        message: Record<string, unknown>,
+      ) => Promise<{ ok?: boolean; available?: boolean }>;
+    };
+  }).flutter_inappwebview;
+  if (!bridge) return false;
+  try {
+    const result = await bridge.callHandler("neoLedgerNative", {
+      action: "configureAndroid",
+      config: JSON.parse(config) as Record<string, unknown>,
+    });
+    return result?.ok === true;
+  } catch {
+    return false;
+  }
+}
+
 export function buildQuickSyncTemplate(input: {
   kind: "shortcut" | "notification";
   origin: string;
