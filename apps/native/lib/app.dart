@@ -3434,6 +3434,15 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
         child: Wrap(
           children: [
             ListTile(
+              leading: const Icon(Icons.system_update_alt_outlined),
+              title: const Text('检查版本更新'),
+              subtitle: const Text('检查 GitHub 正式版并按平台安装'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _checkForUpdate();
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.menu_book_outlined),
               title: Text(widget.controller.selectedLedger?.name ?? '切换账本'),
               onTap: () {
