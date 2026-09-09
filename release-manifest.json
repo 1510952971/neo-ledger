@@ -3,7 +3,7 @@
   "product": "Neo Ledger",
   "repository": "1510952971/neo-ledger",
   "releaseTagPrefix": "native-v",
-  "nativeClientVersion": "1.2.16",
+  "nativeClientVersion": "1.2.17",
   "minimumNativeClientVersion": "1.2.7",
   "apiVersion": "v1",
   "signedReleaseRequired": false,
@@ -14,10 +14,10 @@
     "macos": "when-configured; unsigned-test-allowed"
   },
   "currentRelease": {
-    "tag": "native-v1.2.16",
+    "tag": "native-v1.2.17",
     "windowsInstallerSigned": false,
     "windowsInstallerNote": "当前 Release 的 Windows EXE 未配置代码签名，仅用于测试；生产分发应配置证书。",
-    "macosPreviewTag": "macos-preview-v1.2.16",
+    "macosPreviewTag": "macos-preview-v1.2.17",
     "macosPackageSigned": false,
     "macosPackageNotarized": false,
     "macosPackageNote": "macOS 预览包未配置 Developer ID 签名/公证，仅用于测试；下一次 native-v* 稳定发布将包含 DMG/ZIP。"

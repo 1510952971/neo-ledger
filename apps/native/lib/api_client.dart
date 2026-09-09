@@ -362,10 +362,7 @@ class NeoLedgerApi {
     required String id,
     required int ledgerId,
   }) async {
-    await deleteJson('/api/automation/rules', {
-      'id': id,
-      'ledgerId': ledgerId,
-    });
+    await deleteJson('/api/automation/rules', {'id': id, 'ledgerId': ledgerId});
   }
 
   Future<QuickSyncStatus> fetchQuickSyncStatus() async {
@@ -583,14 +580,17 @@ class NeoLedgerApi {
     return '${data['revision'] ?? '0'}|${data['updatedAt'] ?? ''}';
   }
 
-  Future<AnalysisSummary> fetchAnalysis(int ledgerId) async {
+  Future<AnalysisSummary> fetchAnalysis(
+    int ledgerId, {
+    String dimension = '月',
+  }) async {
     final now = DateTime.now();
     final today =
         '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
     final query = [
       'ledger=$ledgerId',
       'today=$today',
-      'dimension=%E6%9C%88',
+      'dimension=${Uri.encodeQueryComponent(dimension)}',
       'offset=${now.timeZoneOffset.inMinutes}',
       'hour=${now.hour}',
       'now=${Uri.encodeQueryComponent(now.toUtc().toIso8601String())}',

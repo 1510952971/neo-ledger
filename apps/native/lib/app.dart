@@ -23,7 +23,7 @@ const _brand = Color(0xffa5ff4f);
 const _surface = Color(0xff101116);
 const _surfaceAlt = Color(0xff1b1b23);
 const _muted = Color(0xffa4a8a1);
-const _nativeVersion = '1.2.16';
+const _nativeVersion = '1.2.17';
 const _queueKey = 'neo_ledger_offline_queue_v1';
 const _coreSnapshotKey = 'neo_ledger_core_snapshot_v1';
 const _shortcutChannel = MethodChannel('online.eyeme.neo_ledger/shortcuts');
@@ -146,6 +146,7 @@ class LedgerController extends ChangeNotifier {
     expenseCents: 0,
   );
   AnalysisSummary? analysis;
+  AnalysisSummary? dailyAnalysis;
   Forecast? forecast;
   List<CategoryBudget> budgets = const [];
   List<Subscription> subscriptions = const [];
@@ -499,9 +500,7 @@ class LedgerController extends ChangeNotifier {
     }
   }
 
-  /// Checks the shared server revision before doing the expensive aggregate
-  /// refresh. This keeps web, desktop and mobile data aligned while avoiding
-  /// a burst of twenty-one requests every few seconds on mobile networks.
+  /// Checks the shared transaction revision before doing an aggregate refresh.
   Future<bool> refreshIfChanged({bool silent = false}) async {
     if (demoMode || (!authenticated && !api.hasSession)) return false;
     final ledger = selectedLedger;
@@ -1459,6 +1458,7 @@ class LedgerController extends ChangeNotifier {
   }
 
   Future<void> _refreshAdvanced(int ledgerId) async {
+    dailyAnalysis = null;
     final values = await Future.wait<dynamic>([
       _optional(() => api.fetchAnalysis(ledgerId)),
       _optional(() => api.fetchBudgets(ledgerId)),
@@ -1481,8 +1481,12 @@ class LedgerController extends ChangeNotifier {
       _optional(() => api.fetchQuickSyncStatus()),
       _optional(() => api.fetchSecuritySessions()),
       _optional(() => api.fetchSecurityAudit()),
+      _optional(() => api.fetchAnalysis(ledgerId, dimension: '日')),
     ]);
     if (values[0] is AnalysisSummary) analysis = values[0] as AnalysisSummary;
+    if (values[21] is AnalysisSummary) {
+      dailyAnalysis = values[21] as AnalysisSummary;
+    }
     if (values[1] is List<CategoryBudget>) {
       budgets = values[1] as List<CategoryBudget>;
     }
@@ -2964,7 +2968,7 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _backgroundRefreshTimer = Timer.periodic(
-      const Duration(seconds: 5),
+      const Duration(seconds: 15),
       (_) => _refreshInBackground(),
     );
     unawaited(
@@ -3064,7 +3068,10 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
         if (widget.controller.queue.isNotEmpty) {
           await widget.controller.syncQueue(silent: true);
         } else {
-          await widget.controller.refreshIfChanged(silent: true);
+          // Refresh all shared ledger resources. A transaction-only revision
+          // cannot represent account, budget, notification or preference
+          // changes made by another client.
+          await widget.controller.refresh(silent: true);
         }
         refreshed = true;
       } catch (_) {
@@ -3979,7 +3986,21 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
 
   Widget _home(BuildContext context) {
     final page = widget.controller.transactions;
+    final daily = widget.controller.dailyAnalysis;
     final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final localTodayItems = page.items.where(
+      (item) => item.occurredAt.startsWith(today),
+    );
+    final localDailyIncome = localTodayItems
+        .where((item) => item.isIncome)
+        .fold<int>(0, (sum, item) => sum + item.amountCents);
+    final localDailyExpense = localTodayItems
+        .where((item) => !item.isIncome)
+        .fold<int>(0, (sum, item) => sum + item.amountCents);
+    final dailyIncome = daily?.incomeCents ?? localDailyIncome;
+    final dailyExpense = daily?.expenseCents ?? localDailyExpense;
+    final dailyBalance = daily?.balanceCents ?? dailyIncome - dailyExpense;
+    final hasDailyActivity = dailyIncome != 0 || dailyExpense != 0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -4040,7 +4061,7 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
                     Expanded(
                       child: _NativeSummaryMetric(
                         label: '今日收入',
-                        value: _money(page.incomeCents),
+                        value: _money(dailyIncome),
                         color: _brand,
                       ),
                     ),
@@ -4048,7 +4069,7 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
                     Expanded(
                       child: _NativeSummaryMetric(
                         label: '今日支出',
-                        value: _money(page.expenseCents),
+                        value: _money(dailyExpense),
                         color: Colors.white,
                       ),
                     ),
@@ -4056,10 +4077,8 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
                     Expanded(
                       child: _NativeSummaryMetric(
                         label: '今日结余',
-                        value: _money(page.balanceCents),
-                        color: page.balanceCents >= 0
-                            ? _brand
-                            : Colors.orangeAccent,
+                        value: _money(dailyBalance),
+                        color: dailyBalance >= 0 ? _brand : Colors.orangeAccent,
                       ),
                     ),
                   ],
@@ -4077,9 +4096,11 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
                       left: BorderSide(color: _brand, width: 3),
                     ),
                   ),
-                  child: const Text(
-                    '今天还没有收支记录。钱包也需要安静的一天，慢一点完全没关系。',
-                    style: TextStyle(
+                  child: Text(
+                    hasDailyActivity
+                        ? '今日收入 ${_money(dailyIncome)}，支出 ${_money(dailyExpense)}，净结余 ${_money(dailyBalance)}。'
+                        : '今天还没有收支记录。钱包也需要安静的一天，慢一点完全没关系。',
+                    style: const TextStyle(
                       color: Color(0xff2c3a30),
                       fontSize: 12,
                       height: 1.5,
@@ -5981,9 +6002,9 @@ class _SettingsSheetState extends State<SettingsSheet> {
       await widget.controller.openAndroidLegacyCompanion();
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('打开完整 Android 伴侣控制台失败：$error')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('打开完整 Android 伴侣控制台失败：$error')));
       }
     } finally {
       if (mounted) setState(() => companionActionLoading = false);
