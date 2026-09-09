@@ -573,6 +573,16 @@ class NeoLedgerApi {
     return TransactionPage.fromJson(data);
   }
 
+  /// Cheap change probe used by the native background sync loop. The full
+  /// ledger payload is only fetched after another terminal has changed it.
+  Future<String> fetchTransactionRevision(int ledgerId) async {
+    final data = await getJson('/api/transactions/revision?ledger=$ledgerId');
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('流水修订号响应格式无效');
+    }
+    return '${data['revision'] ?? '0'}|${data['updatedAt'] ?? ''}';
+  }
+
   Future<AnalysisSummary> fetchAnalysis(int ledgerId) async {
     final now = DateTime.now();
     final today =

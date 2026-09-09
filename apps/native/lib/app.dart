@@ -20,8 +20,9 @@ import 'windows_platform.dart';
 import 'windows_update_service.dart';
 
 const _brand = Color(0xffa5ff4f);
-const _surface = Color(0xff15151d);
-const _surfaceAlt = Color(0xff20202a);
+const _surface = Color(0xff101116);
+const _surfaceAlt = Color(0xff1b1b23);
+const _muted = Color(0xffa4a8a1);
 const _nativeVersion = '1.2.16';
 const _queueKey = 'neo_ledger_offline_queue_v1';
 const _coreSnapshotKey = 'neo_ledger_core_snapshot_v1';
@@ -82,22 +83,38 @@ class _NeoLedgerAppState extends State<NeoLedgerApp> {
               seedColor: _brand,
               brightness: Brightness.dark,
             ),
-            cardTheme: const CardThemeData(
+            cardTheme: CardThemeData(
               color: _surfaceAlt,
               margin: EdgeInsets.zero,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.all(Radius.circular(22)),
+                side: BorderSide(color: Color(0x1fffffff)),
+              ),
+            ),
+            appBarTheme: const AppBarTheme(
+              backgroundColor: _surface,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              scrolledUnderElevation: 0,
             ),
             inputDecorationTheme: InputDecorationTheme(
               filled: true,
               fillColor: _surfaceAlt,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide.none,
+              border: const OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(14)),
+                borderSide: BorderSide(color: Color(0x1fffffff)),
+              ),
+              enabledBorder: const OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(14)),
+                borderSide: BorderSide(color: Color(0x1fffffff)),
               ),
             ),
             navigationBarTheme: const NavigationBarThemeData(
               backgroundColor: _surfaceAlt,
               indicatorColor: Color(0xff304d25),
             ),
+            dividerTheme: const DividerThemeData(color: Color(0x1fffffff)),
           ),
           home: controller.authenticated
               ? NeoShell(controller: controller)
@@ -168,6 +185,7 @@ class LedgerController extends ChangeNotifier {
   SharedPreferences? _preferences;
   Future<void>? _refreshOperation;
   Future<void>? _syncOperation;
+  String? _transactionRevisionMarker;
 
   bool get authenticated => user != null;
   Ledger? get selectedLedger => ledgers.isEmpty
@@ -463,6 +481,9 @@ class LedgerController extends ChangeNotifier {
       final ledger = selectedLedger!;
       accounts = await api.fetchAccounts(ledger.id);
       transactions = await api.fetchTransactions(ledger.id);
+      _transactionRevisionMarker = await api.fetchTransactionRevision(
+        ledger.id,
+      );
       await _refreshAdvanced(ledger.id);
       await _persistCoreSnapshot();
       error = null;
@@ -476,6 +497,23 @@ class LedgerController extends ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  /// Checks the shared server revision before doing the expensive aggregate
+  /// refresh. This keeps web, desktop and mobile data aligned while avoiding
+  /// a burst of twenty-one requests every few seconds on mobile networks.
+  Future<bool> refreshIfChanged({bool silent = false}) async {
+    if (demoMode || (!authenticated && !api.hasSession)) return false;
+    final ledger = selectedLedger;
+    if (ledger == null) return false;
+    final marker = await api.fetchTransactionRevision(ledger.id);
+    if (_transactionRevisionMarker == null) {
+      _transactionRevisionMarker = marker;
+      return false;
+    }
+    if (marker == _transactionRevisionMarker) return false;
+    await refresh(silent: silent);
+    return true;
   }
 
   Future<void> selectLedger(int index) async {
@@ -2926,7 +2964,7 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _backgroundRefreshTimer = Timer.periodic(
-      const Duration(seconds: 15),
+      const Duration(seconds: 5),
       (_) => _refreshInBackground(),
     );
     unawaited(
@@ -3026,7 +3064,7 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
         if (widget.controller.queue.isNotEmpty) {
           await widget.controller.syncQueue(silent: true);
         } else {
-          await widget.controller.refresh(silent: true);
+          await widget.controller.refreshIfChanged(silent: true);
         }
         refreshed = true;
       } catch (_) {
@@ -3093,54 +3131,16 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
     final content = _page(context);
     if (mobile) {
       return Scaffold(
-        appBar: AppBar(
-          title: Text(titles[tab]),
-          actions: [
-            _updateButton(),
-            _notificationButton(),
-            _pendingButton(),
-            _ledgerMenu(),
-            IconButton(
-              onPressed: widget.controller.logout,
-              icon: const Icon(Icons.logout),
-            ),
-          ],
+        body: SafeArea(
+          bottom: false,
+          child: Column(
+            children: [
+              _mobileHeader(context),
+              Expanded(child: content),
+            ],
+          ),
         ),
-        body: content,
-        floatingActionButton: FloatingActionButton(
-          onPressed: _openEntry,
-          backgroundColor: _brand,
-          foregroundColor: Colors.black,
-          child: const Icon(Icons.add),
-        ),
-        floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: tab,
-          onDestinationSelected: (value) => setState(() => tab = value),
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.home_outlined),
-              selectedIcon: Icon(Icons.home),
-              label: '主页',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.account_balance_wallet_outlined),
-              label: '资产',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.receipt_long_outlined),
-              label: '账单',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.event_note_outlined),
-              label: '规划',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.bar_chart_outlined),
-              label: '分析',
-            ),
-          ],
-        ),
+        bottomNavigationBar: _mobileNavigationBar(context),
       );
     }
     final extended = width >= 1181;
@@ -3212,6 +3212,300 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _mobileHeader(BuildContext context) {
+    final ledger = widget.controller.selectedLedger;
+    final online = widget.controller.error == null;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+      decoration: const BoxDecoration(
+        color: _surface,
+        border: Border(bottom: BorderSide(color: Color(0x1fffffff))),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'NEO LEDGER',
+                  style: TextStyle(
+                    color: _muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 2.2,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Text(
+                      titles[tab],
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 21,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        '${ledger?.icon ?? '📚'} ${ledger?.name ?? '我的账本'}',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: _muted, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          _mobileHeaderButton(
+            icon: online ? Icons.cloud_done_outlined : Icons.cloud_off_outlined,
+            color: online ? _brand : Colors.orangeAccent,
+            tooltip: online ? '已连接，点击刷新' : '连接异常，点击重试',
+            onPressed: () => widget.controller.refresh(),
+          ),
+          _mobileHeaderButton(
+            icon: Icons.notifications_none_outlined,
+            badge: widget.controller.unreadNotificationCount,
+            tooltip: '通知中心',
+            onPressed: _openNotifications,
+          ),
+          _mobileHeaderButton(
+            icon: Icons.more_horiz,
+            tooltip: '更多',
+            onPressed: () => _showMobileMoreMenu(context),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _mobileHeaderButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onPressed,
+    Color? color,
+    int badge = 0,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 6),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          IconButton(
+            tooltip: tooltip,
+            onPressed: onPressed,
+            icon: Icon(icon, color: color ?? _muted, size: 21),
+            style: IconButton.styleFrom(
+              backgroundColor: _surfaceAlt,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: const BorderSide(color: Color(0x1fffffff)),
+              ),
+            ),
+          ),
+          if (badge > 0)
+            Positioned(right: -1, top: -2, child: _CountBadge(count: badge)),
+        ],
+      ),
+    );
+  }
+
+  Widget _mobileNavigationBar(BuildContext context) {
+    const items = [
+      (Icons.home_outlined, Icons.home, '主页'),
+      (
+        Icons.account_balance_wallet_outlined,
+        Icons.account_balance_wallet,
+        '资产',
+      ),
+      (Icons.receipt_long_outlined, Icons.receipt_long, '账单'),
+      (Icons.event_note_outlined, Icons.event_note, '规划'),
+      (Icons.bar_chart_outlined, Icons.bar_chart, '分析'),
+    ];
+    Widget item(int index) {
+      final selected = tab == index;
+      return Expanded(
+        child: InkWell(
+          onTap: () => setState(() => tab = index),
+          borderRadius: BorderRadius.circular(18),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 7),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 15,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? _brand.withValues(alpha: .18)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: Icon(
+                    selected ? items[index].$2 : items[index].$1,
+                    color: selected ? _brand : _muted,
+                    size: 21,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  items[index].$3,
+                  style: TextStyle(
+                    color: selected ? Colors.white : _muted,
+                    fontSize: 11,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: _surfaceAlt,
+        border: Border(top: BorderSide(color: Color(0x1fffffff))),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            item(0),
+            item(1),
+            SizedBox(
+              width: 72,
+              child: Transform.translate(
+                offset: const Offset(0, -16),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: _openEntry,
+                    borderRadius: BorderRadius.circular(19),
+                    child: Container(
+                      height: 56,
+                      decoration: BoxDecoration(
+                        color: _brand,
+                        borderRadius: BorderRadius.circular(19),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x559cff57),
+                            blurRadius: 18,
+                            offset: Offset(0, 7),
+                          ),
+                        ],
+                      ),
+                      child: const Icon(
+                        Icons.add,
+                        color: Color(0xff10230b),
+                        size: 30,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            item(2),
+            item(3),
+            item(4),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showMobileMoreMenu(BuildContext context) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.menu_book_outlined),
+              title: Text(widget.controller.selectedLedger?.name ?? '切换账本'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _showLedgerPicker();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.palette_outlined),
+              title: const Text('连接与设置'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _openSettings();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.cloud_outlined),
+              title: const Text('数据中心'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _openDataCenter();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showLedgerPicker() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const ListTile(
+              title: Text(
+                '切换账本',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+            for (
+              var index = 0;
+              index < widget.controller.ledgers.length;
+              index++
+            )
+              ListTile(
+                leading: Text(
+                  widget.controller.ledgers[index].icon,
+                  style: const TextStyle(fontSize: 22),
+                ),
+                title: Text(widget.controller.ledgers[index].name),
+                trailing: index == widget.controller.selectedLedgerIndex
+                    ? const Icon(Icons.check, color: _brand)
+                    : null,
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  unawaited(widget.controller.selectLedger(index));
+                },
+              ),
+            ListTile(
+              leading: const Icon(Icons.add),
+              title: const Text('新建账本'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _openLedger();
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -3676,64 +3970,191 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
 
   Widget _home(BuildContext context) {
     final page = widget.controller.transactions;
+    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        _nativeMidnightCard(),
+        const SizedBox(height: 16),
         Card(
           child: Padding(
-            padding: const EdgeInsets.all(22),
+            padding: const EdgeInsets.all(18),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  '今晚，先抱抱真实生活的自己',
-                  style: Theme.of(context).textTheme.headlineSmall,
+                Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: const Color(0xfffff1c7),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      alignment: Alignment.center,
+                      child: const Text('☀️', style: TextStyle(fontSize: 22)),
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'DAILY FINANCE',
+                            style: TextStyle(
+                              color: _muted,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 2,
+                            ),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            '每日财报',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Text(
+                      today,
+                      style: const TextStyle(color: _muted, fontSize: 11),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 10),
-                Text(
-                  '账本会记录成本，也帮你看见下一步。',
-                  style: TextStyle(color: Colors.grey.shade400),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _NativeSummaryMetric(
+                        label: '今日收入',
+                        value: _money(page.incomeCents),
+                        color: _brand,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _NativeSummaryMetric(
+                        label: '今日支出',
+                        value: _money(page.expenseCents),
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _NativeSummaryMetric(
+                        label: '今日结余',
+                        value: _money(page.balanceCents),
+                        color: page.balanceCents >= 0
+                            ? _brand
+                            : Colors.orangeAccent,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xffdce9dc),
+                    borderRadius: BorderRadius.circular(12),
+                    border: const Border(
+                      left: BorderSide(color: _brand, width: 3),
+                    ),
+                  ),
+                  child: const Text(
+                    '今天还没有收支记录。钱包也需要安静的一天，慢一点完全没关系。',
+                    style: TextStyle(
+                      color: Color(0xff2c3a30),
+                      fontSize: 12,
+                      height: 1.5,
+                    ),
+                  ),
                 ),
               ],
             ),
           ),
-        ),
-        const SizedBox(height: 16),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final columns = constraints.maxWidth >= 900 ? 3 : 1;
-            return GridView.count(
-              crossAxisCount: columns,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              childAspectRatio: columns == 1 ? 3.8 : 2.2,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              children: [
-                _Metric(
-                  label: '收入',
-                  value: _money(page.incomeCents),
-                  color: _brand,
-                ),
-                _Metric(
-                  label: '支出',
-                  value: _money(page.expenseCents),
-                  color: Colors.white,
-                ),
-                _Metric(
-                  label: '结余',
-                  value: _money(page.balanceCents),
-                  color: page.balanceCents >= 0 ? _brand : Colors.orangeAccent,
-                ),
-              ],
-            );
-          },
         ),
         const SizedBox(height: 20),
         _sectionTitle('最近流水', onAction: () => setState(() => tab = 2)),
         const SizedBox(height: 10),
         _transactionList(page.items.take(5).toList()),
       ],
+    );
+  }
+
+  Widget _nativeMidnightCard() {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 174),
+      padding: const EdgeInsets.fromLTRB(22, 22, 18, 22),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0x33ffffff)),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xff343542), Color(0xff51445f)],
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x33101018),
+            blurRadius: 24,
+            offset: Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 62,
+            height: 62,
+            decoration: BoxDecoration(
+              color: const Color(0x1affffff),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            alignment: Alignment.center,
+            child: const Text('🌙', style: TextStyle(fontSize: 32)),
+          ),
+          const SizedBox(width: 18),
+          const Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "TONIGHT'S NOTE",
+                  style: TextStyle(
+                    color: Color(0xffc4c1c8),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 2.1,
+                  ),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  '今晚，先抱抱真实生活的自己',
+                  style: TextStyle(fontSize: 21, fontWeight: FontWeight.w700),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  '今天没有需要复盘的收支。空白不是落后，也可以是生活给你的安静。',
+                  style: TextStyle(
+                    color: Color(0xbff8f5ef),
+                    fontSize: 12,
+                    height: 1.7,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -11562,6 +11983,49 @@ class _Metric extends StatelessWidget {
       ),
     ),
   );
+}
+
+class _NativeSummaryMetric extends StatelessWidget {
+  const _NativeSummaryMetric({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 11, 8, 12),
+      decoration: BoxDecoration(
+        color: const Color(0x141f2029),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0x18ffffff)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(color: _muted, fontSize: 11)),
+          const SizedBox(height: 6),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              value,
+              style: TextStyle(
+                color: color,
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _EmptyState extends StatelessWidget {
