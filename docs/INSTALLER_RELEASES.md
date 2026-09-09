@@ -7,7 +7,7 @@ GitHub Releases 是安装包的唯一正式来源。每个稳定版本使用
 ## 当前统一版本
 
 - 客户端版本：`1.3.0`
-- 统一网页与数据服务：`https://neo-ledger-production.neo-ledger.workers.dev`
+- 统一网页与数据服务：`https://neo-ledger-app.pages.dev`
 - 发布页：`https://github.com/1510952971/neo-ledger/releases/tag/native-v1.3.0`
 
 ## 产物命名
