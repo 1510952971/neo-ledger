@@ -32,7 +32,10 @@ import {
   transactions,
 } from "../db/schema";
 import { getChatGPTUser, requireChatGPTUser } from "./chatgpt-auth";
-import { getOwnerPreferences } from "./api-security";
+import {
+  getOwnerPreferences,
+  trustedIdentityProxyEnabled,
+} from "./api-security";
 import { hasLocalUsers, sessionUser } from "./auth";
 import { SESSION_COOKIE_NAME } from "./auth-core.js";
 import { localDateTimeToUtc } from "./time-money.js";
@@ -104,6 +107,7 @@ async function currentIdentity() {
     return hasUsers
       ? null
       : { ownerId: "local", user: null, hasUsers: false };
+  if (!trustedIdentityProxyEnabled()) return null;
   const required = await requireChatGPTUser("/");
   return {
     ownerId: `email:${required.email.toLowerCase()}`,
@@ -467,7 +471,7 @@ export default async function Home({
 }) {
   await ensureDb();
   const identity = await currentIdentity();
-  if (!identity) return <AuthGate hasUsers />;
+  if (!identity) return <AuthGate hasUsers={await hasLocalUsers()} />;
   const ownerId = identity.ownerId;
   if (ownerId === "local")
     await getDbBinding()

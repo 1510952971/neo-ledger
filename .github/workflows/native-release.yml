@@ -45,7 +45,9 @@ jobs:
       - run: flutter analyze
       - run: flutter test
       - name: Verify unified production server
-        run: curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 10 https://neo-ledger-app.pages.dev/api/health
+        run: |
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 10 https://neo-ledger-app.pages.dev/api/health
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors --retry-delay 10 --output /dev/null https://neo-ledger-app.pages.dev/
       - run: flutter build web --release
       - name: Package Web/NAS build
         run: |
