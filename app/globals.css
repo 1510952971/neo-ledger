@@ -1649,7 +1649,7 @@ fieldset { padding: 0; border: 0; }
     margin-top: 18px;
   }
   .daily-report-metrics > div { padding: 12px 10px; border-radius: 14px; }
-  .daily-report-metrics span { margin-bottom: 5px; font-size: 11px; }
+  .daily-report-metrics span { margin-bottom: 5px; font-size: 12px; }
   .daily-report-metrics strong { font-size: clamp(15px, 4.7vw, 20px); }
   .daily-report-copy { margin-top: 14px; padding: 12px 13px; line-height: 1.65; }
   .mobile-top-header {
