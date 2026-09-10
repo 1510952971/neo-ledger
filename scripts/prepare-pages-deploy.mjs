@@ -1,4 +1,4 @@
-import { cp, mkdir } from "node:fs/promises";
+import { cp, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,6 +22,22 @@ await cp(
 await cp(
   path.join(serverDir, "vinext-client-assets.js"),
   path.join(clientDir, "vinext-client-assets.js"),
+);
+
+// Let Cloudflare Pages serve immutable client assets directly. Sending these
+// requests through the SSR worker makes vinext interpret them as application
+// routes, which results in a 404 and leaves the page without styles/scripts.
+await writeFile(
+  path.join(clientDir, "_routes.json"),
+  `${JSON.stringify(
+    {
+      version: 1,
+      include: ["/*"],
+      exclude: ["/_next/static/*", "/favicon.ico"],
+    },
+    null,
+    2,
+  )}\n`,
 );
 
 console.log("Prepared dist/client for Cloudflare Pages advanced mode.");
