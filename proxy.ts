@@ -162,17 +162,17 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith("/api/v1/webhook/") ||
     pathname === "/api/v1/transactions" ||
     pathname.startsWith("/api/external/");
-  // Discoverable Passkey authentication starts without a session. The route
-  // still enforces same-origin, rate limits and challenge binding below; it
-  // only needs to pass the edge's pre-session gate so remote users can begin
-  // WebAuthn login.
-  const publicPasskeyRoute = pathname === "/api/auth/passkeys";
+  // Authentication must be reachable before a session exists (login,
+  // registration, email verification/reset, OAuth and discoverable Passkeys).
+  // The route handlers still enforce their own same-origin checks, rate limits,
+  // challenge binding and per-operation session requirements.
+  const publicAuthRoute = pathname === "/api/auth" || pathname.startsWith("/api/auth/");
   const email = trustedIdentityProxyEnabled()
     ? await trustedChatGPTEmailFromHeaders(request.headers, request)
     : null;
   const trustedLocalNetwork = isLocalHost(hostname) || isPrivateNetworkHost(hostname);
   const sessionIdentity = !externalTokenRoute ? await sessionOwnerId(request) : null;
-  if (!externalTokenRoute && !publicPasskeyRoute && !email && !sessionIdentity && !trustedLocalNetwork)
+  if (!externalTokenRoute && !publicAuthRoute && !email && !sessionIdentity && !trustedLocalNetwork)
     return errorResponse("请先登录后再访问账本", 401, "unauthorized");
 
   if (!externalTokenRoute && !["GET", "HEAD", "OPTIONS"].includes(request.method)) {
