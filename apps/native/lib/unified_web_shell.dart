@@ -34,6 +34,7 @@ class _UnifiedWebShellState extends State<UnifiedWebShell> {
   InAppWebViewController? _webController;
   String? _loadError;
   double _progress = 0;
+  bool _initialPageReady = false;
   bool _checkedUpdate = false;
 
   @override
@@ -111,7 +112,11 @@ class _UnifiedWebShellState extends State<UnifiedWebShell> {
   }
 
   Future<void> _retry() async {
-    setState(() => _loadError = null);
+    setState(() {
+      _loadError = null;
+      _progress = 0;
+      _initialPageReady = false;
+    });
     await _webController?.loadUrl(
       urlRequest: URLRequest(url: WebUri(unifiedAppUrl)),
     );
@@ -191,7 +196,12 @@ class _UnifiedWebShellState extends State<UnifiedWebShell> {
                   if (mounted) setState(() => _loadError = null);
                 },
                 onLoadStop: (_, url) {
-                  if (mounted) setState(() => _progress = 1);
+                  if (mounted) {
+                    setState(() {
+                      _progress = 1;
+                      _initialPageReady = true;
+                    });
+                  }
                   unawaited(_checkForUpdate());
                 },
                 onReceivedError: (_, request, error) {
@@ -211,14 +221,71 @@ class _UnifiedWebShellState extends State<UnifiedWebShell> {
                   return NavigationActionPolicy.CANCEL;
                 },
               ),
-              if (_progress < 1 && _loadError == null)
-                Align(
-                  alignment: Alignment.topCenter,
-                  child: LinearProgressIndicator(
-                    value: _progress == 0 ? null : _progress,
-                    minHeight: 2,
-                    color: const Color(0xffa5ff4f),
-                    backgroundColor: Colors.transparent,
+              if (!_initialPageReady && _loadError == null)
+                Positioned.fill(
+                  child: ColoredBox(
+                    color: const Color(0xff101116),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 360),
+                        child: Padding(
+                          padding: const EdgeInsets.all(32),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 68,
+                                height: 68,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: const Color(0xff5c8068),
+                                    width: 2,
+                                  ),
+                                ),
+                                child: const Text(
+                                  '¥',
+                                  style: TextStyle(
+                                    color: Color(0xffa5ff4f),
+                                    fontSize: 32,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 22),
+                              const Text(
+                                'NEO LEDGER',
+                                style: TextStyle(
+                                  color: Color(0xfff1f2e9),
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 4,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              const Text(
+                                '正在连接你的实时账本…',
+                                style: TextStyle(
+                                  color: Color(0xffa7aaa2),
+                                  fontSize: 14,
+                                ),
+                              ),
+                              const SizedBox(height: 24),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(99),
+                                child: LinearProgressIndicator(
+                                  value: _progress == 0 ? null : _progress,
+                                  minHeight: 4,
+                                  color: const Color(0xffa5ff4f),
+                                  backgroundColor: const Color(0xff292b31),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               if (_loadError != null)
