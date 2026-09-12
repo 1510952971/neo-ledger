@@ -15,6 +15,10 @@ test("desktop sidebar stays fixed while the content page scrolls", async () => {
   );
   assert.match(
     css,
+    /\.finance-topbar\s*\{[\s\S]*?left:\s*max\(20px, calc\(50% - 630px\)\);[\s\S]*?border-radius:\s*34px 24px 24px 34px;/,
+  );
+  assert.match(
+    css,
     /\.sidebar-collapsed \.finance-topbar\s*\{\s*width:\s*64px;/,
   );
 });
