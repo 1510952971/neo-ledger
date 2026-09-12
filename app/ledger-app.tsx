@@ -929,6 +929,7 @@ export function LedgerApp({
   const incomeManagerRef = useRef<HTMLDialogElement>(null);
   const badgeRef = useRef<HTMLDialogElement>(null);
   const askRef = useRef<HTMLDialogElement>(null);
+  const financeContentRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const refreshRoute = useCallback(() => router.refresh(), [router]);
   const ledgerRefresh = useLedgerRefresh({
@@ -3016,6 +3017,11 @@ export function LedgerApp({
   const selectModule = useCallback((nextTab: typeof tab) => {
     setTab(nextTab);
     window.requestAnimationFrame(() => {
+      financeContentRef.current?.scrollTo({
+        top: 0,
+        left: 0,
+        behavior: "auto",
+      });
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     });
   }, [setTab]);
@@ -3295,7 +3301,7 @@ export function LedgerApp({
           isOnline={isOnline}
         />
 
-        <div className="finance-content">
+        <div className="finance-content" ref={financeContentRef}>
         <div className="tablet-master-detail-shell">
         <div className="tablet-master-pane">
         {(installPrompt || offlineCount > 0) && (

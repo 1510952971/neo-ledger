@@ -1692,3 +1692,33 @@ fieldset { padding: 0; border: 0; }
   .finance-frame .account-card,
   .finance-frame .pro-chart-card { border-radius: 20px; }
 }
+
+/* Desktop viewport: keep the cockpit card anchored while its content scrolls. */
+@media (min-width: 1181px) {
+  html,
+  body {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .shell.finance-shell {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .finance-frame {
+    height: calc(100dvh - 64px);
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .finance-content {
+    height: 100%;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 6px;
+  }
+}
