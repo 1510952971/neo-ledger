@@ -5,7 +5,11 @@ import {
   sessionCookie,
 } from "./auth-core.js";
 
-const PASSWORD_ITERATIONS = 240_000;
+// Cloudflare Workers currently rejects WebCrypto PBKDF2 requests above 100k.
+// Keep the stored work factor at the platform ceiling so registration,
+// password resets and login behave identically on local and hosted runtimes.
+const PASSWORD_ITERATIONS = 100_000;
+const MAX_RUNTIME_PBKDF2_ITERATIONS = 100_000;
 const SESSION_SECONDS = 30 * 24 * 60 * 60;
 export const MAX_AVATAR_BYTES = 512 * 1024;
 
@@ -38,6 +42,15 @@ export class AuthOriginError extends Error {
   constructor(message = "登录请求来源无效") {
     super(message);
     this.name = "AuthOriginError";
+  }
+}
+
+export class PasswordMigrationRequiredError extends Error {
+  status = 409;
+
+  constructor() {
+    super("此账号使用旧版密码加密，请点击“忘记密码”重置后登录");
+    this.name = "PasswordMigrationRequiredError";
   }
 }
 
@@ -186,6 +199,8 @@ export async function verifyPassword(
   salt: string,
   iterations: number,
 ) {
+  if (iterations > MAX_RUNTIME_PBKDF2_ITERATIONS)
+    throw new PasswordMigrationRequiredError();
   const actual = await derivePassword(password, hexToBytes(salt), iterations);
   return constantTimeEqual(actual, hash);
 }

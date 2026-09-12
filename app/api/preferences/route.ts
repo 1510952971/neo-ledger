@@ -8,7 +8,8 @@ import {
 } from "../../api-security";
 import { readPinInput, readPreferencesPatchInput } from "../../internal-api-contract";
 
-const PIN_ITERATIONS = 120_000;
+// Cloudflare Workers caps a single WebCrypto PBKDF2 operation at 100k.
+const PIN_ITERATIONS = 100_000;
 
 function privateJson(body: unknown, init: ResponseInit = {}) {
   const headers = new Headers(init.headers);

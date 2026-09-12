@@ -190,7 +190,7 @@ export async function POST(request: Request) {
             password || "invalid-password",
             "0".repeat(64),
             "0".repeat(32),
-            240_000,
+            100_000,
           );
       if (!row || !row.passwordEnabled || !valid)
         throw new ApiAccessError("账号、邮箱或密码不正确", 401);
