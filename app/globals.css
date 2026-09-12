@@ -1718,8 +1718,37 @@ fieldset { padding: 0; border: 0; }
     height: 100%;
     min-height: 0;
     overflow-x: hidden;
+    overflow-y: hidden;
+  }
+
+  .tablet-master-detail-shell,
+  .tablet-master-pane {
+    height: 100%;
+    min-height: 0;
+  }
+
+  .tablet-master-pane {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .module-heading {
+    flex: 0 0 auto;
+    margin-bottom: 0;
+  }
+
+  .desktop-scroll-region {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding-right: 6px;
+    padding: 24px 6px 0 0;
+  }
+}
+
+@media (max-width: 1180px) {
+  .desktop-scroll-region {
+    display: contents;
   }
 }

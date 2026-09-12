@@ -3301,7 +3301,7 @@ export function LedgerApp({
           isOnline={isOnline}
         />
 
-        <div className="finance-content" ref={financeContentRef}>
+        <div className="finance-content">
         <div className="tablet-master-detail-shell">
         <div className="tablet-master-pane">
         {(installPrompt || offlineCount > 0) && (
@@ -3349,6 +3349,7 @@ export function LedgerApp({
           </h2>
         </div>
 
+        <div className="desktop-scroll-region" ref={financeContentRef}>
         {tab === "dashboard" && (
           <section className="dashboard-home">
             {!onboardingDismissed && transactionTotal === 0 && (
@@ -3687,6 +3688,7 @@ export function LedgerApp({
             onStressEventsChange={setStressEvents}
           />
         )}
+        </div>
         </div>
 
         <TabletContextPanel
