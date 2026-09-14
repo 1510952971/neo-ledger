@@ -283,8 +283,15 @@ export function AuthPanel({
       throw new Error("请选择 JPG、PNG 或 WebP 图片");
     if (file.size > 8 * 1024 * 1024)
       throw new Error("原图不能超过 8 MB");
-    const image = await createImageBitmap(file);
+    // HTMLImageElement also works in WebViews without createImageBitmap.
+    const url = URL.createObjectURL(file);
+    const image = new window.Image();
     try {
+      await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error("图片无法解码，请重新选择 JPG、PNG 或 WebP 图片"));
+        image.src = url;
+      });
       const sourceSize = Math.min(image.width, image.height);
       const sourceX = Math.max(0, (image.width - sourceSize) / 2);
       const sourceY = Math.max(0, (image.height - sourceSize) / 2);
@@ -306,7 +313,7 @@ export function AuthPanel({
       );
       return canvas.toDataURL("image/webp", 0.82);
     } finally {
-      image.close();
+      URL.revokeObjectURL(url);
     }
   }
 
@@ -367,6 +374,10 @@ export function AuthPanel({
       };
     }).flutter_inappwebview;
     if (!bridge) {
+      if (/Neo-Ledger-Native\//.test(navigator.userAgent)) {
+        setError("图片选择器尚未准备好，请重新打开应用后再试");
+        return;
+      }
       avatarInputRef.current?.click();
       return;
     }
@@ -376,9 +387,9 @@ export function AuthPanel({
       const result = await bridge.callHandler("neoLedgerNative", {
         action: "pickAvatar",
       });
-      if (result.cancelled) return;
-      if (!result.ok || !result.base64 || !result.mimeType)
-        throw new Error(result.error || "无法读取所选图片");
+      if (result?.cancelled) return;
+      if (!result?.ok || !result.base64 || !result.mimeType)
+        throw new Error(result?.error || "当前客户端不支持图片选择，请更新客户端后再试");
       const binary = atob(result.base64);
       const bytes = new Uint8Array(binary.length);
       for (let index = 0; index < binary.length; index += 1)
@@ -736,19 +747,20 @@ export function AuthPanel({
           </div>
           {user.provider === "local" && (
             <div className="auth-avatar-actions">
+              <input
+                ref={avatarInputRef}
+                type="file"
+                hidden
+                accept="image/jpeg,image/png,image/webp"
+                onChange={selectAvatar}
+                disabled={avatarPending}
+              />
               <button
                 type="button"
                 className="auth-avatar-upload"
                 onClick={() => void chooseAvatar()}
                 disabled={avatarPending}
               >
-                <input
-                  ref={avatarInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={selectAvatar}
-                  disabled={avatarPending}
-                />
                 <span>{avatarPending ? "处理中…" : "更换头像"}</span>
               </button>
               {avatarUrl && (

@@ -38,14 +38,20 @@ class _UnifiedWebShellState extends State<UnifiedWebShell> {
   double _progress = 0;
   bool _initialPageReady = false;
   bool _checkedUpdate = false;
+  bool _pickingAvatar = false;
 
   Future<Map<String, Object?>> _pickAvatar() async {
+    if (_pickingAvatar) return {'ok': false, 'error': '请先完成当前图片选择'};
+    _pickingAvatar = true;
     try {
       final file = await FilePicker.pickFile(
         type: FileType.custom,
         allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp'],
       );
       if (file == null) return {'ok': false, 'cancelled': true};
+      if (await file.length() > 8 * 1024 * 1024) {
+        return {'ok': false, 'error': '原图不能超过 8 MB'};
+      }
       final bytes = await file.readAsBytes();
       if (bytes.isEmpty) {
         return {'ok': false, 'error': '所选图片为空或无法读取'};
@@ -71,6 +77,8 @@ class _UnifiedWebShellState extends State<UnifiedWebShell> {
       };
     } catch (error) {
       return {'ok': false, 'error': '无法打开图片：$error'};
+    } finally {
+      _pickingAvatar = false;
     }
   }
 

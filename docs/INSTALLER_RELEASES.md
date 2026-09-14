@@ -6,19 +6,19 @@ GitHub Releases 是安装包的唯一正式来源。每个稳定版本使用
 
 ## 当前统一版本
 
-- 客户端版本：`1.3.1`
+- 客户端版本：`1.3.2`
 - 统一网页与数据服务：`https://neo-ledger-app.pages.dev`
-- 发布页：`https://github.com/1510952971/neo-ledger/releases/tag/native-v1.3.1`
+- 发布页：`https://github.com/1510952971/neo-ledger/releases/tag/native-v1.3.2`
 
 ## 产物命名
 
 | 平台 | 安装或分发文件 |
 | --- | --- |
-| Android | `neo-ledger-android-1.3.1.apk`、`neo-ledger-android-1.3.1.aab` |
-| Windows | `neo-ledger-windows-1.3.1-setup.exe`、便携 ZIP |
-| macOS | `neo-ledger-macos-1.3.1.dmg`、应用 ZIP |
+| Android | `neo-ledger-android-1.3.2.apk`、`neo-ledger-android-1.3.2.aab` |
+| Windows | `neo-ledger-windows-1.3.2-setup.exe`、便携 ZIP |
+| macOS | `neo-ledger-macos-1.3.2.dmg`、应用 ZIP |
 | iOS | 未签名验证包；正式安装通过 TestFlight / App Store |
-| Web / NAS | `neo-ledger-web-1.3.1.tar.gz` |
+| Web / NAS | `neo-ledger-web-1.3.2.tar.gz` |
 
 每个 Release 同时提供 `SHA256SUMS.txt` 和 `RELEASE_STATUS.json`。前者验证
 下载完整性，后者记录各平台签名状态。Android 稳定包必须使用正式密钥签名；
