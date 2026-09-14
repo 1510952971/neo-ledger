@@ -55,6 +55,7 @@ export function AuthPanel({
   const [passkeys, setPasskeys] = useState<Array<{ id: string; label: string; deviceType: string; backedUp: boolean; createdAt: string; lastUsedAt: string | null }>>([]);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const deleteFormRef = useRef<HTMLFormElement>(null);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
   const avatarUrl = user?.avatarUrl ?? null;
   const [status, setStatus] = useState<AuthStatus>({
     providers: { wechat: false, alipay: false },
@@ -345,6 +346,52 @@ export function AuthPanel({
       setError(
         avatarError instanceof Error ? avatarError.message : "头像处理失败",
       );
+      setAvatarPending(false);
+    }
+  }
+
+  async function chooseAvatar() {
+    const bridge = (window as unknown as {
+      flutter_inappwebview?: {
+        callHandler: (
+          name: string,
+          message: Record<string, unknown>,
+        ) => Promise<{
+          ok?: boolean;
+          cancelled?: boolean;
+          error?: string;
+          name?: string;
+          mimeType?: string;
+          base64?: string;
+        }>;
+      };
+    }).flutter_inappwebview;
+    if (!bridge) {
+      avatarInputRef.current?.click();
+      return;
+    }
+    setAvatarPending(true);
+    setError("");
+    try {
+      const result = await bridge.callHandler("neoLedgerNative", {
+        action: "pickAvatar",
+      });
+      if (result.cancelled) return;
+      if (!result.ok || !result.base64 || !result.mimeType)
+        throw new Error(result.error || "无法读取所选图片");
+      const binary = atob(result.base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1)
+        bytes[index] = binary.charCodeAt(index);
+      const file = new File([bytes], result.name || "avatar", {
+        type: result.mimeType,
+      });
+      await updateAvatar(await avatarFromFile(file));
+    } catch (avatarError) {
+      setError(
+        avatarError instanceof Error ? avatarError.message : "头像处理失败",
+      );
+    } finally {
       setAvatarPending(false);
     }
   }
@@ -689,15 +736,21 @@ export function AuthPanel({
           </div>
           {user.provider === "local" && (
             <div className="auth-avatar-actions">
-              <label className="auth-avatar-upload">
+              <button
+                type="button"
+                className="auth-avatar-upload"
+                onClick={() => void chooseAvatar()}
+                disabled={avatarPending}
+              >
                 <input
+                  ref={avatarInputRef}
                   type="file"
                   accept="image/jpeg,image/png,image/webp"
                   onChange={selectAvatar}
                   disabled={avatarPending}
                 />
                 <span>{avatarPending ? "处理中…" : "更换头像"}</span>
-              </label>
+              </button>
               {avatarUrl && (
                 <button
                   type="button"

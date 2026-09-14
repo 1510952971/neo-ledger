@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -36,6 +38,41 @@ class _UnifiedWebShellState extends State<UnifiedWebShell> {
   double _progress = 0;
   bool _initialPageReady = false;
   bool _checkedUpdate = false;
+
+  Future<Map<String, Object?>> _pickAvatar() async {
+    try {
+      final file = await FilePicker.pickFile(
+        type: FileType.custom,
+        allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp'],
+      );
+      if (file == null) return {'ok': false, 'cancelled': true};
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) {
+        return {'ok': false, 'error': '所选图片为空或无法读取'};
+      }
+      if (bytes.length > 8 * 1024 * 1024) {
+        return {'ok': false, 'error': '原图不能超过 8 MB'};
+      }
+      final extension = file.name.split('.').last.toLowerCase();
+      final mimeType = switch (extension) {
+        'jpg' || 'jpeg' => 'image/jpeg',
+        'png' => 'image/png',
+        'webp' => 'image/webp',
+        _ => null,
+      };
+      if (mimeType == null) {
+        return {'ok': false, 'error': '请选择 JPG、PNG 或 WebP 图片'};
+      }
+      return {
+        'ok': true,
+        'name': file.name,
+        'mimeType': mimeType,
+        'base64': base64Encode(bytes),
+      };
+    } catch (error) {
+      return {'ok': false, 'error': '无法打开图片：$error'};
+    }
+  }
 
   @override
   void dispose() {
@@ -159,14 +196,18 @@ class _UnifiedWebShellState extends State<UnifiedWebShell> {
                   controller.addJavaScriptHandler(
                     handlerName: 'neoLedgerNative',
                     callback: (arguments) async {
-                      if (defaultTargetPlatform != TargetPlatform.android ||
-                          arguments.isEmpty ||
-                          arguments.first is! Map) {
+                      if (arguments.isEmpty || arguments.first is! Map) {
                         return {'ok': false, 'available': false};
                       }
                       final message = Map<String, dynamic>.from(
                         arguments.first as Map,
                       );
+                      if (message['action'] == 'pickAvatar') {
+                        return _pickAvatar();
+                      }
+                      if (defaultTargetPlatform != TargetPlatform.android) {
+                        return {'ok': false, 'available': true};
+                      }
                       if (message['action'] != 'configureAndroid') {
                         return {'ok': false, 'available': true};
                       }
