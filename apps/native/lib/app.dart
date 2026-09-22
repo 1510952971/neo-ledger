@@ -14,6 +14,7 @@ import 'feature_catalog.dart';
 import 'import_file_loader.dart';
 import 'import_parser.dart';
 import 'models.dart';
+import 'mobile/domain/offline_projection.dart';
 import 'shortcut_entry.dart';
 import 'update_service.dart';
 import 'windows_platform.dart';
@@ -219,6 +220,7 @@ class LedgerController extends ChangeNotifier {
     await api.load();
     if (!api.hasSession) return;
     await _loadCoreSnapshot();
+    _projectQueueIntoTransactions();
     try {
       final sessionUser = await api.fetchSessionUser();
       if (sessionUser == null) {
@@ -506,6 +508,7 @@ class LedgerController extends ChangeNotifier {
       final ledger = selectedLedger!;
       accounts = await api.fetchAccounts(ledger.id);
       transactions = await api.fetchTransactions(ledger.id);
+      _projectQueueIntoTransactions();
       _transactionRevisionMarker = await api.fetchTransactionRevision(
         ledger.id,
       );
@@ -1180,9 +1183,19 @@ class LedgerController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    final previousQueue = queue;
+    final previousTransactions = transactions;
     queue = [...queue, entry];
-    await _persistQueue();
+    _projectQueueIntoTransactions(basePage: previousTransactions);
     notifyListeners();
+    try {
+      await _persistQueue();
+    } catch (_) {
+      queue = previousQueue;
+      transactions = previousTransactions;
+      notifyListeners();
+      rethrow;
+    }
     try {
       await syncQueue();
     } catch (_) {
@@ -2396,6 +2409,17 @@ class LedgerController extends ChangeNotifier {
         })
         .whereType<OfflineEntry>()
         .toList();
+  }
+
+  void _projectQueueIntoTransactions({TransactionPage? basePage}) {
+    final ledger = selectedLedger;
+    if (ledger == null) return;
+    transactions = projectOfflineEntries(
+      page: basePage ?? transactions,
+      entries: queue,
+      accounts: accounts,
+      ledgerId: ledger.id,
+    );
   }
 
   Future<void> _loadCoreSnapshot() async {
