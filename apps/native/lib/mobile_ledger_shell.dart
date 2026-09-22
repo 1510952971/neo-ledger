@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import 'app.dart';
@@ -1041,6 +1042,17 @@ class MobileProfilePage extends StatelessWidget {
             onTap: () => _showComingSoon(context, '高级功能入口'),
           ),
           _SettingsRow(
+            icon: '✨',
+            title: '记账体验',
+            subtitle: '触觉反馈、连续记账与快捷输入',
+            onTap: () => showModalBottomSheet<void>(
+              context: context,
+              showDragHandle: true,
+              backgroundColor: _mobileSurface,
+              builder: (_) => const _MobileExperienceSettings(),
+            ),
+          ),
+          _SettingsRow(
             icon: '🔒',
             title: '隐私与安全',
             subtitle: controller.preferences.lockEnabled
@@ -1078,6 +1090,74 @@ class MobileAddTransactionPage extends StatefulWidget {
       _MobileAddTransactionPageState();
 }
 
+class _MobileExperienceSettings extends StatefulWidget {
+  const _MobileExperienceSettings();
+
+  @override
+  State<_MobileExperienceSettings> createState() =>
+      _MobileExperienceSettingsState();
+}
+
+class _MobileExperienceSettingsState extends State<_MobileExperienceSettings> {
+  final _preferences = const MobileEntryPreferences();
+  bool _haptics = true;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final enabled = await _preferences.hapticsEnabled();
+    if (mounted) {
+      setState(() {
+        _haptics = enabled;
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(18, 4, 18, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            '记账体验',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 12),
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('按键触觉反馈'),
+            subtitle: const Text(
+              '输入金额时提供轻触反馈',
+              style: TextStyle(color: _mobileMuted),
+            ),
+            value: _haptics,
+            onChanged: _loading
+                ? null
+                : (value) async {
+                    setState(() => _haptics = value);
+                    await _preferences.setHapticsEnabled(value);
+                    if (value) HapticFeedback.selectionClick();
+                  },
+          ),
+          const Text(
+            '连续记账可在每次记账时单独开启；金额动画会自动遵循系统“减少动态效果”设置。',
+            style: TextStyle(color: _mobileMuted, height: 1.5),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
   final _note = TextEditingController();
   final _categorySearch = TextEditingController();
@@ -1093,6 +1173,7 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
   double _mySharePercent = 50;
   DateTime _occurredAt = DateTime.now();
   bool _continuous = false;
+  bool _hapticsEnabled = true;
   bool _accountManuallySelected = false;
   List<String> _recentCategories = const [];
   bool _saving = false;
@@ -1437,6 +1518,7 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
   int get _amountCents => AmountExpression.evaluateCents(_amount) ?? 0;
 
   void _inputKey(String key) {
+    if (_hapticsEnabled) HapticFeedback.selectionClick();
     setState(() {
       if (key == '⌫') {
         if (_amount.length <= 1) {
@@ -1585,7 +1667,13 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
 
   Future<void> _loadEntryPreferences() async {
     final recent = await _entryPreferences.recentCategories();
-    if (mounted) setState(() => _recentCategories = recent);
+    final haptics = await _entryPreferences.hapticsEnabled();
+    if (mounted) {
+      setState(() {
+        _recentCategories = recent;
+        _hapticsEnabled = haptics;
+      });
+    }
   }
 
   Future<void> _selectCategory(String category) async {
@@ -2588,16 +2676,29 @@ class _AmountDisplay extends StatelessWidget {
     children: [
       Text(type, style: const TextStyle(color: _mobileMuted, fontSize: 13)),
       const SizedBox(height: 4),
-      Text(
-        '¥$amount',
-        style: TextStyle(
-          color: type == '支出'
-              ? _mobileExpense
-              : type == '收入'
-              ? _mobileIncome
-              : _mobilePurple,
-          fontSize: 42,
-          fontWeight: FontWeight.w800,
+      AnimatedSwitcher(
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : MobileMotion.fast,
+        transitionBuilder: (child, animation) => FadeTransition(
+          opacity: animation,
+          child: ScaleTransition(
+            scale: Tween(begin: .96, end: 1.0).animate(animation),
+            child: child,
+          ),
+        ),
+        child: Text(
+          '¥$amount',
+          key: ValueKey(amount),
+          style: TextStyle(
+            color: type == '支出'
+                ? _mobileExpense
+                : type == '收入'
+                ? _mobileIncome
+                : _mobilePurple,
+            fontSize: 42,
+            fontWeight: FontWeight.w800,
+          ),
         ),
       ),
     ],

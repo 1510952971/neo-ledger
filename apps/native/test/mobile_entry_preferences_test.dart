@@ -20,4 +20,13 @@ void main() {
       expect(await preferences.accountForCategory('交通'), 3);
     },
   );
+
+  test('haptics default on and remain configurable', () async {
+    SharedPreferences.setMockInitialValues({});
+    const preferences = MobileEntryPreferences();
+
+    expect(await preferences.hapticsEnabled(), isTrue);
+    await preferences.setHapticsEnabled(false);
+    expect(await preferences.hapticsEnabled(), isFalse);
+  });
 }
