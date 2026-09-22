@@ -110,6 +110,27 @@ export async function GET(request: Request) {
     const from = readDateParam(url.searchParams.get("from"), "from");
     const to = readDateParam(url.searchParams.get("to"), "to");
     if (from && to && from > to) throw new Error("日期范围无效");
+    const rawAccountId = url.searchParams.get("accountId");
+    const accountId = rawAccountId === null ? null : Number(rawAccountId);
+    if (rawAccountId !== null && (!Number.isSafeInteger(accountId) || Number(accountId) <= 0))
+      throw new Error("accountId 无效");
+    const rawType = url.searchParams.get("type");
+    const type = rawType === "收入" || rawType === "支出" ? rawType : null;
+    if (rawType && !type) throw new Error("type 无效");
+    const category = (url.searchParams.get("category") || "").trim();
+    if (category.length > 40) throw new Error("category 不能超过 40 个字符");
+    const readAmount = (name: string) => {
+      const raw = url.searchParams.get(name);
+      if (raw === null || raw === "") return null;
+      const value = Number(raw);
+      if (!Number.isFinite(value) || value < 0 || value > 999999999.99)
+        throw new Error(`${name} 无效`);
+      return Math.round(value * 100);
+    };
+    const minAmount = readAmount("minAmount");
+    const maxAmount = readAmount("maxAmount");
+    if (minAmount !== null && maxAmount !== null && minAmount > maxAmount)
+      throw new Error("金额范围无效");
     const rawOffset = Number(url.searchParams.get("offset") || 0);
     if (!Number.isInteger(rawOffset) || rawOffset < -840 || rawOffset > 840) throw new Error("offset 无效");
     const offsetModifier = `${rawOffset >= 0 ? "+" : ""}${rawOffset} minutes`;
@@ -127,6 +148,26 @@ export async function GET(request: Request) {
     if (to) {
       filters.push(`${localDateExpr}<?`);
       params.push(`${nextDateKey(to)} 00:00:00`);
+    }
+    if (accountId !== null) {
+      filters.push("t.account_id=?");
+      params.push(Number(accountId));
+    }
+    if (type) {
+      filters.push("t.type=?");
+      params.push(type);
+    }
+    if (category) {
+      filters.push("(COALESCE(t.category_dynamic,t.category,'')=? OR COALESCE(t.income_category_dynamic,t.income_category,'')=?)");
+      params.push(category, category);
+    }
+    if (minAmount !== null) {
+      filters.push("t.amount>=?");
+      params.push(minAmount);
+    }
+    if (maxAmount !== null) {
+      filters.push("t.amount<=?");
+      params.push(maxAmount);
     }
     if (query) {
       const like = `%${escapeLike(query.toLocaleLowerCase("zh-CN"))}%`;

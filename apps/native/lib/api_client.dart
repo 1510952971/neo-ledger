@@ -594,6 +594,11 @@ class NeoLedgerApi {
     String? to,
     String? cursor,
     int? id,
+    int? accountId,
+    String? type,
+    String? category,
+    double? minAmount,
+    double? maxAmount,
     int timezoneOffsetMinutes = 0,
   }) async {
     final parameters = <String, String>{
@@ -605,6 +610,11 @@ class NeoLedgerApi {
       'to': ?to,
       'cursor': ?cursor,
       if (id != null) 'id': '$id',
+      if (accountId != null) 'accountId': '$accountId',
+      if (type != null && type.isNotEmpty) 'type': type,
+      if (category != null && category.isNotEmpty) 'category': category,
+      if (minAmount != null) 'minAmount': '$minAmount',
+      if (maxAmount != null) 'maxAmount': '$maxAmount',
     };
     final path = Uri(
       path: '/api/transactions/query',

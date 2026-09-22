@@ -358,6 +358,11 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
   TransactionPage? _page;
   bool _loading = false;
   String? _error;
+  int? _accountFilter;
+  String? _typeFilter;
+  String? _categoryFilter;
+  double? _minAmount;
+  double? _maxAmount;
 
   LedgerController get controller => widget.controller;
 
@@ -441,6 +446,20 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
                       ),
               ),
             ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _openFilters,
+                  icon: const Icon(Icons.tune_rounded),
+                  label: Text(_hasFilters ? '筛选已启用' : '组合筛选'),
+                ),
+                if (_hasFilters) ...[
+                  const SizedBox(width: 8),
+                  TextButton(onPressed: _clearFilters, child: const Text('清除')),
+                ],
+              ],
+            ),
             const SizedBox(height: 14),
             if (_loading) const LinearProgressIndicator(minHeight: 2),
             if (_error != null) ...[
@@ -495,6 +514,11 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
         from: from,
         to: DateFormat('yyyy-MM-dd').format(last),
         timezoneOffsetMinutes: DateTime.now().timeZoneOffset.inMinutes,
+        accountId: _accountFilter,
+        type: _typeFilter,
+        category: _categoryFilter,
+        minAmount: _minAmount,
+        maxAmount: _maxAmount,
       );
       if (mounted) setState(() => _page = page);
     } catch (error) {
@@ -513,6 +537,150 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
     final now = DateTime.now();
     setState(() => _month = DateTime(now.year, now.month));
     _load();
+  }
+
+  bool get _hasFilters =>
+      _accountFilter != null ||
+      _typeFilter != null ||
+      _categoryFilter != null ||
+      _minAmount != null ||
+      _maxAmount != null;
+
+  void _clearFilters() {
+    setState(() {
+      _accountFilter = null;
+      _typeFilter = null;
+      _categoryFilter = null;
+      _minAmount = null;
+      _maxAmount = null;
+    });
+    _load();
+  }
+
+  Future<void> _openFilters() async {
+    var accountId = _accountFilter;
+    var type = _typeFilter;
+    var category = _categoryFilter;
+    final minimum = TextEditingController(text: _minAmount?.toString() ?? '');
+    final maximum = TextEditingController(text: _maxAmount?.toString() ?? '');
+    final categories = {
+      ...controller.expenseCategories
+          .where((item) => item.isActive)
+          .map((item) => item.name),
+      ...controller.incomeCategories
+          .where((item) => item.isActive)
+          .map((item) => item.name),
+    }.toList();
+    final applied = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => Padding(
+          padding: EdgeInsets.fromLTRB(
+            18,
+            4,
+            18,
+            MediaQuery.viewInsetsOf(context).bottom + 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                '组合筛选',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String?>(
+                initialValue: type,
+                decoration: const InputDecoration(labelText: '收支类型'),
+                items: const [
+                  DropdownMenuItem(value: null, child: Text('全部')),
+                  DropdownMenuItem(value: '支出', child: Text('支出')),
+                  DropdownMenuItem(value: '收入', child: Text('收入')),
+                ],
+                onChanged: (value) => setSheetState(() => type = value),
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<int?>(
+                initialValue: accountId,
+                decoration: const InputDecoration(labelText: '账户'),
+                items: [
+                  const DropdownMenuItem(value: null, child: Text('全部账户')),
+                  for (final account in controller.accounts)
+                    DropdownMenuItem(
+                      value: account.id,
+                      child: Text('${account.icon} ${account.name}'),
+                    ),
+                ],
+                onChanged: (value) => setSheetState(() => accountId = value),
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String?>(
+                initialValue: category,
+                decoration: const InputDecoration(labelText: '分类'),
+                items: [
+                  const DropdownMenuItem(value: null, child: Text('全部分类')),
+                  for (final name in categories)
+                    DropdownMenuItem(value: name, child: Text(name)),
+                ],
+                onChanged: (value) => setSheetState(() => category = value),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: minimum,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: const InputDecoration(labelText: '最低金额'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextField(
+                      controller: maximum,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: const InputDecoration(labelText: '最高金额'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('应用筛选'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (applied == true && mounted) {
+      final min = double.tryParse(minimum.text.trim());
+      final max = double.tryParse(maximum.text.trim());
+      if (min != null && max != null && min > max) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('最低金额不能大于最高金额')));
+      } else {
+        setState(() {
+          _accountFilter = accountId;
+          _typeFilter = type;
+          _categoryFilter = category;
+          _minAmount = min;
+          _maxAmount = max;
+        });
+        _load();
+      }
+    }
+    minimum.dispose();
+    maximum.dispose();
   }
 
   Future<void> _pickMonth() async {
