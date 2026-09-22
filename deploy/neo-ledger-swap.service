@@ -1,0 +1,13 @@
+[Unit]
+Description=Enable Neo Ledger build swapfile
+ConditionPathExists=/swapfile
+After=local-fs.target
+Before=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/sbin/swapon /swapfile
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
