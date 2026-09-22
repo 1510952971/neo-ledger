@@ -1,0 +1,3 @@
+ledger.eyeme.online {
+    respond "Neo Ledger 正在迁移，当前暂不可用。请暂时使用原有入口。" 503
+}

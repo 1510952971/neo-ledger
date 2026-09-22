@@ -12,7 +12,7 @@ import 'app.dart';
 import 'update_service.dart';
 import 'windows_update_service.dart';
 
-const unifiedAppUrl = 'https://neo-ledger-app.pages.dev';
+const unifiedAppUrl = 'https://ledger.eyeme.online';
 
 class UnifiedWebShell extends StatefulWidget {
   const UnifiedWebShell({

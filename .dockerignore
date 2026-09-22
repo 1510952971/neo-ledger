@@ -10,4 +10,7 @@ android-companion/app/build
 outputs
 work
 backups
+*.sqlite
+*.sqlite-*
+*.sql
 npm-debug.log*

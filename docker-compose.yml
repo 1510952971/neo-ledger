@@ -5,7 +5,7 @@ services:
     container_name: neo-ledger
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       TZ: Asia/Shanghai
       DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-self_hosted}
