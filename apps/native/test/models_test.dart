@@ -77,6 +77,29 @@ void main() {
     expect(json['originalTimezone'], 'Asia/Shanghai');
   });
 
+  test('keeps optional bookkeeping fields in the offline queue', () {
+    const entry = OfflineEntry(
+      offlineId: 'offline-2',
+      ledgerId: 1,
+      accountId: 2,
+      amount: 88,
+      type: '支出',
+      title: '聚餐',
+      category: '餐饮',
+      occurredAt: '2026-09-23T12:00:00Z',
+      mood: '悦己',
+      splitWithMemberId: 3,
+      splitMode: '平均分摊',
+      mySharePercent: 50,
+    );
+
+    final restored = OfflineEntry.fromJson(entry.toJson());
+    expect(restored.mood, '悦己');
+    expect(restored.splitWithMemberId, 3);
+    expect(restored.splitMode, '平均分摊');
+    expect(restored.mySharePercent, 50);
+  });
+
   test('generates UTC ISO timestamps for new offline entries', () {
     expect(iso8601NowUtc(), endsWith('Z'));
   });

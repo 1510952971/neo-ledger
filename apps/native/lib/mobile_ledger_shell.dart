@@ -2,17 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import 'app.dart';
+import 'api_client.dart';
+import 'mobile/core/mobile_design.dart';
+import 'mobile/domain/amount_expression.dart';
 import 'models.dart';
 
-const _mobileBg = Color(0xff0e1015);
-const _mobileSurface = Color(0xff171a22);
-const _mobileSurfaceRaised = Color(0xff20242e);
-const _mobileLine = Color(0x1fffffff);
-const _mobileBrand = Color(0xffa5ff4f);
-const _mobilePurple = Color(0xffaa8cff);
-const _mobileMuted = Color(0xff9ca3ad);
-const _mobileIncome = Color(0xff65d89b);
-const _mobileExpense = Color(0xffff8a7a);
+const _mobileBg = MobileColors.background;
+const _mobileSurface = MobileColors.surface;
+const _mobileSurfaceRaised = MobileColors.surfaceRaised;
+const _mobileLine = MobileColors.line;
+const _mobileBrand = MobileColors.brand;
+const _mobilePurple = MobileColors.purple;
+const _mobileMuted = MobileColors.muted;
+const _mobileIncome = MobileColors.income;
+const _mobileExpense = MobileColors.expense;
 
 class MobileLedgerShell extends StatefulWidget {
   const MobileLedgerShell({
@@ -566,7 +569,11 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
   String _type = '支出';
   String _amount = '0';
   int? _accountId;
+  int? _toAccountId;
   String? _category;
+  String _mood = '刚需';
+  DateTime _occurredAt = DateTime.now();
+  bool _continuous = false;
   bool _saving = false;
 
   LedgerController get controller => widget.controller;
@@ -577,6 +584,9 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
     _accountId = controller.accounts.isEmpty
         ? null
         : controller.accounts.first.id;
+    _toAccountId = controller.accounts.length < 2
+        ? null
+        : controller.accounts[1].id;
     _category = _choices.isEmpty ? null : _choices.first.name;
   }
 
@@ -696,37 +706,68 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
             _AmountDisplay(amount: _amount, type: _type),
             const SizedBox(height: 16),
             _Keypad(onKey: _inputKey),
-            const SizedBox(height: 22),
-            const _FormLabel(label: '分类'),
-            const SizedBox(height: 10),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: choices.length,
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 4,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 10,
-                childAspectRatio: 1.05,
+            if (_type != '转账') ...[
+              const SizedBox(height: 22),
+              const _FormLabel(label: '分类'),
+              const SizedBox(height: 10),
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: choices.length,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 4,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 10,
+                  childAspectRatio: 1.05,
+                ),
+                itemBuilder: (context, index) {
+                  final choice = choices[index];
+                  return _CategoryChoice(
+                    choice: choice,
+                    selected: _category == choice.name,
+                    onTap: () => setState(() => _category = choice.name),
+                  );
+                },
               ),
-              itemBuilder: (context, index) {
-                final choice = choices[index];
-                return _CategoryChoice(
-                  choice: choice,
-                  selected: _category == choice.name,
-                  onTap: () => setState(() => _category = choice.name),
-                );
-              },
-            ),
+            ],
             const SizedBox(height: 18),
-            _FormLabel(label: '账户与备注'),
+            _FormLabel(label: _type == '转账' ? '转账信息' : '账户与信息'),
             const SizedBox(height: 10),
             _MobileSelectRow(
               icon: Icons.account_balance_wallet_outlined,
-              title: '账户',
+              title: _type == '转账' ? '转出账户' : '账户',
               value: _accountName,
-              onTap: _pickAccount,
+              onTap: () => _pickAccount(isDestination: false),
             ),
+            if (_type == '转账') ...[
+              const SizedBox(height: 8),
+              _MobileSelectRow(
+                icon: Icons.move_down_rounded,
+                title: '转入账户',
+                value: _destinationAccountName,
+                onTap: () => _pickAccount(isDestination: true),
+              ),
+            ],
+            const SizedBox(height: 8),
+            _MobileSelectRow(
+              icon: Icons.schedule_rounded,
+              title: '日期时间',
+              value: DateFormat('MM月dd日 HH:mm').format(_occurredAt),
+              onTap: _pickDateTime,
+            ),
+            if (_type == '支出') ...[
+              const SizedBox(height: 8),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: '刚需', label: Text('刚需')),
+                  ButtonSegment(value: '悦己', label: Text('悦己')),
+                  ButtonSegment(value: '冲动', label: Text('冲动')),
+                ],
+                selected: {_mood},
+                onSelectionChanged: (value) =>
+                    setState(() => _mood = value.first),
+              ),
+            ],
             const SizedBox(height: 8),
             TextField(
               controller: _note,
@@ -736,6 +777,18 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
                 hintText: '添加备注，例如：午餐、地铁、房租…',
               ),
             ),
+            const SizedBox(height: 8),
+            SwitchListTile.adaptive(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+              title: const Text('连续记账'),
+              subtitle: const Text(
+                '保存后保留账户与日期，继续输入下一笔',
+                style: TextStyle(color: _mobileMuted, fontSize: 12),
+              ),
+              value: _continuous,
+              activeTrackColor: _mobileBrand,
+              onChanged: (value) => setState(() => _continuous = value),
+            ),
             const SizedBox(height: 18),
             SizedBox(
               height: 54,
@@ -744,7 +797,9 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
                 style: FilledButton.styleFrom(
                   backgroundColor: _type == '支出'
                       ? _mobileExpense
-                      : _mobileIncome,
+                      : _type == '收入'
+                      ? _mobileIncome
+                      : _mobilePurple,
                   foregroundColor: _mobileBg,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(18),
@@ -773,7 +828,16 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
         : '${controller.accounts.first.icon}  ${controller.accounts.first.name}';
   }
 
-  int get _amountCents => ((double.tryParse(_amount) ?? 0) * 100).round();
+  String get _destinationAccountName {
+    for (final account in controller.accounts) {
+      if (account.id == _toAccountId) {
+        return '${account.icon}  ${account.name}';
+      }
+    }
+    return '请选择转入账户';
+  }
+
+  int get _amountCents => AmountExpression.evaluateCents(_amount) ?? 0;
 
   void _inputKey(String key) {
     setState(() {
@@ -783,17 +847,19 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
         } else {
           _amount = _amount.substring(0, _amount.length - 1);
         }
-      } else if (key == '.') {
-        if (!_amount.contains('.')) _amount = '$_amount.';
-      } else if (_amount == '0') {
+      } else if (key == '清空') {
+        _amount = '0';
+      } else if (!AmountExpression.canAppend(_amount, key)) {
+        return;
+      } else if (_amount == '0' && key != '.') {
         _amount = key;
-      } else if (_amount.length < 12) {
+      } else {
         _amount += key;
       }
     });
   }
 
-  Future<void> _pickAccount() async {
+  Future<void> _pickAccount({required bool isDestination}) async {
     if (controller.accounts.isEmpty) return;
     final id = await showModalBottomSheet<int>(
       context: context,
@@ -814,7 +880,8 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
                     _mobileMoney(account.balanceCents),
                     style: const TextStyle(color: _mobileMuted),
                   ),
-                  trailing: account.id == _accountId
+                  trailing:
+                      account.id == (isDestination ? _toAccountId : _accountId)
                       ? const Icon(Icons.check_rounded, color: _mobileBrand)
                       : null,
                   onTap: () => Navigator.pop(context, account.id),
@@ -824,29 +891,143 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
         ),
       ),
     );
-    if (id != null) setState(() => _accountId = id);
+    if (id != null) {
+      setState(() {
+        if (isDestination) {
+          _toAccountId = id;
+        } else {
+          _accountId = id;
+        }
+      });
+    }
+  }
+
+  Future<void> _pickDateTime() async {
+    final now = DateTime.now();
+    final selected = await showModalBottomSheet<DateTime>(
+      context: context,
+      backgroundColor: _mobileSurface,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final offset in [0, 1, 2])
+              ListTile(
+                leading: const Icon(Icons.calendar_today_outlined),
+                title: Text(
+                  offset == 0
+                      ? '今天'
+                      : offset == 1
+                      ? '昨天'
+                      : '前天',
+                ),
+                subtitle: Text(
+                  DateFormat('yyyy年MM月dd日')
+                      .format(now.subtract(Duration(days: offset))),
+                ),
+                onTap: () {
+                  final day = now.subtract(Duration(days: offset));
+                  Navigator.pop(
+                    sheetContext,
+                    DateTime(
+                      day.year,
+                      day.month,
+                      day.day,
+                      _occurredAt.hour,
+                      _occurredAt.minute,
+                    ),
+                  );
+                },
+              ),
+            ListTile(
+              leading: const Icon(Icons.edit_calendar_outlined),
+              title: const Text('选择其他日期'),
+              onTap: () async {
+                final navigator = Navigator.of(sheetContext);
+                final day = await showDatePicker(
+                  context: sheetContext,
+                  initialDate: _occurredAt,
+                  firstDate: DateTime(2000),
+                  lastDate: now.add(const Duration(days: 365)),
+                );
+                if (day != null) {
+                  navigator.pop(
+                    DateTime(
+                      day.year,
+                      day.month,
+                      day.day,
+                      _occurredAt.hour,
+                      _occurredAt.minute,
+                    ),
+                  );
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+    if (selected == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(_occurredAt),
+    );
+    if (!mounted) return;
+    setState(() {
+      _occurredAt = DateTime(
+        selected.year,
+        selected.month,
+        selected.day,
+        time?.hour ?? selected.hour,
+        time?.minute ?? selected.minute,
+      );
+    });
   }
 
   Future<void> _save() async {
-    final amount = double.tryParse(_amount) ?? 0;
-    if (amount <= 0 || _category == null) {
+    final cents = AmountExpression.evaluateCents(_amount);
+    final amount = cents == null ? 0.0 : cents / 100;
+    if (amount <= 0 || (_type != '转账' && _category == null)) {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('请输入金额并选择分类')));
       return;
     }
     setState(() => _saving = true);
     try {
-      await controller.addEntry(
-        amount: amount,
-        title: _note.text.trim().isEmpty ? _category! : _note.text.trim(),
-        category: _category!,
-        type: _type,
-        accountId: _accountId,
-      );
+      if (_type == '转账') {
+        if (_accountId == null || _toAccountId == null) {
+          throw const ApiException('请选择转出和转入账户');
+        }
+        await controller.transfer(
+          kind: '账户转账',
+          fromAccountId: _accountId!,
+          toAccountId: _toAccountId!,
+          amount: amount,
+          note: _note.text.trim().isEmpty ? null : _note.text.trim(),
+        );
+      } else {
+        await controller.addEntry(
+          amount: amount,
+          title: _note.text.trim().isEmpty ? _category! : _note.text.trim(),
+          category: _category!,
+          type: _type,
+          accountId: _accountId,
+          occurredAt: _occurredAt.toUtc().toIso8601String(),
+          mood: _type == '支出' ? _mood : null,
+        );
+      }
       if (!mounted) return;
-      Navigator.pop(context);
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('已保存，账本已同步')));
+      if (_continuous && _type != '转账') {
+        setState(() {
+          _amount = '0';
+          _note.clear();
+        });
+      } else {
+        Navigator.pop(context);
+      }
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -1644,7 +1825,7 @@ class _TypeSwitch extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
       ),
       child: Row(
-        children: ['支出', '收入']
+        children: ['支出', '收入', '转账']
             .map(
               (item) => Expanded(
                 child: GestureDetector(
@@ -1654,7 +1835,11 @@ class _TypeSwitch extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     decoration: BoxDecoration(
                       color: value == item
-                          ? (item == '支出' ? _mobileExpense : _mobileIncome)
+                          ? (item == '支出'
+                                ? _mobileExpense
+                                : item == '收入'
+                                ? _mobileIncome
+                                : _mobilePurple)
                           : Colors.transparent,
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -1690,7 +1875,11 @@ class _AmountDisplay extends StatelessWidget {
       Text(
         '¥$amount',
         style: TextStyle(
-          color: type == '支出' ? _mobileExpense : _mobileIncome,
+          color: type == '支出'
+              ? _mobileExpense
+              : type == '收入'
+              ? _mobileIncome
+              : _mobilePurple,
           fontSize: 42,
           fontWeight: FontWeight.w800,
         ),
@@ -1706,7 +1895,23 @@ class _Keypad extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'];
+    const keys = [
+      '1',
+      '2',
+      '3',
+      '+',
+      '4',
+      '5',
+      '6',
+      '-',
+      '7',
+      '8',
+      '9',
+      '⌫',
+      '清空',
+      '0',
+      '.',
+    ];
     return GridView.count(
       crossAxisCount: 4,
       shrinkWrap: true,

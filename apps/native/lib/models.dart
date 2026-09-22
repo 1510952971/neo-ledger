@@ -262,10 +262,7 @@ class Preferences {
     lockEnabled: _asBool(json['lockEnabled'] ?? json['enabled']),
   );
 
-  Map<String, dynamic> toJson() => {
-    'theme': theme,
-    'lockEnabled': lockEnabled,
-  };
+  Map<String, dynamic> toJson() => {'theme': theme, 'lockEnabled': lockEnabled};
 }
 
 class AiReply {
@@ -455,10 +452,7 @@ class AnalysisBucket {
     amountCents: _asInt(json['amount'] ?? json['value']),
   );
 
-  Map<String, dynamic> toJson() => {
-    'name': name,
-    'amount': amountCents,
-  };
+  Map<String, dynamic> toJson() => {'name': name, 'amount': amountCents};
 }
 
 class AnalysisTrendPoint {
@@ -885,12 +879,16 @@ class PendingTransaction {
         status: '${json['status'] ?? 'pending'}',
         accountId: _asInt(json['accountId'] ?? json['account_id']),
         currency: '${json['currency'] ?? 'CNY'}',
-        accountName: json['accountName'] as String? ?? json['account_name'] as String?,
+        accountName:
+            json['accountName'] as String? ?? json['account_name'] as String?,
         rawText: json['rawText'] as String? ?? json['raw_text'] as String?,
-        createdAt: json['createdAt'] as String? ?? json['created_at'] as String?,
-        suggestion: _asMap(
-          json['automationSuggestion'] ?? json['automation_suggestion'],
-        )['category'] as String?,
+        createdAt:
+            json['createdAt'] as String? ?? json['created_at'] as String?,
+        suggestion:
+            _asMap(
+                  json['automationSuggestion'] ?? json['automation_suggestion'],
+                )['category']
+                as String?,
       );
 
   Map<String, dynamic> toJson() => {
@@ -905,8 +903,7 @@ class PendingTransaction {
     if (accountName != null) 'accountName': accountName,
     if (rawText != null) 'rawText': rawText,
     if (createdAt != null) 'createdAt': createdAt,
-    if (suggestion != null)
-      'automationSuggestion': {'category': suggestion},
+    if (suggestion != null) 'automationSuggestion': {'category': suggestion},
   };
 }
 
@@ -1026,6 +1023,13 @@ class OfflineEntry {
     required this.title,
     required this.category,
     required this.occurredAt,
+    this.mood,
+    this.splitWithMemberId,
+    this.splitMode,
+    this.mySharePercent = 100,
+    this.isSideHustle = false,
+    this.isBusinessExpense = false,
+    this.originalTimezone = 'Asia/Shanghai',
   });
 
   final String offlineId;
@@ -1036,6 +1040,13 @@ class OfflineEntry {
   final String title;
   final String category;
   final String occurredAt;
+  final String? mood;
+  final int? splitWithMemberId;
+  final String? splitMode;
+  final double mySharePercent;
+  final bool isSideHustle;
+  final bool isBusinessExpense;
+  final String originalTimezone;
 
   Map<String, dynamic> toJson() => {
     'offlineId': offlineId,
@@ -1044,9 +1055,15 @@ class OfflineEntry {
     'amount': amount,
     'type': type,
     'title': title,
-    'category': category,
-    'mood': '刚需',
-    'originalTimezone': 'Asia/Shanghai',
+    if (type == '支出') 'category': category,
+    if (type == '收入') 'incomeCategory': category,
+    if (type == '支出') 'mood': mood ?? '刚需',
+    if (splitWithMemberId != null) 'splitWithMemberId': splitWithMemberId,
+    if (splitMode != null) 'splitMode': splitMode,
+    'mySharePercent': mySharePercent,
+    if (type == '收入') 'isSideHustle': isSideHustle,
+    if (type == '收入') 'isBusinessExpense': isBusinessExpense,
+    'originalTimezone': originalTimezone,
     'occurredAt': occurredAt,
   };
 
@@ -1059,6 +1076,15 @@ class OfflineEntry {
     title: '${json['title'] ?? '离线记账'}',
     category: '${json['category'] ?? '餐饮'}',
     occurredAt: '${json['occurredAt'] ?? ''}',
+    mood: json['mood']?.toString(),
+    splitWithMemberId: json['splitWithMemberId'] == null
+        ? null
+        : _asInt(json['splitWithMemberId']),
+    splitMode: json['splitMode']?.toString(),
+    mySharePercent: (json['mySharePercent'] as num?)?.toDouble() ?? 100,
+    isSideHustle: json['isSideHustle'] == true,
+    isBusinessExpense: json['isBusinessExpense'] == true,
+    originalTimezone: '${json['originalTimezone'] ?? 'Asia/Shanghai'}',
   );
 }
 
@@ -1132,11 +1158,12 @@ class UpdateInfo {
               : normalized.endsWith('.zip')
               ? 2
               : 10,
-        'macos' => normalized.endsWith('.dmg')
-            ? 0
-            : normalized.endsWith('.zip')
-            ? 1
-            : 10,
+        'macos' =>
+          normalized.endsWith('.dmg')
+              ? 0
+              : normalized.endsWith('.zip')
+              ? 1
+              : 10,
         'web' => normalized.endsWith('.tar.gz') ? 0 : 10,
         'ios' => normalized.contains('unsigned') ? 10 : 0,
         _ => 10,
@@ -1247,8 +1274,7 @@ class ExchangeRateSnapshot {
       base: '${json['base'] ?? 'CNY'}',
       rates: {
         for (final entry in rawRates.entries)
-          if (entry.value is num)
-            entry.key: (entry.value as num).toDouble(),
+          if (entry.value is num) entry.key: (entry.value as num).toDouble(),
       },
       source: '${json['source'] ?? 'Neo Ledger'}',
       updatedAt: '${json['updatedAt'] ?? json['updated_at'] ?? ''}',
@@ -1286,7 +1312,9 @@ class QuickSyncStatus {
   final int processedCount;
   final String? lastEventAt;
 
-  factory QuickSyncStatus.fromJson(Map<String, dynamic> json) => QuickSyncStatus(
+  factory QuickSyncStatus.fromJson(
+    Map<String, dynamic> json,
+  ) => QuickSyncStatus(
     active: _asBool(json['active']),
     tokenPrefix: _asNullableString(json['tokenPrefix'] ?? json['token_prefix']),
     label: _asNullableString(json['label']),
@@ -1295,7 +1323,9 @@ class QuickSyncStatus {
     createdAt: _asNullableString(json['createdAt'] ?? json['created_at']),
     lastUsedAt: _asNullableString(json['lastUsedAt'] ?? json['last_used_at']),
     processedCount: _asInt(json['processedCount'] ?? json['processed_count']),
-    lastEventAt: _asNullableString(json['lastEventAt'] ?? json['last_event_at']),
+    lastEventAt: _asNullableString(
+      json['lastEventAt'] ?? json['last_event_at'],
+    ),
   );
 
   Map<String, dynamic> toJson() => {
@@ -1334,17 +1364,18 @@ class SecuritySession {
   final bool current;
   final String? revokedAt;
 
-  factory SecuritySession.fromJson(Map<String, dynamic> json) => SecuritySession(
-    id: '${json['id'] ?? ''}',
-    displayName: '${json['displayName'] ?? json['display_name'] ?? '设备'}',
-    userAgent: '${json['userAgent'] ?? json['user_agent'] ?? ''}',
-    ipAddress: '${json['ipAddress'] ?? json['ip_address'] ?? ''}',
-    createdAt: '${json['createdAt'] ?? json['created_at'] ?? ''}',
-    lastUsedAt: '${json['lastUsedAt'] ?? json['last_used_at'] ?? ''}',
-    expiresAt: '${json['expiresAt'] ?? json['expires_at'] ?? ''}',
-    current: _asBool(json['current']),
-    revokedAt: _asNullableString(json['revokedAt'] ?? json['revoked_at']),
-  );
+  factory SecuritySession.fromJson(Map<String, dynamic> json) =>
+      SecuritySession(
+        id: '${json['id'] ?? ''}',
+        displayName: '${json['displayName'] ?? json['display_name'] ?? '设备'}',
+        userAgent: '${json['userAgent'] ?? json['user_agent'] ?? ''}',
+        ipAddress: '${json['ipAddress'] ?? json['ip_address'] ?? ''}',
+        createdAt: '${json['createdAt'] ?? json['created_at'] ?? ''}',
+        lastUsedAt: '${json['lastUsedAt'] ?? json['last_used_at'] ?? ''}',
+        expiresAt: '${json['expiresAt'] ?? json['expires_at'] ?? ''}',
+        current: _asBool(json['current']),
+        revokedAt: _asNullableString(json['revokedAt'] ?? json['revoked_at']),
+      );
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -1372,12 +1403,13 @@ class SecurityAuditEvent {
   final String createdAt;
   final Map<String, dynamic> metadata;
 
-  factory SecurityAuditEvent.fromJson(Map<String, dynamic> json) => SecurityAuditEvent(
-    id: '${json['id'] ?? ''}',
-    event: '${json['event'] ?? json['action'] ?? '安全事件'}',
-    createdAt: '${json['createdAt'] ?? json['created_at'] ?? ''}',
-    metadata: _asMap(json['metadata'] ?? json['details']),
-  );
+  factory SecurityAuditEvent.fromJson(Map<String, dynamic> json) =>
+      SecurityAuditEvent(
+        id: '${json['id'] ?? ''}',
+        event: '${json['event'] ?? json['action'] ?? '安全事件'}',
+        createdAt: '${json['createdAt'] ?? json['created_at'] ?? ''}',
+        metadata: _asMap(json['metadata'] ?? json['details']),
+      );
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -1398,13 +1430,16 @@ class SecurityAuditPage {
   final bool hasMore;
   final String? nextCursor;
 
-  factory SecurityAuditPage.fromJson(Map<String, dynamic> json) => SecurityAuditPage(
-    events: _asMaps(json['events'])
-        .map(SecurityAuditEvent.fromJson)
-        .toList(growable: false),
-    hasMore: _asBool(json['hasMore'] ?? json['has_more']),
-    nextCursor: _asNullableString(json['nextCursor'] ?? json['next_cursor']),
-  );
+  factory SecurityAuditPage.fromJson(Map<String, dynamic> json) =>
+      SecurityAuditPage(
+        events: _asMaps(json['events'])
+            .map(SecurityAuditEvent.fromJson)
+            .toList(growable: false),
+        hasMore: _asBool(json['hasMore'] ?? json['has_more']),
+        nextCursor: _asNullableString(
+          json['nextCursor'] ?? json['next_cursor'],
+        ),
+      );
 
   Map<String, dynamic> toJson() => {
     'events': events.map((item) => item.toJson()).toList(),

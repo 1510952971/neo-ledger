@@ -1114,6 +1114,12 @@ class LedgerController extends ChangeNotifier {
     required String type,
     int? accountId,
     String? occurredAt,
+    String? mood,
+    int? splitWithMemberId,
+    String? splitMode,
+    double mySharePercent = 100,
+    bool isSideHustle = false,
+    bool isBusinessExpense = false,
   }) async {
     final ledger = selectedLedger;
     final account = accounts.isEmpty
@@ -1142,6 +1148,12 @@ class LedgerController extends ChangeNotifier {
       title: title,
       category: category,
       occurredAt: occurredAtValue,
+      mood: mood,
+      splitWithMemberId: splitWithMemberId,
+      splitMode: splitMode,
+      mySharePercent: mySharePercent,
+      isSideHustle: isSideHustle,
+      isBusinessExpense: isBusinessExpense,
     );
     if (demoMode) {
       final item = TransactionItem(
