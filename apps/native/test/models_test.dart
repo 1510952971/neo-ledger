@@ -103,4 +103,17 @@ void main() {
   test('generates UTC ISO timestamps for new offline entries', () {
     expect(iso8601NowUtc(), endsWith('Z'));
   });
+
+  test('transaction page preserves the server cursor', () {
+    final page = TransactionPage.fromJson({
+      'items': <Map<String, dynamic>>[],
+      'total': 120,
+      'income': 0,
+      'expense': 0,
+      'nextCursor': 'next-page-token',
+    });
+
+    expect(page.nextCursor, 'next-page-token');
+    expect(page.toJson()['nextCursor'], 'next-page-token');
+  });
 }

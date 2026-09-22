@@ -413,12 +413,14 @@ class TransactionPage {
     required this.total,
     required this.incomeCents,
     required this.expenseCents,
+    this.nextCursor,
   });
 
   final List<TransactionItem> items;
   final int total;
   final int incomeCents;
   final int expenseCents;
+  final String? nextCursor;
 
   int get balanceCents => incomeCents - expenseCents;
 
@@ -431,6 +433,7 @@ class TransactionPage {
         total: _asInt(json['total']),
         incomeCents: _asInt(json['income']),
         expenseCents: _asInt(json['expense']),
+        nextCursor: json['nextCursor']?.toString(),
       );
 
   Map<String, dynamic> toJson() => {
@@ -438,6 +441,7 @@ class TransactionPage {
     'total': total,
     'income': incomeCents,
     'expense': expenseCents,
+    if (nextCursor != null) 'nextCursor': nextCursor,
   };
 }
 

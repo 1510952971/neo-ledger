@@ -343,45 +343,390 @@ class MobileHomePage extends StatelessWidget {
   }
 }
 
-class MobileBillsPage extends StatelessWidget {
+class MobileBillsPage extends StatefulWidget {
   const MobileBillsPage({super.key, required this.controller});
 
   final LedgerController controller;
 
   @override
+  State<MobileBillsPage> createState() => _MobileBillsPageState();
+}
+
+class _MobileBillsPageState extends State<MobileBillsPage> {
+  final _search = TextEditingController();
+  late DateTime _month;
+  TransactionPage? _page;
+  bool _loading = false;
+  String? _error;
+
+  LedgerController get controller => widget.controller;
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    _month = DateTime(now.year, now.month);
+    _page = controller.transactions;
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final items = controller.transactions.items;
+    final page = _page ?? controller.transactions;
+    final groups = _groupByDay(page.items);
     return _MobilePage(
       controller: controller,
       title: '账单',
-      trailing: Text(
-        DateFormat('yyyy年MM月').format(DateTime.now()),
-        style: const TextStyle(color: _mobileMuted),
+      trailing: IconButton(
+        tooltip: '回到本月',
+        onPressed: _goToCurrentMonth,
+        icon: const Icon(Icons.today_rounded, color: _mobileMuted),
       ),
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(18, 8, 18, 110),
-        children: [
-          _BillSummary(page: controller.transactions),
-          const SizedBox(height: 20),
-          _SectionHeader(title: '全部流水', action: '${items.length} 笔'),
-          const SizedBox(height: 10),
-          if (items.isEmpty)
-            const _EmptyState(
-              icon: Icons.receipt_long_outlined,
-              title: '本月暂无账单',
-              message: '记录一笔之后，这里会按时间自动整理。',
-            )
-          else
-            ...items.map(
-              (item) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: _TransactionTile(item: item, dense: true),
+      child: RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(18, 8, 18, 110),
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  onPressed: () => _changeMonth(-1),
+                  icon: const Icon(Icons.chevron_left_rounded),
+                ),
+                Expanded(
+                  child: InkWell(
+                    onTap: _pickMonth,
+                    borderRadius: BorderRadius.circular(14),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Text(
+                        DateFormat('yyyy年MM月').format(_month),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => _changeMonth(1),
+                  icon: const Icon(Icons.chevron_right_rounded),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _search,
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) => _load(),
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search_rounded),
+                hintText: '搜索标题、分类、账户、金额…',
+                suffixIcon: _search.text.isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: () {
+                          _search.clear();
+                          _load();
+                        },
+                        icon: const Icon(Icons.close_rounded),
+                      ),
               ),
             ),
+            const SizedBox(height: 14),
+            if (_loading) const LinearProgressIndicator(minHeight: 2),
+            if (_error != null) ...[
+              _InlineError(message: _error!, onRetry: _load),
+              const SizedBox(height: 12),
+            ],
+            _BillSummary(page: page),
+            const SizedBox(height: 20),
+            _SectionHeader(title: '全部流水', action: '${page.total} 笔'),
+            const SizedBox(height: 10),
+            if (groups.isEmpty)
+              const _EmptyState(
+                icon: Icons.receipt_long_outlined,
+                title: '这个月还没有账单',
+                message: '切换月份或点击下方绿色 + 记录一笔。',
+              )
+            else
+              for (final entry in groups.entries) ...[
+                _DaySummaryHeader(day: entry.key, items: entry.value),
+                const SizedBox(height: 8),
+                for (final item in entry.value)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: _TransactionTile(
+                      item: item,
+                      dense: true,
+                      onTap: () => _openDetail(item),
+                    ),
+                  ),
+                const SizedBox(height: 8),
+              ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _load() async {
+    final ledger = controller.selectedLedger;
+    if (ledger == null) return;
+    final from = DateFormat('yyyy-MM-dd').format(_month);
+    final last = DateTime(_month.year, _month.month + 1, 0);
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final page = await controller.api.fetchTransactions(
+        ledger.id,
+        limit: 100,
+        query: _search.text,
+        from: from,
+        to: DateFormat('yyyy-MM-dd').format(last),
+        timezoneOffsetMinutes: DateTime.now().timeZoneOffset.inMinutes,
+      );
+      if (mounted) setState(() => _page = page);
+    } catch (error) {
+      if (mounted) setState(() => _error = '$error');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _changeMonth(int delta) {
+    setState(() => _month = DateTime(_month.year, _month.month + delta));
+    _load();
+  }
+
+  void _goToCurrentMonth() {
+    final now = DateTime.now();
+    setState(() => _month = DateTime(now.year, now.month));
+    _load();
+  }
+
+  Future<void> _pickMonth() async {
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: _month,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      helpText: '选择月份（日期不影响结果）',
+    );
+    if (selected == null) return;
+    setState(() => _month = DateTime(selected.year, selected.month));
+    _load();
+  }
+
+  Map<DateTime, List<TransactionItem>> _groupByDay(
+    List<TransactionItem> items,
+  ) {
+    final result = <DateTime, List<TransactionItem>>{};
+    for (final item in items) {
+      final parsed = DateTime.tryParse(item.occurredAt)?.toLocal();
+      final day = parsed == null
+          ? DateTime(1970)
+          : DateTime(parsed.year, parsed.month, parsed.day);
+      result.putIfAbsent(day, () => []).add(item);
+    }
+    return result;
+  }
+
+  Future<void> _openDetail(TransactionItem item) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            MobileTransactionDetailPage(controller: controller, item: item),
+      ),
+    );
+    if (mounted) _load();
+  }
+}
+
+class MobileTransactionDetailPage extends StatefulWidget {
+  const MobileTransactionDetailPage({
+    super.key,
+    required this.controller,
+    required this.item,
+  });
+
+  final LedgerController controller;
+  final TransactionItem item;
+
+  @override
+  State<MobileTransactionDetailPage> createState() =>
+      _MobileTransactionDetailPageState();
+}
+
+class _MobileTransactionDetailPageState
+    extends State<MobileTransactionDetailPage> {
+  bool _deleting = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final item = widget.item;
+    final occurredAt = DateTime.tryParse(item.occurredAt)?.toLocal();
+    final color = item.isIncome ? _mobileIncome : _mobileExpense;
+    return Scaffold(
+      backgroundColor: _mobileBg,
+      appBar: AppBar(
+        title: const Text('账单详情'),
+        actions: [
+          IconButton(
+            tooltip: '编辑',
+            onPressed: _edit,
+            icon: const Icon(Icons.edit_outlined),
+          ),
+          IconButton(
+            tooltip: '删除',
+            onPressed: _deleting ? null : _delete,
+            icon: const Icon(Icons.delete_outline_rounded),
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(18, 20, 18, 32),
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 20),
+            decoration: _mobileBoxDecoration(),
+            child: Column(
+              children: [
+                Text(item.type, style: const TextStyle(color: _mobileMuted)),
+                const SizedBox(height: 8),
+                Text(
+                  '${item.isIncome ? '+' : '-'}${_mobileMoney(item.amountCents)}',
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 38,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  item.title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          _DetailRow(
+            label: '分类',
+            value: item.category ?? item.incomeCategory ?? '未分类',
+          ),
+          _DetailRow(label: '账户', value: item.accountName ?? '未知账户'),
+          _DetailRow(label: '币种', value: item.currency),
+          if (item.mood != null) _DetailRow(label: '消费性质', value: item.mood!),
+          _DetailRow(
+            label: '发生时间',
+            value: occurredAt == null
+                ? item.occurredAt
+                : DateFormat('yyyy-MM-dd HH:mm').format(occurredAt),
+          ),
+          _DetailRow(label: '来源', value: item.source),
+          _DetailRow(
+            label: '同步状态',
+            value: item.updatedAt == null ? '本地待同步' : '已同步',
+          ),
+          if (item.updatedAt != null)
+            _DetailRow(label: '最后更新', value: item.updatedAt!),
         ],
       ),
     );
   }
+
+  Future<void> _edit() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (_) => EditTransactionSheet(
+        controller: widget.controller,
+        item: widget.item,
+      ),
+    );
+    if (mounted) Navigator.pop(context);
+  }
+
+  Future<void> _delete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除这笔账单？'),
+        content: const Text('删除会同步到网页、Windows、macOS 和其他移动设备。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _deleting = true);
+    try {
+      await widget.controller.deleteTransaction(widget.item);
+      if (mounted) Navigator.pop(context);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('删除失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+}
+
+class _DetailRow extends StatelessWidget {
+  const _DetailRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+    decoration: const BoxDecoration(
+      border: Border(bottom: BorderSide(color: _mobileLine)),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 88,
+          child: Text(label, style: const TextStyle(color: _mobileMuted)),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            textAlign: TextAlign.right,
+            style: const TextStyle(color: Colors.white),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class MobileAnalysisPage extends StatelessWidget {
@@ -1187,11 +1532,45 @@ class _BillSummary extends StatelessWidget {
   }
 }
 
+class _DaySummaryHeader extends StatelessWidget {
+  const _DaySummaryHeader({required this.day, required this.items});
+
+  final DateTime day;
+  final List<TransactionItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final income = items
+        .where((item) => item.isIncome)
+        .fold<int>(0, (sum, item) => sum + item.amountCents);
+    final expense = items
+        .where((item) => !item.isIncome)
+        .fold<int>(0, (sum, item) => sum + item.amountCents);
+    return Row(
+      children: [
+        Text(
+          '${DateFormat('MM月dd日').format(day)} ${const ['一', '二', '三', '四', '五', '六', '日'][day.weekday - 1]}',
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const Spacer(),
+        Text(
+          '收 ${_mobileMoney(income)}  支 ${_mobileMoney(expense)}  结 ${_mobileMoney(income - expense)}',
+          style: const TextStyle(color: _mobileMuted, fontSize: 12),
+        ),
+      ],
+    );
+  }
+}
+
 class _TransactionTile extends StatelessWidget {
-  const _TransactionTile({required this.item, this.dense = false});
+  const _TransactionTile({required this.item, this.dense = false, this.onTap});
 
   final TransactionItem item;
   final bool dense;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -1201,53 +1580,60 @@ class _TransactionTile extends StatelessWidget {
         ? '💼'
         : '🧾';
     final color = item.isIncome ? _mobileIncome : _mobileExpense;
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: 14, vertical: dense ? 12 : 14),
-      decoration: BoxDecoration(
-        color: _mobileSurface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: _mobileLine),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: color.withAlpha(24),
-              borderRadius: BorderRadius.circular(14),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: dense ? 12 : 14,
+        ),
+        decoration: BoxDecoration(
+          color: _mobileSurface,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: _mobileLine),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: color.withAlpha(24),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Text(icon, style: const TextStyle(fontSize: 21)),
             ),
-            child: Text(icon, style: const TextStyle(fontSize: 21)),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  item.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${item.category ?? '未分类'} · ${_mobileDate(item.occurredAt)}',
-                  style: const TextStyle(color: _mobileMuted, fontSize: 12),
-                ),
-              ],
+                  const SizedBox(height: 4),
+                  Text(
+                    '${item.category ?? '未分类'} · ${_mobileDate(item.occurredAt)}',
+                    style: const TextStyle(color: _mobileMuted, fontSize: 12),
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            '${item.isIncome ? '+' : '-'}${_mobileMoney(item.amountCents)}',
-            style: TextStyle(color: color, fontWeight: FontWeight.w800),
-          ),
-        ],
+            const SizedBox(width: 8),
+            Text(
+              '${item.isIncome ? '+' : '-'}${_mobileMoney(item.amountCents)}',
+              style: TextStyle(color: color, fontWeight: FontWeight.w800),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2113,9 +2499,10 @@ class _EmptyState extends StatelessWidget {
 }
 
 class _InlineError extends StatelessWidget {
-  const _InlineError({required this.message});
+  const _InlineError({required this.message, this.onRetry});
 
   final String message;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -2125,9 +2512,21 @@ class _InlineError extends StatelessWidget {
       color: const Color(0x22ff8a7a),
       borderRadius: BorderRadius.circular(12),
     ),
-    child: Text(
-      message,
-      style: const TextStyle(color: _mobileExpense, fontSize: 12, height: 1.4),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            message,
+            style: const TextStyle(
+              color: _mobileExpense,
+              fontSize: 12,
+              height: 1.4,
+            ),
+          ),
+        ),
+        if (onRetry != null)
+          TextButton(onPressed: onRetry, child: const Text('重试')),
+      ],
     ),
   );
 }

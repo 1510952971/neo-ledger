@@ -586,10 +586,31 @@ class NeoLedgerApi {
     });
   }
 
-  Future<TransactionPage> fetchTransactions(int ledgerId) async {
-    final data = await getJson(
-      '/api/transactions/query?ledger=$ledgerId&limit=50',
-    );
+  Future<TransactionPage> fetchTransactions(
+    int ledgerId, {
+    int limit = 50,
+    String? query,
+    String? from,
+    String? to,
+    String? cursor,
+    int? id,
+    int timezoneOffsetMinutes = 0,
+  }) async {
+    final parameters = <String, String>{
+      'ledger': '$ledgerId',
+      'limit': '${limit.clamp(1, 100)}',
+      'offset': '$timezoneOffsetMinutes',
+      if (query != null && query.trim().isNotEmpty) 'q': query.trim(),
+      'from': ?from,
+      'to': ?to,
+      'cursor': ?cursor,
+      if (id != null) 'id': '$id',
+    };
+    final path = Uri(
+      path: '/api/transactions/query',
+      queryParameters: parameters,
+    ).toString();
+    final data = await getJson(path);
     if (data is! Map<String, dynamic>) throw const ApiException('流水响应格式无效');
     return TransactionPage.fromJson(data);
   }
