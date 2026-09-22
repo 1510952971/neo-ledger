@@ -2,6 +2,8 @@
 
 > 目标：将当前完整 Web 账本产品，落地为 Windows、Android、iOS/iPadOS、Android 平板和 Web/NAS 多端一致的正式产品。所有客户端共享同一账本数据、同步协议、权限模型和发布版本，但遵守各操作系统允许的能力边界。
 
+移动端从 Native `1.4.0` 开始的逐阶段功能、验收标准和发布门槛，见 [`MOBILE_APP_PRODUCTIZATION_PLAN.md`](./MOBILE_APP_PRODUCTIZATION_PLAN.md)。
+
 ## 0. 先纠正当前状态
 
 当前仓库不是“已经完成三端原生移植”的状态：
