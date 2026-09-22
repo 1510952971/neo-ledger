@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'app.dart';
 import 'api_client.dart';
 import 'mobile/core/mobile_design.dart';
+import 'mobile/data/mobile_entry_preferences.dart';
 import 'mobile/domain/amount_expression.dart';
 import 'models.dart';
 
@@ -1079,6 +1080,8 @@ class MobileAddTransactionPage extends StatefulWidget {
 
 class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
   final _note = TextEditingController();
+  final _categorySearch = TextEditingController();
+  final _entryPreferences = const MobileEntryPreferences();
   String _type = '支出';
   String _amount = '0';
   int? _accountId;
@@ -1090,6 +1093,8 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
   double _mySharePercent = 50;
   DateTime _occurredAt = DateTime.now();
   bool _continuous = false;
+  bool _accountManuallySelected = false;
+  List<String> _recentCategories = const [];
   bool _saving = false;
 
   LedgerController get controller => widget.controller;
@@ -1104,11 +1109,13 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
         ? null
         : controller.accounts[1].id;
     _category = _choices.isEmpty ? null : _choices.first.name;
+    _loadEntryPreferences();
   }
 
   @override
   void dispose() {
     _note.dispose();
+    _categorySearch.dispose();
     super.dispose();
   }
 
@@ -1181,9 +1188,29 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
     return fallback;
   }
 
+  List<_MobileCategoryChoice> get _visibleChoices {
+    final query = _categorySearch.text.trim().toLowerCase();
+    final choices = _choices
+        .where(
+          (item) => query.isEmpty || item.name.toLowerCase().contains(query),
+        )
+        .toList();
+    choices.sort((left, right) {
+      final leftIndex = _recentCategories.indexOf(left.name);
+      final rightIndex = _recentCategories.indexOf(right.name);
+      if (leftIndex >= 0 || rightIndex >= 0) {
+        if (leftIndex < 0) return 1;
+        if (rightIndex < 0) return -1;
+        return leftIndex.compareTo(rightIndex);
+      }
+      return 0;
+    });
+    return choices;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final choices = _choices;
+    final choices = _visibleChoices;
     return Scaffold(
       backgroundColor: _mobileBg,
       appBar: AppBar(
@@ -1226,6 +1253,15 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
               const SizedBox(height: 22),
               const _FormLabel(label: '分类'),
               const SizedBox(height: 10),
+              TextField(
+                controller: _categorySearch,
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.search_rounded),
+                  hintText: '搜索分类',
+                ),
+              ),
+              const SizedBox(height: 10),
               GridView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
@@ -1241,7 +1277,7 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
                   return _CategoryChoice(
                     choice: choice,
                     selected: _category == choice.name,
-                    onTap: () => setState(() => _category = choice.name),
+                    onTap: () => _selectCategory(choice.name),
                   );
                 },
               ),
@@ -1458,6 +1494,7 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
           _toAccountId = id;
         } else {
           _accountId = id;
+          _accountManuallySelected = true;
         }
       });
     }
@@ -1546,6 +1583,21 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
     });
   }
 
+  Future<void> _loadEntryPreferences() async {
+    final recent = await _entryPreferences.recentCategories();
+    if (mounted) setState(() => _recentCategories = recent);
+  }
+
+  Future<void> _selectCategory(String category) async {
+    setState(() => _category = category);
+    if (_accountManuallySelected) return;
+    final accountId = await _entryPreferences.accountForCategory(category);
+    if (!mounted || accountId == null) return;
+    if (controller.accounts.any((account) => account.id == accountId)) {
+      setState(() => _accountId = accountId);
+    }
+  }
+
   Future<void> _pickSplitMember() async {
     final partners = controller.members
         .where((member) => !member.isMe)
@@ -1628,6 +1680,17 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
               : null,
           mySharePercent: _splitMode == '按比例平摊' ? _mySharePercent : 100,
         );
+      }
+      if (!mounted) return;
+      if (_type != '转账' && _accountId != null && _category != null) {
+        try {
+          await _entryPreferences.remember(
+            category: _category!,
+            accountId: _accountId!,
+          );
+        } catch (_) {
+          // 本地偏好失败不能把已经成功写入的账单误报为失败。
+        }
       }
       if (!mounted) return;
       ScaffoldMessenger.of(context)
