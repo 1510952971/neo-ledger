@@ -20,11 +20,14 @@ class NeoLedgerApi {
   NeoLedgerApi({FlutterSecureStorage? storage})
     : _storage = storage ?? const FlutterSecureStorage();
 
+  static const _defaultBaseUrl = 'https://ledger.eyeme.online';
   static const _cookieKey = 'neo_ledger_session_cookie';
   static const _baseUrlKey = 'neo_ledger_base_url';
   static const _autoLogSecretKey = 'neo_ledger_auto_log_secret';
   final FlutterSecureStorage _storage;
-  String _baseUrl = 'http://localhost:3000';
+  // Native mobile builds talk to the same hosted account as the web client.
+  // A user can still override this through the persisted server setting.
+  String _baseUrl = _defaultBaseUrl;
   String? _cookie;
   String _autoLogSecret = '';
 
@@ -34,8 +37,29 @@ class NeoLedgerApi {
 
   Future<void> load() async {
     _cookie = await _storage.read(key: _cookieKey);
-    _baseUrl = await _storage.read(key: _baseUrlKey) ?? _baseUrl;
+    final storedBaseUrl = await _storage.read(key: _baseUrlKey);
+    // v1.3.3 used localhost as the implicit value. Migrate that value so an
+    // upgraded production app does not try to connect to the phone itself.
+    _baseUrl =
+        storedBaseUrl == null ||
+            storedBaseUrl.isEmpty ||
+            storedBaseUrl == 'http://localhost:3000'
+        ? _defaultBaseUrl
+        : storedBaseUrl;
+    if (storedBaseUrl != _baseUrl) {
+      await _storage.write(key: _baseUrlKey, value: _baseUrl);
+    }
     _autoLogSecret = await _storage.read(key: _autoLogSecretKey) ?? '';
+  }
+
+  Future<SessionUser?> fetchSessionUser() async {
+    final data = await getJson('/api/auth');
+    if (data is! Map<String, dynamic> || data['authenticated'] != true) {
+      return null;
+    }
+    final rawUser = data['user'];
+    if (rawUser is! Map) throw const ApiException('账号状态响应缺少用户信息');
+    return SessionUser.fromJson(Map<String, dynamic>.from(rawUser));
   }
 
   Future<void> setBaseUrl(String value) async {

@@ -1,0 +1,2001 @@
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+
+import 'app.dart';
+import 'models.dart';
+
+const _mobileBg = Color(0xff0e1015);
+const _mobileSurface = Color(0xff171a22);
+const _mobileSurfaceRaised = Color(0xff20242e);
+const _mobileLine = Color(0x1fffffff);
+const _mobileBrand = Color(0xffa5ff4f);
+const _mobilePurple = Color(0xffaa8cff);
+const _mobileMuted = Color(0xff9ca3ad);
+const _mobileIncome = Color(0xff65d89b);
+const _mobileExpense = Color(0xffff8a7a);
+
+class MobileLedgerShell extends StatefulWidget {
+  const MobileLedgerShell({
+    super.key,
+    required this.controller,
+    required this.nativeVersion,
+  });
+
+  final LedgerController controller;
+  final String nativeVersion;
+
+  @override
+  State<MobileLedgerShell> createState() => _MobileLedgerShellState();
+}
+
+class _MobileLedgerShellState extends State<MobileLedgerShell> {
+  int _tab = 0;
+
+  LedgerController get controller => widget.controller;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!controller.authenticated) {
+      if (controller.loading || controller.api.hasSession) {
+        return const _MobileLoadingView();
+      }
+      return MobileLoginPage(controller: controller);
+    }
+
+    final pages = [
+      MobileHomePage(controller: controller, onAdd: _openAdd),
+      MobileBillsPage(controller: controller),
+      MobileAnalysisPage(controller: controller),
+      MobileProfilePage(
+        controller: controller,
+        nativeVersion: widget.nativeVersion,
+      ),
+    ];
+    return Scaffold(
+      backgroundColor: _mobileBg,
+      body: IndexedStack(index: _tab, children: pages),
+      floatingActionButton: FloatingActionButton(
+        heroTag: 'mobile-add-entry',
+        backgroundColor: _mobileBrand,
+        foregroundColor: _mobileBg,
+        elevation: 8,
+        onPressed: _openAdd,
+        child: const Icon(Icons.add_rounded, size: 30),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tab,
+        onDestinationSelected: (index) => setState(() => _tab = index),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home_rounded),
+            label: '首页',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.receipt_long_outlined),
+            selectedIcon: Icon(Icons.receipt_long_rounded),
+            label: '账单',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.insights_outlined),
+            selectedIcon: Icon(Icons.insights_rounded),
+            label: '分析',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline_rounded),
+            selectedIcon: Icon(Icons.person_rounded),
+            label: '我的',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openAdd() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => MobileAddTransactionPage(controller: controller),
+      ),
+    );
+  }
+}
+
+class MobileLoginPage extends StatefulWidget {
+  const MobileLoginPage({super.key, required this.controller});
+
+  final LedgerController controller;
+
+  @override
+  State<MobileLoginPage> createState() => _MobileLoginPageState();
+}
+
+class _MobileLoginPageState extends State<MobileLoginPage> {
+  final _username = TextEditingController();
+  final _password = TextEditingController();
+  bool _obscure = true;
+
+  @override
+  void dispose() {
+    _username.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = widget.controller;
+    return Scaffold(
+      backgroundColor: _mobileBg,
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(24, 60, 24, 28),
+          children: [
+            const _MobileBrandMark(),
+            const SizedBox(height: 28),
+            Text(
+              '把每一笔生活，\n记得更轻松',
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                height: 1.18,
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              '移动端使用原生交互，数据仍与网页、Windows 和 macOS 共用同一账本。',
+              style: TextStyle(color: _mobileMuted, height: 1.6),
+            ),
+            const SizedBox(height: 32),
+            _MobileTextField(
+              controller: _username,
+              label: '账号或邮箱',
+              icon: Icons.person_outline_rounded,
+              textInputAction: TextInputAction.next,
+            ),
+            const SizedBox(height: 14),
+            _MobileTextField(
+              controller: _password,
+              label: '密码',
+              icon: Icons.lock_outline_rounded,
+              obscureText: _obscure,
+              suffix: IconButton(
+                onPressed: () => setState(() => _obscure = !_obscure),
+                icon: Icon(
+                  _obscure
+                      ? Icons.visibility_outlined
+                      : Icons.visibility_off_outlined,
+                  color: _mobileMuted,
+                ),
+              ),
+              onSubmitted: (_) => _login(),
+            ),
+            if (controller.error != null) ...[
+              const SizedBox(height: 14),
+              _InlineError(message: controller.error!),
+            ],
+            const SizedBox(height: 22),
+            SizedBox(
+              height: 54,
+              child: FilledButton(
+                onPressed: controller.loading ? null : _login,
+                style: FilledButton.styleFrom(
+                  backgroundColor: _mobileBrand,
+                  foregroundColor: _mobileBg,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                ),
+                child: controller.loading
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text(
+                        '登录 Neo Ledger',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            OutlinedButton.icon(
+              onPressed: controller.loading ? null : controller.loadDemo,
+              icon: const Icon(Icons.auto_awesome_outlined),
+              label: const Text('先体验原生移动端'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white,
+                side: const BorderSide(color: _mobileLine),
+                minimumSize: const Size.fromHeight(50),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
+              ),
+            ),
+            const SizedBox(height: 26),
+            const Text(
+              '登录地址已固定为 ledger.eyeme.online。首次使用请先在网页端注册账号。',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: _mobileMuted, fontSize: 12, height: 1.5),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _login() async {
+    final username = _username.text.trim();
+    if (username.isEmpty || _password.text.isEmpty) {
+      widget.controller.clearError();
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请输入账号和密码')));
+      return;
+    }
+    await widget.controller.login(
+      url: 'https://ledger.eyeme.online',
+      username: username,
+      password: _password.text,
+    );
+  }
+}
+
+class MobileHomePage extends StatelessWidget {
+  const MobileHomePage({
+    super.key,
+    required this.controller,
+    required this.onAdd,
+  });
+
+  final LedgerController controller;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    final page = controller.transactions;
+    final displayName = controller.user?.displayName ?? '朋友';
+    return _MobilePage(
+      controller: controller,
+      title: '首页',
+      trailing: _SyncButton(controller: controller),
+      child: RefreshIndicator(
+        color: _mobileBrand,
+        backgroundColor: _mobileSurfaceRaised,
+        onRefresh: controller.refresh,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(18, 8, 18, 120),
+          children: [
+            Text(
+              '${_greeting()}，$displayName',
+              style: const TextStyle(color: _mobileMuted, fontSize: 14),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '今天也把生活过得有条理。',
+              style: Theme.of(context).textTheme.headlineSmall
+                  ?.copyWith(color: Colors.white, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 18),
+            _MonthlyCard(page: page),
+            const SizedBox(height: 20),
+            _SectionHeader(title: '快捷操作', action: '全部功能'),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _QuickAction(
+                    icon: Icons.add_rounded,
+                    label: '记一笔',
+                    color: _mobileBrand,
+                    onTap: onAdd,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _QuickAction(
+                    icon: Icons.swap_horiz_rounded,
+                    label: '转账',
+                    color: _mobilePurple,
+                    onTap: () => _showComingSoon(context, '转账功能'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _QuickAction(
+                    icon: Icons.flag_outlined,
+                    label: '预算',
+                    color: const Color(0xffffc76b),
+                    onTap: () => _showComingSoon(context, '预算管理'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 26),
+            _SectionHeader(
+              title: '最近账单',
+              action: page.items.isEmpty ? null : '共 ${page.total} 笔',
+            ),
+            const SizedBox(height: 10),
+            if (page.items.isEmpty)
+              const _EmptyState(
+                icon: Icons.auto_graph_rounded,
+                title: '还没有账单',
+                message: '点击下方绿色 +，记录第一笔今天的生活。',
+              )
+            else
+              ...page.items
+                  .take(8)
+                  .map(
+                    (item) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _TransactionTile(item: item),
+                    ),
+                  ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class MobileBillsPage extends StatelessWidget {
+  const MobileBillsPage({super.key, required this.controller});
+
+  final LedgerController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = controller.transactions.items;
+    return _MobilePage(
+      controller: controller,
+      title: '账单',
+      trailing: Text(
+        DateFormat('yyyy年MM月').format(DateTime.now()),
+        style: const TextStyle(color: _mobileMuted),
+      ),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(18, 8, 18, 110),
+        children: [
+          _BillSummary(page: controller.transactions),
+          const SizedBox(height: 20),
+          _SectionHeader(title: '全部流水', action: '${items.length} 笔'),
+          const SizedBox(height: 10),
+          if (items.isEmpty)
+            const _EmptyState(
+              icon: Icons.receipt_long_outlined,
+              title: '本月暂无账单',
+              message: '记录一笔之后，这里会按时间自动整理。',
+            )
+          else
+            ...items.map(
+              (item) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _TransactionTile(item: item, dense: true),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class MobileAnalysisPage extends StatelessWidget {
+  const MobileAnalysisPage({super.key, required this.controller});
+
+  final LedgerController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final page = controller.transactions;
+    final analysis = controller.analysis;
+    final buckets = analysis?.categoryData ?? _fallbackBuckets(page.items);
+    final maxAmount = buckets.isEmpty
+        ? 1
+        : buckets
+              .map((item) => item.amountCents)
+              .reduce((a, b) => a > b ? a : b);
+    return _MobilePage(
+      controller: controller,
+      title: '分析',
+      trailing: const Icon(Icons.tune_rounded, color: _mobileMuted),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(18, 8, 18, 110),
+        children: [
+          _InsightCard(
+            title: '本月结余',
+            value: _mobileMoney(page.balanceCents),
+            caption: analysis == null
+                ? '正在同步分类分析…'
+                : '储蓄率 ${analysis.savingRate.toStringAsFixed(1)}%',
+            icon: Icons.insights_rounded,
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _MetricCard(
+                  label: '收入',
+                  value: _mobileMoney(page.incomeCents),
+                  color: _mobileIncome,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _MetricCard(
+                  label: '支出',
+                  value: _mobileMoney(page.expenseCents),
+                  color: _mobileExpense,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          _SectionHeader(title: '支出分类', action: '本月'),
+          const SizedBox(height: 10),
+          if (buckets.isEmpty)
+            const _EmptyState(
+              icon: Icons.pie_chart_outline_rounded,
+              title: '还没有足够数据',
+              message: '多记几笔账后，这里会显示你的消费结构。',
+            )
+          else
+            _CategoryChart(buckets: buckets, maxAmount: maxAmount),
+          if (analysis?.trend.isNotEmpty == true) ...[
+            const SizedBox(height: 24),
+            _SectionHeader(title: '收支趋势', action: '近期开销'),
+            const SizedBox(height: 10),
+            _TrendChart(points: analysis!.trend),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class MobileProfilePage extends StatelessWidget {
+  const MobileProfilePage({
+    super.key,
+    required this.controller,
+    required this.nativeVersion,
+  });
+
+  final LedgerController controller;
+  final String nativeVersion;
+
+  @override
+  Widget build(BuildContext context) {
+    final user = controller.user;
+    final accountTotal = controller.accounts.fold<int>(
+      0,
+      (sum, item) => sum + item.balanceCents,
+    );
+    final assetTotal = controller.assets.fold<int>(
+      0,
+      (sum, item) => sum + (item.currentValueCents ?? item.valueCents),
+    );
+    return _MobilePage(
+      controller: controller,
+      title: '我的',
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(18, 8, 18, 110),
+        children: [
+          _ProfileHeader(user: user),
+          const SizedBox(height: 16),
+          _NetWorthCard(
+            accountTotal: accountTotal,
+            assetTotal: assetTotal,
+            ledgerName: controller.selectedLedger?.name ?? '日常账本',
+          ),
+          const SizedBox(height: 22),
+          _SectionHeader(
+            title: '我的账本',
+            action: '${controller.ledgers.length} 个',
+          ),
+          const SizedBox(height: 10),
+          ...controller.ledgers.map(
+            (ledger) => _SettingsRow(
+              icon: ledger.icon,
+              title: ledger.name,
+              subtitle: ledger.id == controller.selectedLedger?.id
+                  ? '当前使用中'
+                  : '切换账本',
+              onTap: () async {
+                final index = controller.ledgers.indexOf(ledger);
+                if (index >= 0) await controller.selectLedger(index);
+              },
+            ),
+          ),
+          const SizedBox(height: 16),
+          _SectionHeader(title: '应用', action: 'v$nativeVersion'),
+          const SizedBox(height: 10),
+          _SettingsRow(
+            icon: '☁️',
+            title: '同步状态',
+            subtitle: controller.totalPendingCount == 0
+                ? '已与云端同步'
+                : '${controller.totalPendingCount} 笔待同步',
+          ),
+          _SettingsRow(
+            icon: '🧩',
+            title: '高级功能',
+            subtitle: '桌面端和网页端继续提供完整管理能力',
+            onTap: () => _showComingSoon(context, '高级功能入口'),
+          ),
+          _SettingsRow(
+            icon: '🔒',
+            title: '隐私与安全',
+            subtitle: controller.preferences.lockEnabled
+                ? '已开启应用锁'
+                : '数据仅通过加密连接同步',
+            onTap: () => _showComingSoon(context, '隐私与安全'),
+          ),
+          const SizedBox(height: 18),
+          OutlinedButton.icon(
+            onPressed: controller.loading ? null : controller.logout,
+            icon: const Icon(Icons.logout_rounded),
+            label: const Text('退出当前账号'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _mobileExpense,
+              side: const BorderSide(color: Color(0x55ff8a7a)),
+              minimumSize: const Size.fromHeight(52),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class MobileAddTransactionPage extends StatefulWidget {
+  const MobileAddTransactionPage({super.key, required this.controller});
+
+  final LedgerController controller;
+
+  @override
+  State<MobileAddTransactionPage> createState() =>
+      _MobileAddTransactionPageState();
+}
+
+class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
+  final _note = TextEditingController();
+  String _type = '支出';
+  String _amount = '0';
+  int? _accountId;
+  String? _category;
+  bool _saving = false;
+
+  LedgerController get controller => widget.controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _accountId = controller.accounts.isEmpty
+        ? null
+        : controller.accounts.first.id;
+    _category = _choices.isEmpty ? null : _choices.first.name;
+  }
+
+  @override
+  void dispose() {
+    _note.dispose();
+    super.dispose();
+  }
+
+  List<_MobileCategoryChoice> get _choices {
+    final source = _type == '支出'
+        ? controller.expenseCategories
+        : controller.incomeCategories;
+    if (source.isNotEmpty) {
+      return source
+          .where((item) => item.isActive)
+          .map(
+            (item) => _MobileCategoryChoice(
+              name: item.name,
+              icon: item.icon,
+              color: _mobileHex(item.color),
+            ),
+          )
+          .toList();
+    }
+    final fallback = _type == '支出'
+        ? const [
+            _MobileCategoryChoice(
+              name: '餐饮',
+              icon: '🍜',
+              color: Color(0xffff9d61),
+            ),
+            _MobileCategoryChoice(
+              name: '交通',
+              icon: '🚕',
+              color: Color(0xff78a9ff),
+            ),
+            _MobileCategoryChoice(
+              name: '购物',
+              icon: '🛍️',
+              color: Color(0xffdb8dff),
+            ),
+            _MobileCategoryChoice(
+              name: '日用',
+              icon: '🏠',
+              color: Color(0xff75d7bd),
+            ),
+            _MobileCategoryChoice(
+              name: '娱乐',
+              icon: '🎮',
+              color: Color(0xffffcf70),
+            ),
+            _MobileCategoryChoice(
+              name: '其它',
+              icon: '🧾',
+              color: Color(0xffaab2bf),
+            ),
+          ]
+        : const [
+            _MobileCategoryChoice(
+              name: '工资',
+              icon: '💼',
+              color: Color(0xff65d89b),
+            ),
+            _MobileCategoryChoice(
+              name: '奖金',
+              icon: '🎁',
+              color: Color(0xffffcf70),
+            ),
+            _MobileCategoryChoice(
+              name: '其它收入',
+              icon: '💰',
+              color: Color(0xff78a9ff),
+            ),
+          ];
+    return fallback;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final choices = _choices;
+    return Scaffold(
+      backgroundColor: _mobileBg,
+      appBar: AppBar(
+        title: const Text('记一笔', style: TextStyle(fontWeight: FontWeight.w800)),
+        leading: IconButton(
+          onPressed: () => Navigator.pop(context),
+          icon: const Icon(Icons.close_rounded),
+        ),
+        actions: [
+          TextButton(
+            onPressed: _saving ? null : _save,
+            child: const Text(
+              '保存',
+              style: TextStyle(
+                color: _mobileBrand,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(18, 8, 18, 24),
+          children: [
+            _TypeSwitch(
+              value: _type,
+              onChanged: (value) {
+                setState(() {
+                  _type = value;
+                  _category = _choices.isEmpty ? null : _choices.first.name;
+                });
+              },
+            ),
+            const SizedBox(height: 18),
+            _AmountDisplay(amount: _amount, type: _type),
+            const SizedBox(height: 16),
+            _Keypad(onKey: _inputKey),
+            const SizedBox(height: 22),
+            const _FormLabel(label: '分类'),
+            const SizedBox(height: 10),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: choices.length,
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 4,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 10,
+                childAspectRatio: 1.05,
+              ),
+              itemBuilder: (context, index) {
+                final choice = choices[index];
+                return _CategoryChoice(
+                  choice: choice,
+                  selected: _category == choice.name,
+                  onTap: () => setState(() => _category = choice.name),
+                );
+              },
+            ),
+            const SizedBox(height: 18),
+            _FormLabel(label: '账户与备注'),
+            const SizedBox(height: 10),
+            _MobileSelectRow(
+              icon: Icons.account_balance_wallet_outlined,
+              title: '账户',
+              value: _accountName,
+              onTap: _pickAccount,
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _note,
+              textInputAction: TextInputAction.done,
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.notes_rounded, color: _mobileMuted),
+                hintText: '添加备注，例如：午餐、地铁、房租…',
+              ),
+            ),
+            const SizedBox(height: 18),
+            SizedBox(
+              height: 54,
+              child: FilledButton(
+                onPressed: _saving ? null : _save,
+                style: FilledButton.styleFrom(
+                  backgroundColor: _type == '支出'
+                      ? _mobileExpense
+                      : _mobileIncome,
+                  foregroundColor: _mobileBg,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                ),
+                child: _saving
+                    ? const CircularProgressIndicator(strokeWidth: 2)
+                    : Text(
+                        '保存$_type ${_mobileMoney(_amountCents)}',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String get _accountName {
+    for (final account in controller.accounts) {
+      if (account.id == _accountId) return '${account.icon}  ${account.name}';
+    }
+    return controller.accounts.isEmpty
+        ? '暂无账户'
+        : '${controller.accounts.first.icon}  ${controller.accounts.first.name}';
+  }
+
+  int get _amountCents => ((double.tryParse(_amount) ?? 0) * 100).round();
+
+  void _inputKey(String key) {
+    setState(() {
+      if (key == '⌫') {
+        if (_amount.length <= 1) {
+          _amount = '0';
+        } else {
+          _amount = _amount.substring(0, _amount.length - 1);
+        }
+      } else if (key == '.') {
+        if (!_amount.contains('.')) _amount = '$_amount.';
+      } else if (_amount == '0') {
+        _amount = key;
+      } else if (_amount.length < 12) {
+        _amount += key;
+      }
+    });
+  }
+
+  Future<void> _pickAccount() async {
+    if (controller.accounts.isEmpty) return;
+    final id = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: _mobileSurface,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: controller.accounts
+              .map(
+                (account) => ListTile(
+                  leading: Text(
+                    account.icon,
+                    style: const TextStyle(fontSize: 24),
+                  ),
+                  title: Text(account.name),
+                  subtitle: Text(
+                    _mobileMoney(account.balanceCents),
+                    style: const TextStyle(color: _mobileMuted),
+                  ),
+                  trailing: account.id == _accountId
+                      ? const Icon(Icons.check_rounded, color: _mobileBrand)
+                      : null,
+                  onTap: () => Navigator.pop(context, account.id),
+                ),
+              )
+              .toList(),
+        ),
+      ),
+    );
+    if (id != null) setState(() => _accountId = id);
+  }
+
+  Future<void> _save() async {
+    final amount = double.tryParse(_amount) ?? 0;
+    if (amount <= 0 || _category == null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请输入金额并选择分类')));
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await controller.addEntry(
+        amount: amount,
+        title: _note.text.trim().isEmpty ? _category! : _note.text.trim(),
+        category: _category!,
+        type: _type,
+        accountId: _accountId,
+      );
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('已保存，账本已同步')));
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$error')));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+}
+
+class _MobilePage extends StatelessWidget {
+  const _MobilePage({
+    required this.controller,
+    required this.title,
+    required this.child,
+    this.trailing,
+  });
+
+  final LedgerController controller;
+  final String title;
+  final Widget child;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _mobileBg,
+      appBar: AppBar(
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+        actions: [
+          if (controller.loading)
+            const Padding(
+              padding: EdgeInsets.only(right: 12),
+              child: Center(
+                child: SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            ),
+          if (trailing != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 14),
+              child: trailing!,
+            ),
+        ],
+      ),
+      body: child,
+    );
+  }
+}
+
+class _MonthlyCard extends StatelessWidget {
+  const _MonthlyCard({required this.page});
+
+  final TransactionPage page;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(26),
+        gradient: const LinearGradient(
+          colors: [Color(0xff2f293e), Color(0xff4d3e61)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        border: Border.all(color: const Color(0x33ffffff)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                '本月结余',
+                style: TextStyle(color: _mobileMuted, fontSize: 14),
+              ),
+              Text(
+                DateFormat('yyyy.MM').format(DateTime.now()),
+                style: const TextStyle(color: _mobileMuted, fontSize: 13),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _mobileMoney(page.balanceCents),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 34,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(
+                child: _SummaryValue(
+                  label: '收入',
+                  amount: page.incomeCents,
+                  color: _mobileIncome,
+                ),
+              ),
+              Expanded(
+                child: _SummaryValue(
+                  label: '支出',
+                  amount: page.expenseCents,
+                  color: _mobileExpense,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BillSummary extends StatelessWidget {
+  const _BillSummary({required this.page});
+
+  final TransactionPage page;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _MetricCard(
+            label: '收入',
+            value: _mobileMoney(page.incomeCents),
+            color: _mobileIncome,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _MetricCard(
+            label: '支出',
+            value: _mobileMoney(page.expenseCents),
+            color: _mobileExpense,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _MetricCard(
+            label: '笔数',
+            value: '${page.total}',
+            color: _mobilePurple,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TransactionTile extends StatelessWidget {
+  const _TransactionTile({required this.item, this.dense = false});
+
+  final TransactionItem item;
+  final bool dense;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = item.category == '餐饮'
+        ? '🍜'
+        : item.isIncome
+        ? '💼'
+        : '🧾';
+    final color = item.isIncome ? _mobileIncome : _mobileExpense;
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 14, vertical: dense ? 12 : 14),
+      decoration: BoxDecoration(
+        color: _mobileSurface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _mobileLine),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: color.withAlpha(24),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Text(icon, style: const TextStyle(fontSize: 21)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${item.category ?? '未分类'} · ${_mobileDate(item.occurredAt)}',
+                  style: const TextStyle(color: _mobileMuted, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '${item.isIncome ? '+' : '-'}${_mobileMoney(item.amountCents)}',
+            style: TextStyle(color: color, fontWeight: FontWeight.w800),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CategoryChart extends StatelessWidget {
+  const _CategoryChart({required this.buckets, required this.maxAmount});
+
+  final List<AnalysisBucket> buckets;
+  final int maxAmount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: _mobileBoxDecoration(),
+      child: Column(
+        children: buckets.take(6).map((bucket) {
+          final ratio = bucket.amountCents / maxAmount;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 62,
+                  child: Text(
+                    bucket.name,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: LinearProgressIndicator(
+                      minHeight: 9,
+                      value: ratio.clamp(0, 1),
+                      backgroundColor: const Color(0x18ffffff),
+                      valueColor: const AlwaysStoppedAnimation(_mobilePurple),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  _mobileMoney(bucket.amountCents),
+                  style: const TextStyle(color: _mobileMuted, fontSize: 12),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+}
+
+class _TrendChart extends StatelessWidget {
+  const _TrendChart({required this.points});
+
+  final List<AnalysisTrendPoint> points;
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = points.length > 12
+        ? points.sublist(points.length - 12)
+        : points;
+    final maxValue = visible.fold<int>(1, (max, item) {
+      final value = item.expenseCents > item.incomeCents
+          ? item.expenseCents
+          : item.incomeCents;
+      return value > max ? value : max;
+    });
+    return Container(
+      height: 190,
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 12),
+      decoration: _mobileBoxDecoration(),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: visible.map((item) {
+          final expense = item.expenseCents / maxValue;
+          final income = item.incomeCents / maxValue;
+          return Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _ChartBar(value: expense, color: _mobileExpense),
+                        const SizedBox(width: 2),
+                        _ChartBar(value: income, color: _mobileIncome),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    item.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.clip,
+                    style: const TextStyle(color: _mobileMuted, fontSize: 9),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+}
+
+class _ChartBar extends StatelessWidget {
+  const _ChartBar({required this.value, required this.color});
+
+  final double value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Flexible(
+    child: FractionallySizedBox(
+      heightFactor: value.clamp(.02, 1),
+      child: Container(
+        width: 8,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(5)),
+        ),
+      ),
+    ),
+  );
+}
+
+class _ProfileHeader extends StatelessWidget {
+  const _ProfileHeader({required this.user});
+
+  final SessionUser? user;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = user?.displayName ?? 'Neo Ledger 用户';
+    return Row(
+      children: [
+        CircleAvatar(
+          radius: 28,
+          backgroundColor: _mobileBrand.withAlpha(40),
+          child: Text(
+            name.isEmpty ? '?' : name.substring(0, 1),
+            style: const TextStyle(
+              color: _mobileBrand,
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                name,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 19,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                user?.username ?? '本地演示账号',
+                style: const TextStyle(color: _mobileMuted, fontSize: 13),
+              ),
+            ],
+          ),
+        ),
+        const Icon(Icons.chevron_right_rounded, color: _mobileMuted),
+      ],
+    );
+  }
+}
+
+class _NetWorthCard extends StatelessWidget {
+  const _NetWorthCard({
+    required this.accountTotal,
+    required this.assetTotal,
+    required this.ledgerName,
+  });
+
+  final int accountTotal;
+  final int assetTotal;
+  final String ledgerName;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: _mobileBoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xff24322b), Color(0xff20242e)],
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            ledgerName,
+            style: const TextStyle(color: _mobileMuted, fontSize: 13),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _mobileMoney(accountTotal + assetTotal),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 28,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: _SummaryValue(
+                  label: '账户余额',
+                  amount: accountTotal,
+                  color: _mobileBrand,
+                ),
+              ),
+              Expanded(
+                child: _SummaryValue(
+                  label: '数字资产',
+                  amount: assetTotal,
+                  color: _mobilePurple,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsRow extends StatelessWidget {
+  const _SettingsRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    this.onTap,
+  });
+
+  final String icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        decoration: _mobileBoxDecoration(),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 34,
+              child: Text(icon, style: const TextStyle(fontSize: 22)),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(color: _mobileMuted, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            if (onTap != null)
+              const Icon(Icons.chevron_right_rounded, color: _mobileMuted),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _QuickAction extends StatelessWidget {
+  const _QuickAction({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(18),
+    child: Container(
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      decoration: _mobileBoxDecoration(),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 24),
+          const SizedBox(height: 7),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _SummaryValue extends StatelessWidget {
+  const _SummaryValue({
+    required this.label,
+    required this.amount,
+    required this.color,
+  });
+
+  final String label;
+  final int amount;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(label, style: const TextStyle(color: _mobileMuted, fontSize: 12)),
+      const SizedBox(height: 4),
+      Text(
+        _mobileMoney(amount),
+        style: TextStyle(color: color, fontWeight: FontWeight.w800),
+      ),
+    ],
+  );
+}
+
+class _MetricCard extends StatelessWidget {
+  const _MetricCard({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: _mobileBoxDecoration(),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(color: _mobileMuted, fontSize: 12)),
+        const SizedBox(height: 7),
+        Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: color,
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _InsightCard extends StatelessWidget {
+  const _InsightCard({
+    required this.title,
+    required this.value,
+    required this.caption,
+    required this.icon,
+  });
+
+  final String title;
+  final String value;
+  final String caption;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(18),
+    decoration: _mobileBoxDecoration(
+      gradient: const LinearGradient(
+        colors: [Color(0xff293746), Color(0xff2c2741)],
+      ),
+    ),
+    child: Row(
+      children: [
+        Container(
+          width: 44,
+          height: 44,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: _mobileBrand.withAlpha(30),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icon, color: _mobileBrand),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(color: _mobileMuted, fontSize: 13),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                value,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 25,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                caption,
+                style: const TextStyle(color: _mobileMuted, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.title, this.action});
+
+  final String title;
+  final String? action;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    children: [
+      Text(
+        title,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 17,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      if (action != null)
+        Text(
+          action!,
+          style: const TextStyle(color: _mobileMuted, fontSize: 12),
+        ),
+    ],
+  );
+}
+
+class _MobileBrandMark extends StatelessWidget {
+  const _MobileBrandMark();
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Container(
+        width: 44,
+        height: 44,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: _mobileBrand,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: const Text(
+          '¥',
+          style: TextStyle(
+            color: _mobileBg,
+            fontSize: 27,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+      const SizedBox(width: 12),
+      const Text(
+        'NEO LEDGER',
+        style: TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 3,
+        ),
+      ),
+    ],
+  );
+}
+
+class _MobileTextField extends StatelessWidget {
+  const _MobileTextField({
+    required this.controller,
+    required this.label,
+    required this.icon,
+    this.obscureText = false,
+    this.suffix,
+    this.textInputAction,
+    this.onSubmitted,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final IconData icon;
+  final bool obscureText;
+  final Widget? suffix;
+  final TextInputAction? textInputAction;
+  final ValueChanged<String>? onSubmitted;
+
+  @override
+  Widget build(BuildContext context) => TextField(
+    controller: controller,
+    obscureText: obscureText,
+    textInputAction: textInputAction,
+    onSubmitted: onSubmitted,
+    style: const TextStyle(color: Colors.white),
+    decoration: InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon, color: _mobileMuted),
+      suffixIcon: suffix,
+    ),
+  );
+}
+
+class _TypeSwitch extends StatelessWidget {
+  const _TypeSwitch({required this.value, required this.onChanged});
+
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: _mobileSurface,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: ['支出', '收入']
+            .map(
+              (item) => Expanded(
+                child: GestureDetector(
+                  onTap: () => onChanged(item),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: value == item
+                          ? (item == '支出' ? _mobileExpense : _mobileIncome)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      item,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: value == item ? _mobileBg : _mobileMuted,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            )
+            .toList(),
+      ),
+    );
+  }
+}
+
+class _AmountDisplay extends StatelessWidget {
+  const _AmountDisplay({required this.amount, required this.type});
+
+  final String amount;
+  final String type;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      Text(type, style: const TextStyle(color: _mobileMuted, fontSize: 13)),
+      const SizedBox(height: 4),
+      Text(
+        '¥$amount',
+        style: TextStyle(
+          color: type == '支出' ? _mobileExpense : _mobileIncome,
+          fontSize: 42,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    ],
+  );
+}
+
+class _Keypad extends StatelessWidget {
+  const _Keypad({required this.onKey});
+
+  final ValueChanged<String> onKey;
+
+  @override
+  Widget build(BuildContext context) {
+    const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'];
+    return GridView.count(
+      crossAxisCount: 4,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      mainAxisSpacing: 8,
+      crossAxisSpacing: 8,
+      childAspectRatio: 2.05,
+      children: keys
+          .map(
+            (key) => InkWell(
+              onTap: () => onKey(key),
+              borderRadius: BorderRadius.circular(14),
+              child: Container(
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: _mobileSurface,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: _mobileLine),
+                ),
+                child: Text(
+                  key,
+                  style: TextStyle(
+                    color: key == '⌫' ? _mobileMuted : Colors.white,
+                    fontSize: 21,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          )
+          .toList(),
+    );
+  }
+}
+
+class _FormLabel extends StatelessWidget {
+  const _FormLabel({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Text(
+    label,
+    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+  );
+}
+
+class _MobileCategoryChoice {
+  const _MobileCategoryChoice({
+    required this.name,
+    required this.icon,
+    required this.color,
+  });
+
+  final String name;
+  final String icon;
+  final Color color;
+}
+
+class _CategoryChoice extends StatelessWidget {
+  const _CategoryChoice({
+    required this.choice,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _MobileCategoryChoice choice;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(16),
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 160),
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: selected ? choice.color.withAlpha(38) : _mobileSurface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: selected ? choice.color : _mobileLine,
+          width: selected ? 1.5 : 1,
+        ),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(choice.icon, style: const TextStyle(fontSize: 20)),
+          const SizedBox(height: 4),
+          Text(
+            choice.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: selected ? Colors.white : _mobileMuted,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _MobileSelectRow extends StatelessWidget {
+  const _MobileSelectRow({
+    required this.icon,
+    required this.title,
+    required this.value,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String value;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(14),
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
+      decoration: _mobileBoxDecoration(),
+      child: Row(
+        children: [
+          Icon(icon, color: _mobileMuted),
+          const SizedBox(width: 12),
+          Text(title, style: const TextStyle(color: _mobileMuted)),
+          const Spacer(),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(width: 4),
+          const Icon(Icons.chevron_right_rounded, color: _mobileMuted),
+        ],
+      ),
+    ),
+  );
+}
+
+class _SyncButton extends StatelessWidget {
+  const _SyncButton({required this.controller});
+
+  final LedgerController controller;
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    onPressed: controller.loading ? null : controller.refresh,
+    icon: const Icon(Icons.sync_rounded, color: _mobileMuted),
+  );
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(28),
+    decoration: _mobileBoxDecoration(),
+    child: Column(
+      children: [
+        Icon(icon, size: 38, color: _mobileMuted),
+        const SizedBox(height: 12),
+        Text(
+          title,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          message,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: _mobileMuted,
+            fontSize: 12,
+            height: 1.5,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _InlineError extends StatelessWidget {
+  const _InlineError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: const Color(0x22ff8a7a),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Text(
+      message,
+      style: const TextStyle(color: _mobileExpense, fontSize: 12, height: 1.4),
+    ),
+  );
+}
+
+class _MobileLoadingView extends StatelessWidget {
+  const _MobileLoadingView();
+
+  @override
+  Widget build(BuildContext context) => const Scaffold(
+    backgroundColor: _mobileBg,
+    body: Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircularProgressIndicator(color: _mobileBrand),
+          SizedBox(height: 18),
+          Text('正在同步你的 Neo Ledger…', style: TextStyle(color: _mobileMuted)),
+        ],
+      ),
+    ),
+  );
+}
+
+BoxDecoration _mobileBoxDecoration({Gradient? gradient}) => BoxDecoration(
+  color: gradient == null ? _mobileSurface : null,
+  gradient: gradient,
+  borderRadius: BorderRadius.circular(18),
+  border: Border.all(color: _mobileLine),
+);
+
+String _mobileMoney(int cents) => NumberFormat.currency(
+  locale: 'zh_CN',
+  symbol: '¥',
+  decimalDigits: 2,
+).format(cents / 100);
+
+String _mobileDate(String value) {
+  final parsed = DateTime.tryParse(value);
+  return parsed == null
+      ? value
+      : DateFormat('MM-dd HH:mm').format(parsed.toLocal());
+}
+
+String _greeting() {
+  final hour = DateTime.now().hour;
+  if (hour < 6) return '夜深了';
+  if (hour < 12) return '早上好';
+  if (hour < 18) return '下午好';
+  return '晚上好';
+}
+
+Color _mobileHex(String value) {
+  final normalized = value.replaceFirst('#', '').trim();
+  final hex = normalized.length == 6 ? 'FF$normalized' : normalized;
+  final parsed = int.tryParse(hex, radix: 16);
+  return parsed == null ? _mobilePurple : Color(parsed);
+}
+
+List<AnalysisBucket> _fallbackBuckets(List<TransactionItem> items) {
+  final totals = <String, int>{};
+  for (final item in items.where((item) => !item.isIncome)) {
+    final name = item.category?.trim().isNotEmpty == true
+        ? item.category!
+        : '未分类';
+    totals[name] = (totals[name] ?? 0) + item.amountCents;
+  }
+  return totals.entries
+      .map((entry) => AnalysisBucket(name: entry.key, amountCents: entry.value))
+      .toList()
+    ..sort((a, b) => b.amountCents.compareTo(a.amountCents));
+}
+
+void _showComingSoon(BuildContext context, String title) {
+  ScaffoldMessenger.of(context)
+      .showSnackBar(SnackBar(content: Text('$title正在接入原生移动端，完整管理仍可在桌面端使用。')));
+}

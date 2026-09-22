@@ -19,12 +19,13 @@ import 'update_service.dart';
 import 'windows_platform.dart';
 import 'windows_update_service.dart';
 import 'unified_web_shell.dart';
+import 'mobile_ledger_shell.dart';
 
 const _brand = Color(0xffa5ff4f);
 const _surface = Color(0xff101116);
 const _surfaceAlt = Color(0xff1b1b23);
 const _muted = Color(0xffa4a8a1);
-const _nativeVersion = '1.3.3';
+const _nativeVersion = '1.4.0';
 const _queueKey = 'neo_ledger_offline_queue_v1';
 const _coreSnapshotKey = 'neo_ledger_core_snapshot_v1';
 const _shortcutChannel = MethodChannel('online.eyeme.neo_ledger/shortcuts');
@@ -60,11 +61,15 @@ class _NeoLedgerAppState extends State<NeoLedgerApp> {
   @override
   void initState() {
     super.initState();
-    // The native package is now a thin shell around the single hosted UI.
-    // Do not start the legacy Flutter data client in parallel: it has a
-    // separate cookie store and could display or sync a different account.
     controller = LedgerController();
+    if (_isMobileNative) {
+      unawaited(controller.initialize());
+    }
   }
+
+  bool get _isMobileNative =>
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
 
   @override
   void dispose() {
@@ -120,10 +125,15 @@ class _NeoLedgerAppState extends State<NeoLedgerApp> {
             ),
             dividerTheme: const DividerThemeData(color: Color(0x1fffffff)),
           ),
-          home: UnifiedWebShell(
-            controller: controller,
-            nativeVersion: _nativeVersion,
-          ),
+          home: _isMobileNative
+              ? MobileLedgerShell(
+                  controller: controller,
+                  nativeVersion: _nativeVersion,
+                )
+              : UnifiedWebShell(
+                  controller: controller,
+                  nativeVersion: _nativeVersion,
+                ),
         );
       },
     );
@@ -210,6 +220,15 @@ class LedgerController extends ChangeNotifier {
     if (!api.hasSession) return;
     await _loadCoreSnapshot();
     try {
+      final sessionUser = await api.fetchSessionUser();
+      if (sessionUser == null) {
+        await api.logout();
+        user = null;
+        notifyListeners();
+        return;
+      }
+      user = sessionUser;
+      notifyListeners();
       await refresh();
     } catch (_) {
       error = '暂时无法连接服务器，已显示最近一次缓存数据';
@@ -1093,10 +1112,18 @@ class LedgerController extends ChangeNotifier {
     required String title,
     required String category,
     required String type,
+    int? accountId,
     String? occurredAt,
   }) async {
     final ledger = selectedLedger;
-    final account = accounts.isEmpty ? null : accounts.first;
+    final account = accounts.isEmpty
+        ? null
+        : accountId == null
+        ? accounts.first
+        : accounts.firstWhere(
+            (candidate) => candidate.id == accountId,
+            orElse: () => accounts.first,
+          );
     if (ledger == null || account == null) {
       throw const ApiException('没有可用的账本账户');
     }
