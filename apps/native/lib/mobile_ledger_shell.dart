@@ -1085,6 +1085,9 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
   int? _toAccountId;
   String? _category;
   String _mood = '刚需';
+  int? _splitMemberId;
+  String _splitMode = '按比例平摊';
+  double _mySharePercent = 50;
   DateTime _occurredAt = DateTime.now();
   bool _continuous = false;
   bool _saving = false;
@@ -1280,6 +1283,43 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
                 onSelectionChanged: (value) =>
                     setState(() => _mood = value.first),
               ),
+              const SizedBox(height: 8),
+              _MobileSelectRow(
+                icon: Icons.group_outlined,
+                title: '参与人 / 分账',
+                value: _splitMemberName,
+                onTap: _pickSplitMember,
+              ),
+              if (_splitMemberId != null) ...[
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: _splitMode,
+                  decoration: const InputDecoration(labelText: '分账方式'),
+                  items: const [
+                    DropdownMenuItem(value: '全额由我支付', child: Text('我先垫付全部')),
+                    DropdownMenuItem(value: '全额由对方支付', child: Text('对方先垫付全部')),
+                    DropdownMenuItem(value: '按比例平摊', child: Text('按比例平摊')),
+                  ],
+                  onChanged: (value) =>
+                      setState(() => _splitMode = value ?? '按比例平摊'),
+                ),
+                if (_splitMode == '按比例平摊') ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    '我承担 ${_mySharePercent.round()}%',
+                    style: const TextStyle(color: _mobileMuted),
+                  ),
+                  Slider(
+                    value: _mySharePercent,
+                    min: 0,
+                    max: 100,
+                    divisions: 20,
+                    label: '${_mySharePercent.round()}%',
+                    onChanged: (value) =>
+                        setState(() => _mySharePercent = value),
+                  ),
+                ],
+              ],
             ],
             const SizedBox(height: 8),
             TextField(
@@ -1350,6 +1390,14 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
     return '请选择转入账户';
   }
 
+  String get _splitMemberName {
+    if (_splitMemberId == null) return '不分账';
+    for (final member in controller.members) {
+      if (member.id == _splitMemberId) return '${member.icon}  ${member.name}';
+    }
+    return '不分账';
+  }
+
   int get _amountCents => AmountExpression.evaluateCents(_amount) ?? 0;
 
   void _inputKey(String key) {
@@ -1390,7 +1438,7 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
                   ),
                   title: Text(account.name),
                   subtitle: Text(
-                    _mobileMoney(account.balanceCents),
+                    '${_mobileMoney(account.balanceCents)} · ${account.currency} · ${account.type}',
                     style: const TextStyle(color: _mobileMuted),
                   ),
                   trailing:
@@ -1498,6 +1546,52 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
     });
   }
 
+  Future<void> _pickSplitMember() async {
+    final partners = controller.members
+        .where((member) => !member.isMe)
+        .toList();
+    final selected = await showModalBottomSheet<int?>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.person_off_outlined),
+              title: const Text('不分账'),
+              onTap: () => Navigator.pop(context, -1),
+            ),
+            for (final member in partners)
+              ListTile(
+                leading: Text(
+                  member.icon,
+                  style: const TextStyle(fontSize: 22),
+                ),
+                title: Text(member.name),
+                trailing: member.id == _splitMemberId
+                    ? const Icon(Icons.check_rounded, color: _mobileBrand)
+                    : null,
+                onTap: () => Navigator.pop(context, member.id),
+              ),
+            if (partners.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(20),
+                child: Text(
+                  '请先在分账管理中添加参与人',
+                  style: TextStyle(color: _mobileMuted),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected != null && mounted) {
+      setState(() => _splitMemberId = selected == -1 ? null : selected);
+    }
+  }
+
   Future<void> _save() async {
     final cents = AmountExpression.evaluateCents(_amount);
     final amount = cents == null ? 0.0 : cents / 100;
@@ -1528,6 +1622,11 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
           accountId: _accountId,
           occurredAt: _occurredAt.toUtc().toIso8601String(),
           mood: _type == '支出' ? _mood : null,
+          splitWithMemberId: _type == '支出' ? _splitMemberId : null,
+          splitMode: _type == '支出' && _splitMemberId != null
+              ? _splitMode
+              : null,
+          mySharePercent: _splitMode == '按比例平摊' ? _mySharePercent : 100,
         );
       }
       if (!mounted) return;
