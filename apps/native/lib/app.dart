@@ -8758,7 +8758,7 @@ class _SecuritySheetState extends State<SecuritySheet> {
             Text('隐私与安全', style: Theme.of(context).textTheme.headlineSmall),
             const SizedBox(height: 8),
             Text(
-              '这里配置的是服务端账本隐私锁和显示主题。当前原生端不会把“已开启”误认为本地启动拦截；本地生物识别/屏幕锁仍需单独接入系统能力。',
+              '这里配置服务端账本隐私锁和显示主题。移动端开启后，启动和从后台回到前台都会要求输入 PIN；生物识别仍需按平台单独接入。',
               style: TextStyle(color: Colors.grey.shade500, height: 1.4),
             ),
             const SizedBox(height: 16),

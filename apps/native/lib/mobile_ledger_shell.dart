@@ -36,18 +36,63 @@ class MobileLedgerShell extends StatefulWidget {
   State<MobileLedgerShell> createState() => _MobileLedgerShellState();
 }
 
-class _MobileLedgerShellState extends State<MobileLedgerShell> {
+class _MobileLedgerShellState extends State<MobileLedgerShell>
+    with WidgetsBindingObserver {
   int _tab = 0;
+  bool _locked = false;
+  bool _lockInitialized = false;
 
   LedgerController get controller => widget.controller;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed ||
+        !controller.authenticated ||
+        !controller.preferences.lockEnabled ||
+        _locked) {
+      return;
+    }
+    if (mounted) setState(() => _locked = true);
+  }
+
+  @override
   Widget build(BuildContext context) {
     if (!controller.authenticated) {
+      _lockInitialized = false;
+      _locked = false;
       if (controller.loading || controller.api.hasSession) {
         return const _MobileLoadingView();
       }
       return MobileLoginPage(controller: controller);
+    }
+
+    if (!_lockInitialized) {
+      _lockInitialized = true;
+      if (controller.preferences.lockEnabled) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && controller.authenticated) {
+            setState(() => _locked = true);
+          }
+        });
+      }
+    }
+    if (_locked) {
+      return MobileAppLockPage(
+        controller: controller,
+        onUnlocked: () => setState(() => _locked = false),
+      );
     }
 
     final pages = [
@@ -115,6 +160,129 @@ class _MobileLedgerShellState extends State<MobileLedgerShell> {
       ),
     );
   }
+}
+
+class MobileAppLockPage extends StatefulWidget {
+  const MobileAppLockPage({
+    super.key,
+    required this.controller,
+    required this.onUnlocked,
+  });
+
+  final LedgerController controller;
+  final VoidCallback onUnlocked;
+
+  @override
+  State<MobileAppLockPage> createState() => _MobileAppLockPageState();
+}
+
+class _MobileAppLockPageState extends State<MobileAppLockPage> {
+  final _pin = TextEditingController();
+  bool _verifying = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _pin.dispose();
+    super.dispose();
+  }
+
+  Future<void> _unlock() async {
+    if (_pin.text.trim().isEmpty || _verifying) return;
+    setState(() {
+      _verifying = true;
+      _error = null;
+    });
+    try {
+      final valid = await widget.controller.verifyPin(_pin.text);
+      if (!mounted) return;
+      if (valid) {
+        widget.onUnlocked();
+      } else {
+        setState(() {
+          _pin.clear();
+          _error = 'PIN 不正确，请重试';
+        });
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = '暂时无法验证 PIN：$error');
+    } finally {
+      if (mounted) setState(() => _verifying = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: _mobileBg,
+    body: SafeArea(
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _mobileBrand.withAlpha(30),
+                ),
+                child: const Icon(
+                  Icons.lock_outline_rounded,
+                  color: _mobileBrand,
+                  size: 36,
+                ),
+              ),
+              const SizedBox(height: 18),
+              const Text(
+                'Neo Ledger 已锁定',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                '输入账本隐私锁 PIN 后继续使用',
+                style: TextStyle(color: _mobileMuted),
+              ),
+              const SizedBox(height: 24),
+              TextField(
+                controller: _pin,
+                autofocus: true,
+                obscureText: true,
+                keyboardType: TextInputType.number,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _unlock(),
+                decoration: InputDecoration(
+                  labelText: 'PIN',
+                  errorText: _error,
+                  prefixIcon: const Icon(Icons.password_rounded),
+                ),
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: _verifying ? null : _unlock,
+                  child: _verifying
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('解锁'),
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: widget.controller.logout,
+                child: const Text('退出当前账号'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 class MobileLoginPage extends StatefulWidget {
