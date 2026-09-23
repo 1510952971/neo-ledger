@@ -579,13 +579,25 @@ iOS 构建：受 Xcode/CocoaPods/工程配置阻塞，见第 14 节。
 
 阶段：阶段 0（移动端功能分层试点，进行中）
 版本：Native `1.4.0+21`
-提交：待本批提交
+提交：`f657d3d`
 完成项：建立 `features/accounts` 账户功能边界；转账历史组件和编辑器从主移动壳层拆出，改为通过明确回调连接数据操作；新增 Widget 测试覆盖隐藏金额和系统生成转账保护。
 未完成项：其他移动页面继续按 feature/core/data/domain/platform 分层；统一路由、API/会话/离线队列拆分、页面状态组件与设备截图基线仍未完成。
 验证：Flutter analyze 无问题；Flutter 测试 46 项通过；Android Debug APK 构建通过。
 跨端同步结果：此项只拆原生呈现边界，所有读写仍经共享 `/api/transfers` 和账本数据库，不改变 Web、Windows、macOS 数据。
 已知外部验收：架构拆分其余部分可在代码中继续完成；多尺寸真机截图基线需 Android/iPhone/平板设备。
 回滚方式：回退本批移动端功能模块抽取，恢复原有壳层内组件。
+验收人：待用户真机验收
+验收日期：2026-09-24
+
+阶段：阶段 0（离线写入队列数据层）
+版本：Native `1.4.0+21`
+提交：`132ab90`
+完成项：将离线记账队列读写与 JSON 解码从 `LedgerController` 抽出到 `mobile/data`；沿用 `neo_ledger_offline_queue_v1`，保证升级后旧队列继续读取；单条损坏记录不会阻断其他待同步记录。新增队列字段往返、损坏记录隔离及既有键兼容测试。
+未完成项：API/会话、离线快照和同步状态仍需继续拆分；统一 `idempotencyKey`、提交状态与错误映射尚未完成。
+验证：Flutter analyze 无问题；Flutter 测试 49 项通过；Android Debug APK 构建通过。
+跨端同步结果：仅提取本地持久化实现，队列补发仍调用现有共享账单 API；Web、Windows、macOS 服务端数据与业务口径不变。
+已知外部验收：Android/iOS 真机断网重启与恢复联网场景仍需设备验证。
+回滚方式：回退 `132ab90`；既有 SharedPreferences 键及 JSON 格式未变，回退不会清除本地待同步数据。
 验收人：待用户真机验收
 验收日期：2026-09-24
 
