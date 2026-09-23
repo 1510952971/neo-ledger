@@ -3658,6 +3658,26 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final recentByAccount = <int, TransactionItem>{};
+    for (final item in controller.transactions.items) {
+      recentByAccount.putIfAbsent(item.accountId, () => item);
+    }
+    final pendingByAccount = <int, int>{};
+    for (final item in controller.queue) {
+      pendingByAccount.update(
+        item.accountId,
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
+    }
+    for (final item in controller.pendingTransactions.items) {
+      pendingByAccount.update(
+        item.accountId,
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
+    }
+    final hideAmounts = controller.preferences.hideAmounts;
     final assetGroups = <String, List<Account>>{};
     for (final account in controller.accounts.where(
       (item) => item.type == '资产',
@@ -3702,6 +3722,9 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
                 accounts: const [],
                 onEdit: _editAccount,
                 onDelete: _deleteAccount,
+                recentByAccount: recentByAccount,
+                pendingByAccount: pendingByAccount,
+                hideAmounts: hideAmounts,
               )
             else
               for (final group in assetGroups.entries) ...[
@@ -3710,6 +3733,9 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
                   accounts: group.value,
                   onEdit: _editAccount,
                   onDelete: _deleteAccount,
+                  recentByAccount: recentByAccount,
+                  pendingByAccount: pendingByAccount,
+                  hideAmounts: hideAmounts,
                 ),
                 const SizedBox(height: 18),
               ],
@@ -3718,6 +3744,9 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
               accounts: liabilities,
               onEdit: _editAccount,
               onDelete: _deleteAccount,
+              recentByAccount: recentByAccount,
+              pendingByAccount: pendingByAccount,
+              hideAmounts: hideAmounts,
             ),
             if (controller.assets.isNotEmpty) ...[
               const SizedBox(height: 18),
@@ -3865,12 +3894,18 @@ class _AccountGroup extends StatelessWidget {
     required this.accounts,
     required this.onEdit,
     required this.onDelete,
+    required this.recentByAccount,
+    required this.pendingByAccount,
+    required this.hideAmounts,
   });
 
   final String title;
   final List<Account> accounts;
   final Future<void> Function([Account?]) onEdit;
   final Future<void> Function(Account) onDelete;
+  final Map<int, TransactionItem> recentByAccount;
+  final Map<int, int> pendingByAccount;
+  final bool hideAmounts;
 
   @override
   Widget build(BuildContext context) {
@@ -3907,8 +3942,13 @@ class _AccountGroup extends StatelessWidget {
               child: _SettingsRow(
                 icon: account.icon,
                 title: account.name,
-                subtitle:
-                    '${account.type} · ${account.currency} · ${_mobileMoney(account.balanceCents)}',
+                subtitle: [
+                  '${account.type} · ${account.currency} · ${hideAmounts ? '••••' : _mobileMoney(account.balanceCents)}',
+                  if (recentByAccount[account.id] case final recent?)
+                    '最近：${recent.title}',
+                  if ((pendingByAccount[account.id] ?? 0) > 0)
+                    '待同步/确认：${pendingByAccount[account.id]} 条',
+                ].join(' · '),
                 onTap: () => onEdit(account),
               ),
             ),
