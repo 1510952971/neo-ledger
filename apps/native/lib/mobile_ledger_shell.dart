@@ -332,7 +332,12 @@ class MobileHomePage extends StatelessWidget {
                     icon: Icons.flag_outlined,
                     label: '预算',
                     color: const Color(0xffffc76b),
-                    onTap: () => _showComingSoon(context, '预算管理'),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) =>
+                            MobileBudgetPage(controller: controller),
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -1207,7 +1212,13 @@ class MobileProfilePage extends StatelessWidget {
             subtitle: controller.preferences.lockEnabled
                 ? '已开启应用锁'
                 : '数据仅通过加密连接同步',
-            onTap: () => _showComingSoon(context, '隐私与安全'),
+            onTap: () => showModalBottomSheet<void>(
+              context: context,
+              isScrollControlled: true,
+              showDragHandle: true,
+              backgroundColor: _mobileSurface,
+              builder: (_) => SecuritySheet(controller: controller),
+            ),
           ),
           const SizedBox(height: 18),
           OutlinedButton.icon(
@@ -1287,6 +1298,300 @@ class MobileProfilePage extends StatelessWidget {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('上传头像失败：$error')));
       }
+    }
+  }
+}
+
+class MobileBudgetPage extends StatefulWidget {
+  const MobileBudgetPage({super.key, required this.controller});
+
+  final LedgerController controller;
+
+  @override
+  State<MobileBudgetPage> createState() => _MobileBudgetPageState();
+}
+
+class _MobileBudgetPageState extends State<MobileBudgetPage> {
+  LedgerController get controller => widget.controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final spent = <String, int>{
+      for (final bucket in controller.analysis?.categoryData ?? const [])
+        bucket.name: bucket.amountCents,
+    };
+    return Scaffold(
+      backgroundColor: _mobileBg,
+      appBar: AppBar(title: const Text('预算管理')),
+      floatingActionButton: FloatingActionButton.extended(
+        backgroundColor: _mobileBrand,
+        foregroundColor: _mobileBg,
+        onPressed: () => _editBudget(),
+        icon: const Icon(Icons.add_rounded),
+        label: const Text('新增预算'),
+      ),
+      body: RefreshIndicator(
+        onRefresh: controller.refresh,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 110),
+          children: [
+            _BudgetTotalCard(budgets: controller.budgets, spent: spent),
+            const SizedBox(height: 18),
+            if (controller.budgets.isEmpty)
+              const _EmptyState(
+                icon: Icons.track_changes_outlined,
+                title: '还没有分类预算',
+                message: '为餐饮、交通或其他分类设置本月额度。',
+              )
+            else
+              for (final budget in controller.budgets)
+                _BudgetRow(
+                  budget: budget,
+                  spentCents: spent[budget.category] ?? 0,
+                  onTap: () => _editBudget(budget),
+                ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _editBudget([CategoryBudget? existing]) async {
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (_) =>
+          _MobileBudgetEditor(controller: controller, existing: existing),
+    );
+    if (saved == true && mounted) setState(() {});
+  }
+}
+
+class _BudgetTotalCard extends StatelessWidget {
+  const _BudgetTotalCard({required this.budgets, required this.spent});
+
+  final List<CategoryBudget> budgets;
+  final Map<String, int> spent;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = budgets.fold<int>(0, (sum, item) => sum + item.amountCents);
+    final used = budgets.fold<int>(
+      0,
+      (sum, item) => sum + (spent[item.category] ?? 0),
+    );
+    final ratio = total == 0 ? 0.0 : used / total;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: _mobileBoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xff2d3c2b), Color(0xff202a2b)],
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('本月预算总览', style: TextStyle(color: _mobileMuted)),
+          const SizedBox(height: 8),
+          Text(
+            '${_mobileMoney(used)} / ${_mobileMoney(total)}',
+            style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 12),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: LinearProgressIndicator(
+              minHeight: 9,
+              value: ratio.clamp(0, 1),
+              backgroundColor: const Color(0x24ffffff),
+              valueColor: AlwaysStoppedAnimation(
+                ratio >= 1 ? _mobileExpense : _mobileBrand,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            ratio >= 1 ? '已超出本月预算' : '还可使用 ${_mobileMoney(total - used)}',
+            style: TextStyle(color: ratio >= 1 ? _mobileExpense : _mobileMuted),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BudgetRow extends StatelessWidget {
+  const _BudgetRow({
+    required this.budget,
+    required this.spentCents,
+    required this.onTap,
+  });
+
+  final CategoryBudget budget;
+  final int spentCents;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ratio = budget.amountCents == 0
+        ? 0.0
+        : spentCents / budget.amountCents;
+    final danger = ratio >= 1;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(16),
+        decoration: _mobileBoxDecoration(),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    budget.category,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                Text(
+                  '${_mobileMoney(spentCents)} / ${_mobileMoney(budget.amountCents)}',
+                  style: TextStyle(
+                    color: danger ? _mobileExpense : _mobileMuted,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                minHeight: 8,
+                value: ratio.clamp(0, 1),
+                backgroundColor: const Color(0x24ffffff),
+                valueColor: AlwaysStoppedAnimation(
+                  danger ? _mobileExpense : _mobileBrand,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MobileBudgetEditor extends StatefulWidget {
+  const _MobileBudgetEditor({required this.controller, required this.existing});
+
+  final LedgerController controller;
+  final CategoryBudget? existing;
+
+  @override
+  State<_MobileBudgetEditor> createState() => _MobileBudgetEditorState();
+}
+
+class _MobileBudgetEditorState extends State<_MobileBudgetEditor> {
+  late String _category;
+  late final TextEditingController _amount;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final categories = widget.controller.expenseCategories;
+    _category =
+        widget.existing?.category ??
+        (categories.isNotEmpty ? categories.first.name : '餐饮');
+    _amount = TextEditingController(
+      text: widget.existing == null
+          ? ''
+          : (widget.existing!.amountCents / 100).toStringAsFixed(2),
+    );
+  }
+
+  @override
+  void dispose() {
+    _amount.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: Padding(
+      padding: EdgeInsets.fromLTRB(
+        18,
+        4,
+        18,
+        MediaQuery.viewInsetsOf(context).bottom + 22,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            widget.existing == null ? '新增分类预算' : '编辑分类预算',
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 16),
+          DropdownButtonFormField<String>(
+            initialValue: _category,
+            decoration: const InputDecoration(labelText: '分类'),
+            items: [
+              for (final category in widget.controller.expenseCategories)
+                DropdownMenuItem(
+                  value: category.name,
+                  child: Text(category.name),
+                ),
+              if (widget.controller.expenseCategories.isEmpty)
+                const DropdownMenuItem(value: '餐饮', child: Text('餐饮')),
+            ],
+            onChanged: _saving
+                ? null
+                : (value) => setState(() => _category = value ?? _category),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _amount,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(labelText: '每月额度'),
+          ),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: _saving ? null : _save,
+            child: _saving
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('保存预算'),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Future<void> _save() async {
+    final amount = double.tryParse(_amount.text.trim());
+    if (amount == null || amount <= 0) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请输入大于 0 的预算金额')));
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await widget.controller.saveBudget(category: _category, amount: amount);
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('保存预算失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 }
