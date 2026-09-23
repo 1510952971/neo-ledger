@@ -581,6 +581,10 @@ class _MobileHomePageState extends State<MobileHomePage> {
                 hideAmounts: _hideAmounts,
               ),
             ],
+            if (page.items.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              _HomeWeeklyTrendCard(page: page, hideAmounts: _hideAmounts),
+            ],
             const SizedBox(height: 20),
             _SectionHeader(title: '快捷操作', action: '全部功能'),
             const SizedBox(height: 12),
@@ -827,6 +831,114 @@ class _HomePendingCard extends StatelessWidget {
             style: const TextStyle(
               color: _mobilePurple,
               fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HomeWeeklyTrendCard extends StatelessWidget {
+  const _HomeWeeklyTrendCard({required this.page, required this.hideAmounts});
+
+  final TransactionPage page;
+  final bool hideAmounts;
+
+  @override
+  Widget build(BuildContext context) {
+    final today = DateTime.now();
+    final daily = <DateTime, int>{};
+    for (var offset = 6; offset >= 0; offset--) {
+      final day = DateTime(
+        today.year,
+        today.month,
+        today.day,
+      ).subtract(Duration(days: offset));
+      daily[day] = 0;
+    }
+    for (final item in page.items) {
+      if (item.isIncome) continue;
+      final occurred = DateTime.tryParse(item.occurredAt)?.toLocal();
+      if (occurred == null) continue;
+      final day = DateTime(occurred.year, occurred.month, occurred.day);
+      if (daily.containsKey(day)) daily[day] = daily[day]! + item.amountCents;
+    }
+    final maximum = daily.values.fold<int>(
+      1,
+      (max, value) => value > max ? value : max,
+    );
+    final total = daily.values.fold<int>(0, (sum, value) => sum + value);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 15, 16, 13),
+      decoration: _mobileBoxDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.show_chart_rounded, color: _mobilePurple),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  '近 7 日支出',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+              Text(
+                hideAmounts ? '••••' : _mobileMoney(total),
+                style: const TextStyle(color: _mobileMuted, fontSize: 12),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 74,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                for (final entry in daily.entries)
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 3),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          Expanded(
+                            child: Align(
+                              alignment: Alignment.bottomCenter,
+                              child: FractionallySizedBox(
+                                heightFactor: (entry.value / maximum).clamp(
+                                  .04,
+                                  1,
+                                ),
+                                widthFactor: .7,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: entry.value == 0
+                                        ? const Color(0x24ffffff)
+                                        : _mobilePurple,
+                                    borderRadius: const BorderRadius.vertical(
+                                      top: Radius.circular(6),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            DateFormat('E', 'zh_CN').format(entry.key),
+                            style: const TextStyle(
+                              color: _mobileMuted,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ],
