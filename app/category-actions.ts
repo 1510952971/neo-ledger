@@ -20,6 +20,7 @@ export type SaveCategoryInput = {
   name: string;
   icon: string;
   color: string;
+  parentId?: number | null;
 };
 
 export type CategoryIdentity = {
@@ -29,6 +30,7 @@ export type CategoryIdentity = {
   name: string;
   icon: string;
   color: string;
+  parentId?: number | null;
 };
 
 function endpoint(kind: CategoryActionKind) {
@@ -54,6 +56,7 @@ export async function saveCategory(
       name: input.name,
       icon: input.icon,
       color: input.color,
+      ...(input.parentId !== undefined ? { parentId: input.parentId } : {}),
       isActive: true,
     }),
   });
@@ -84,6 +87,7 @@ export async function restoreCategory(
       name: input.name,
       icon: input.icon,
       color: input.color,
+      parentId: input.parentId,
       isActive: true,
     }),
   });

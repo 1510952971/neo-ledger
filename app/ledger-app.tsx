@@ -375,6 +375,7 @@ type ExpenseCategory = {
   isSystem: boolean;
   isActive: boolean;
   sortOrder: number;
+  parentId: number | null;
   createdAt: string;
 };
 type ChartConstructor = new (
@@ -2132,6 +2133,7 @@ export function LedgerApp({
           name: String(formData.get("name") || ""),
           icon: String(formData.get("icon") || "📦"),
           color: String(formData.get("color") || "#8f91b8"),
+          parentId: formData.get("parentId") ? Number(formData.get("parentId")) : null,
         });
         if (!result.ok) {
           setCategoryError(result.error || "保存失败");
@@ -2193,6 +2195,7 @@ export function LedgerApp({
           name: String(formData.get("name") || ""),
           icon: String(formData.get("icon") || "💰"),
           color: String(formData.get("color") || "#78a98c"),
+          parentId: formData.get("parentId") ? Number(formData.get("parentId")) : null,
         });
         if (!result.ok) {
           setIncomeCategoryError(result.error || "保存失败");

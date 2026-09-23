@@ -12,6 +12,7 @@ type CategoryItem = {
   isSystem: boolean;
   isActive: boolean;
   sortOrder: number;
+  parentId: number | null;
   createdAt: string;
 };
 type CategoryDialogsProps = {
@@ -83,12 +84,14 @@ function CategoryList({
 
 function CategoryEditor({
   income,
+  categories,
   editing,
   pending,
   onSave,
   onCancel,
 }: {
   income: boolean;
+  categories: CategoryItem[];
   editing: CategoryItem | null;
   pending: boolean;
   onSave: (formData: FormData) => void | Promise<void>;
@@ -99,6 +102,7 @@ function CategoryEditor({
       <div><p className="eyebrow">{editing ? (income ? "RENAME INCOME" : "RENAME CATEGORY") : income ? "NEW INCOME" : "NEW CATEGORY"}</p><strong>{editing ? (income ? "编辑收入分类" : "编辑分类") : income ? "添加收入分类" : "添加新分类"}</strong></div>
       <label><span>图标</span><input name="icon" defaultValue={editing?.icon ?? (income ? "💰" : "📦")} maxLength={8} required /></label>
       <label><span>名称</span><input name="name" defaultValue={editing?.name ?? ""} placeholder={income ? "如：稿费" : "如：宠物"} maxLength={12} required /></label>
+      <label><span>父级分类</span><select name="parentId" defaultValue={editing?.parentId == null ? "" : String(editing.parentId)}><option value="">一级分类</option>{categories.filter((item) => item.isActive && item.parentId == null && item.id !== editing?.id).map((item) => <option key={item.id} value={item.id}>{item.icon} {item.name}</option>)}</select></label>
       <label><span>主题色</span><input name="color" type="color" defaultValue={editing?.color ?? (income ? "#78a98c" : "#8f91b8")} /></label>
       <button disabled={pending}>{editing ? "保存修改" : "添加分类"}</button>
       {editing && <button type="button" className="cancel-category-edit" onClick={onCancel}>取消</button>}
@@ -132,8 +136,8 @@ export function CategoryDialogs({
 }: CategoryDialogsProps) {
   return (
     <>
-      {incomeOpen && <dialog className="expense-dialog category-manager-dialog" ref={incomeRef} onCancel={onCloseIncome}><div className="expense-form"><button type="button" className="close-button" onClick={onCloseIncome}>×</button><p className="eyebrow">INCOME CATEGORY STUDIO</p><h2>收入分类工作室</h2><p className="form-subtitle">内置收入分类只支持重命名；自定义分类可自由添加和删减。</p><CategoryList items={incomeCategories} income onEdit={onEditIncome} onRemove={onRemoveIncome} onRestore={onRestoreIncome} /><CategoryEditor income editing={editingIncome} pending={pending} onSave={onSaveIncome} onCancel={() => onEditIncome(null)} />{incomeError && <p className="account-error">{incomeError}</p>}</div></dialog>}
-      {expenseOpen && <dialog className="expense-dialog category-manager-dialog" ref={expenseRef} onCancel={onCloseExpense}><div className="expense-form"><button type="button" className="close-button" onClick={onCloseExpense}>×</button><p className="eyebrow">CATEGORY STUDIO</p><h2>消费分类工作室</h2><p className="form-subtitle">内置分类可以改名；移除采用安全停用，历史账单与统计不会丢失。</p><CategoryList items={expenseCategories} income={false} onEdit={onEditExpense} onRemove={onRemoveExpense} onRestore={onRestoreExpense} /><CategoryEditor income={false} editing={editingExpense} pending={pending} onSave={onSaveExpense} onCancel={() => onEditExpense(null)} />{expenseError && <p className="account-error">{expenseError}</p>}</div></dialog>}
+      {incomeOpen && <dialog className="expense-dialog category-manager-dialog" ref={incomeRef} onCancel={onCloseIncome}><div className="expense-form"><button type="button" className="close-button" onClick={onCloseIncome}>×</button><p className="eyebrow">INCOME CATEGORY STUDIO</p><h2>收入分类工作室</h2><p className="form-subtitle">内置收入分类只支持重命名；自定义分类可自由添加和删减。</p><CategoryList items={incomeCategories} income onEdit={onEditIncome} onRemove={onRemoveIncome} onRestore={onRestoreIncome} /><CategoryEditor income categories={incomeCategories} editing={editingIncome} pending={pending} onSave={onSaveIncome} onCancel={() => onEditIncome(null)} />{incomeError && <p className="account-error">{incomeError}</p>}</div></dialog>}
+      {expenseOpen && <dialog className="expense-dialog category-manager-dialog" ref={expenseRef} onCancel={onCloseExpense}><div className="expense-form"><button type="button" className="close-button" onClick={onCloseExpense}>×</button><p className="eyebrow">CATEGORY STUDIO</p><h2>消费分类工作室</h2><p className="form-subtitle">内置分类可以改名；移除采用安全停用，历史账单与统计不会丢失。</p><CategoryList items={expenseCategories} income={false} onEdit={onEditExpense} onRemove={onRemoveExpense} onRestore={onRestoreExpense} /><CategoryEditor income={false} categories={expenseCategories} editing={editingExpense} pending={pending} onSave={onSaveExpense} onCancel={() => onEditExpense(null)} />{expenseError && <p className="account-error">{expenseError}</p>}</div></dialog>}
     </>
   );
 }

@@ -173,6 +173,14 @@ export async function DELETE(request: Request) {
       .bind(id, ledgerId)
       .first<{ name: string; isSystem: number }>();
     if (!current) throw new Error("分类不存在");
+    const children = await db
+      .prepare(
+        "SELECT COUNT(*) count FROM expense_categories WHERE ledger_id=? AND parent_id=?",
+      )
+      .bind(ledgerId, id)
+      .first<{ count: number }>();
+    if (Number(children?.count ?? 0) > 0)
+      throw new Error("请先将子分类移到其他一级分类，再停用或删除父级分类");
     const usage = await db
       .prepare(
         "SELECT (SELECT COUNT(*) FROM transactions WHERE ledger_id=? AND COALESCE(category_dynamic,category)=?)+(SELECT COUNT(*) FROM subscriptions WHERE ledger_id=? AND COALESCE(category_dynamic,category)=?) count",

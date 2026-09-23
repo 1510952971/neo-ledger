@@ -142,6 +142,14 @@ export async function DELETE(request: Request) {
       .bind(id, ledgerId)
       .first<{ name: string; isSystem: number }>();
     if (!current) throw new Error("收入分类不存在");
+    const children = await db
+      .prepare(
+        "SELECT COUNT(*) count FROM income_categories WHERE ledger_id=? AND parent_id=?",
+      )
+      .bind(ledgerId, id)
+      .first<{ count: number }>();
+    if (Number(children?.count ?? 0) > 0)
+      throw new Error("请先将子分类移到其他一级分类，再停用或删除父级分类");
     if (current.isSystem) throw new Error("内置收入分类只支持重命名，不能删除");
     const active = await db
       .prepare(

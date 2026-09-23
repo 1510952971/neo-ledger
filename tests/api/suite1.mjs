@@ -109,6 +109,9 @@ r = await call(categories, "POST", "/api/categories", { body: { ledgerId: L, nam
 check("POST 二级分类", (r.status === 200 || r.status === 201) && r.json?.id, r.text);
 r = await call(categories, "GET", `/api/categories?ledger=${L}`);
 check("GET 分类包含父级关系", r.status === 200 && r.json?.some?.((item) => item.name === "猫粮" && item.parentId === parentCategoryId), r.text?.slice(0,160));
+r = await call(categories, "DELETE", `/api/categories?id=${parentCategoryId}&ledger=${L}`);
+check("有子分类时不能直接删除父级", r.status === 400, `${r.status} ${r.text}`);
+r = await call(categories, "GET", `/api/categories?ledger=${L}`);
 r = await call(categories, "POST", "/api/categories", { body: { ledgerId: L, name: "猫砂", icon: "🧺", color: "#aabbcc", parentId: r.json?.find?.((item) => item.name === "猫粮")?.id } });
 check("分类层级限制为一级和二级", r.status === 400, `${r.status} ${r.text}`);
 const expenseCategoryCountBeforeRejects = (await q("SELECT COUNT(*) n FROM expense_categories WHERE ledger_id=?", L))[0].n;
