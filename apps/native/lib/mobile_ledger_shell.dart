@@ -11,6 +11,7 @@ import 'mobile/core/mobile_design.dart';
 import 'mobile/data/mobile_entry_preferences.dart';
 import 'mobile/domain/amount_expression.dart';
 import 'mobile/core/mobile_state_widgets.dart';
+import 'mobile/core/mobile_route_registry.dart';
 import 'features/accounts/account_transfer_history_sheet.dart';
 import 'models.dart';
 
@@ -184,14 +185,10 @@ class _MobileLedgerShellState extends State<MobileLedgerShell>
   }
 
   Future<void> _openAdd({String initialType = '支出'}) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        fullscreenDialog: true,
-        builder: (_) => MobileAddTransactionPage(
-          controller: controller,
-          initialType: initialType,
-        ),
-      ),
+    await MobileRouteRegistry.push<void>(
+      context,
+      MobileRouteName.entry,
+      arguments: initialType,
     );
   }
 }
@@ -670,11 +667,9 @@ class _MobileHomePageState extends State<MobileHomePage> {
                     icon: Icons.flag_outlined,
                     label: '预算',
                     color: const Color(0xffffc76b),
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) =>
-                            MobileBudgetPage(controller: controller),
-                      ),
+                    onTap: () => MobileRouteRegistry.push<void>(
+                      context,
+                      MobileRouteName.budget,
                     ),
                   ),
                 ),
@@ -1984,11 +1979,10 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
   }
 
   Future<void> _openDetail(TransactionItem item) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) =>
-            MobileTransactionDetailPage(controller: controller, item: item),
-      ),
+    await MobileRouteRegistry.push<void>(
+      context,
+      MobileRouteName.transactionDetail,
+      arguments: item,
     );
     if (mounted) _load();
   }
@@ -2478,10 +2472,9 @@ class MobileProfilePage extends StatelessWidget {
             icon: '🧩',
             title: '高级功能',
             subtitle: '预算、订阅、分期与储蓄目标',
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => MobilePlanningPage(controller: controller),
-              ),
+            onTap: () => MobileRouteRegistry.push<void>(
+              context,
+              MobileRouteName.planning,
             ),
           ),
           _SettingsRow(
@@ -2489,10 +2482,9 @@ class MobileProfilePage extends StatelessWidget {
             title: '账户与资产',
             subtitle:
                 '${controller.accounts.length} 个账户 · ${controller.assets.length} 项资产',
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => MobileAccountsPage(controller: controller),
-              ),
+            onTap: () => MobileRouteRegistry.push<void>(
+              context,
+              MobileRouteName.accounts,
             ),
           ),
           _SettingsRow(
@@ -2536,10 +2528,9 @@ class MobileProfilePage extends StatelessWidget {
             icon: '⚡️',
             title: '自动记账与导入',
             subtitle: 'Android 自动记账、自动化规则与账单导入',
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => MobileAutomationPage(controller: controller),
-              ),
+            onTap: () => MobileRouteRegistry.push<void>(
+              context,
+              MobileRouteName.automation,
             ),
           ),
           _SettingsRow(

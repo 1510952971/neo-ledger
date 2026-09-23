@@ -18,6 +18,7 @@ import 'models.dart';
 import 'mobile/data/mobile_core_snapshot_store.dart';
 import 'mobile/data/mobile_offline_queue_store.dart';
 import 'mobile/domain/offline_projection.dart';
+import 'mobile/core/mobile_route_registry.dart';
 import 'shortcut_entry.dart';
 import 'update_service.dart';
 import 'windows_platform.dart';
@@ -59,11 +60,69 @@ class NeoLedgerApp extends StatefulWidget {
 
 class _NeoLedgerAppState extends State<NeoLedgerApp> {
   late final LedgerController controller;
+  late final MobileRouteRegistry _mobileRoutes;
 
   @override
   void initState() {
     super.initState();
     controller = LedgerController();
+    _mobileRoutes = MobileRouteRegistry({
+      MobileRouteName.home: MobileRouteDefinition(
+        (_, _) => MobileHomePage(
+          controller: controller,
+          onAdd: () =>
+              MobileRouteRegistry.push<void>(context, MobileRouteName.entry),
+          onTransfer: () => MobileRouteRegistry.push<void>(
+            context,
+            MobileRouteName.entry,
+            arguments: '转账',
+          ),
+        ),
+      ),
+      MobileRouteName.bills: MobileRouteDefinition(
+        (_, _) => MobileBillsPage(controller: controller),
+      ),
+      MobileRouteName.analysis: MobileRouteDefinition(
+        (_, _) => MobileAnalysisPage(controller: controller),
+      ),
+      MobileRouteName.profile: MobileRouteDefinition(
+        (_, _) => MobileProfilePage(
+          controller: controller,
+          nativeVersion: _nativeVersion,
+        ),
+      ),
+      MobileRouteName.entry: MobileRouteDefinition(
+        (_, arguments) => MobileAddTransactionPage(
+          controller: controller,
+          initialType: arguments is String ? arguments : '支出',
+        ),
+        fullscreenDialog: true,
+      ),
+      MobileRouteName.transactionDetail: MobileRouteDefinition((_, arguments) {
+        if (arguments is! TransactionItem) {
+          return const Scaffold(body: Center(child: Text('无法打开账单详情：缺少账单信息')));
+        }
+        return MobileTransactionDetailPage(
+          controller: controller,
+          item: arguments,
+        );
+      }),
+      MobileRouteName.budget: MobileRouteDefinition(
+        (_, _) => MobileBudgetPage(controller: controller),
+      ),
+      MobileRouteName.accounts: MobileRouteDefinition(
+        (_, _) => MobileAccountsPage(controller: controller),
+      ),
+      MobileRouteName.assets: MobileRouteDefinition(
+        (_, _) => MobileAccountsPage(controller: controller),
+      ),
+      MobileRouteName.planning: MobileRouteDefinition(
+        (_, _) => MobilePlanningPage(controller: controller),
+      ),
+      MobileRouteName.automation: MobileRouteDefinition(
+        (_, _) => MobileAutomationPage(controller: controller),
+      ),
+    });
     if (_isMobileNative) {
       unawaited(controller.initialize());
     }
@@ -136,6 +195,9 @@ class _NeoLedgerAppState extends State<NeoLedgerApp> {
                   controller: controller,
                   nativeVersion: _nativeVersion,
                 ),
+          onGenerateRoute: _isMobileNative
+              ? _mobileRoutes.onGenerateRoute
+              : null,
         );
       },
     );
