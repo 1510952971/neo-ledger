@@ -10,6 +10,7 @@ import 'api_client.dart';
 import 'mobile/core/mobile_design.dart';
 import 'mobile/data/mobile_entry_preferences.dart';
 import 'mobile/domain/amount_expression.dart';
+import 'mobile/core/mobile_state_widgets.dart';
 import 'features/accounts/account_transfer_history_sheet.dart';
 import 'models.dart';
 
@@ -106,7 +107,7 @@ class _MobileLedgerShellState extends State<MobileLedgerShell>
       _lockInitialized = false;
       _locked = false;
       if (controller.loading || controller.api.hasSession) {
-        return const _MobileLoadingView();
+        return const MobileLoadingView();
       }
       return MobileLoginPage(controller: controller);
     }
@@ -390,7 +391,7 @@ class _MobileLoginPageState extends State<MobileLoginPage> {
             ),
             if (controller.error != null) ...[
               const SizedBox(height: 14),
-              _InlineError(message: controller.error!),
+              MobileInlineError(message: controller.error!),
             ],
             const SizedBox(height: 22),
             SizedBox(
@@ -488,6 +489,17 @@ class _MobileHomePageState extends State<MobileHomePage> {
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('隐藏金额设置失败：$error')));
+      }
+    }
+  }
+
+  Future<void> _retrySync() async {
+    try {
+      await widget.controller.syncQueue();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('同步仍未完成：$error')));
       }
     }
   }
@@ -596,6 +608,18 @@ class _MobileHomePageState extends State<MobileHomePage> {
               controller: controller,
               hideAmounts: _hideAmounts,
             ),
+            if (controller.error != null ||
+                controller.totalPendingCount > 0) ...[
+              const SizedBox(height: 12),
+              MobileOfflineStatus(
+                message:
+                    controller.error ??
+                    '还有 ${controller.totalPendingCount} 笔数据等待同步或确认。',
+                pendingCount: controller.totalPendingCount,
+                offline: controller.error != null,
+                onRetry: controller.loading ? null : _retrySync,
+              ),
+            ],
             const SizedBox(height: 12),
             if (_moduleEnabled('summary'))
               _MonthlyCard(page: page, hideAmounts: _hideAmounts),
@@ -664,7 +688,7 @@ class _MobileHomePageState extends State<MobileHomePage> {
               ),
               const SizedBox(height: 10),
               if (page.items.isEmpty)
-                const _EmptyState(
+                const MobileEmptyState(
                   icon: Icons.auto_graph_rounded,
                   title: '还没有账单',
                   message: '点击下方绿色 +，记录第一笔今天的生活。',
@@ -1170,7 +1194,7 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
             const SizedBox(height: 14),
             if (_loading) const LinearProgressIndicator(minHeight: 2),
             if (_error != null) ...[
-              _InlineError(message: _error!, onRetry: _load),
+              MobileInlineError(message: _error!, onRetry: _load),
               const SizedBox(height: 12),
             ],
             _BillSummary(
@@ -1181,7 +1205,7 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
             _SectionHeader(title: '全部流水', action: '${page.total} 笔'),
             const SizedBox(height: 10),
             if (groups.isEmpty)
-              const _EmptyState(
+              const MobileEmptyState(
                 icon: Icons.receipt_long_outlined,
                 title: '这个月还没有账单',
                 message: '切换月份或点击下方绿色 + 记录一笔。',
@@ -2361,7 +2385,7 @@ class MobileAnalysisPage extends StatelessWidget {
           _SectionHeader(title: '支出分类', action: '本月'),
           const SizedBox(height: 10),
           if (buckets.isEmpty)
-            const _EmptyState(
+            const MobileEmptyState(
               icon: Icons.pie_chart_outline_rounded,
               title: '还没有足够数据',
               message: '多记几笔账后，这里会显示你的消费结构。',
@@ -3454,7 +3478,7 @@ class _MobileBudgetPageState extends State<MobileBudgetPage> {
             ),
             const SizedBox(height: 18),
             if (controller.budgets.isEmpty)
-              const _EmptyState(
+              const MobileEmptyState(
                 icon: Icons.track_changes_outlined,
                 title: '还没有分类预算',
                 message: '为餐饮、交通或其他分类设置本月额度。',
@@ -4090,7 +4114,7 @@ class _AccountGroup extends StatelessWidget {
         _SectionHeader(title: title, action: '${accounts.length} 个'),
         const SizedBox(height: 8),
         if (accounts.isEmpty)
-          const _EmptyState(
+          const MobileEmptyState(
             icon: Icons.account_balance_wallet_outlined,
             title: '暂无账户',
             message: '新增一个账户后就可以开始记账。',
@@ -6799,99 +6823,6 @@ class _SyncButton extends StatelessWidget {
   Widget build(BuildContext context) => IconButton(
     onPressed: controller.loading ? null : controller.refresh,
     icon: const Icon(Icons.sync_rounded, color: _mobileMuted),
-  );
-}
-
-class _EmptyState extends StatelessWidget {
-  const _EmptyState({
-    required this.icon,
-    required this.title,
-    required this.message,
-  });
-
-  final IconData icon;
-  final String title;
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(28),
-    decoration: _mobileBoxDecoration(),
-    child: Column(
-      children: [
-        Icon(icon, size: 38, color: _mobileMuted),
-        const SizedBox(height: 12),
-        Text(
-          title,
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          message,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: _mobileMuted,
-            fontSize: 12,
-            height: 1.5,
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-class _InlineError extends StatelessWidget {
-  const _InlineError({required this.message, this.onRetry});
-
-  final String message;
-  final VoidCallback? onRetry;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    width: double.infinity,
-    padding: const EdgeInsets.all(12),
-    decoration: BoxDecoration(
-      color: const Color(0x22ff8a7a),
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: Row(
-      children: [
-        Expanded(
-          child: Text(
-            message,
-            style: const TextStyle(
-              color: _mobileExpense,
-              fontSize: 12,
-              height: 1.4,
-            ),
-          ),
-        ),
-        if (onRetry != null)
-          TextButton(onPressed: onRetry, child: const Text('重试')),
-      ],
-    ),
-  );
-}
-
-class _MobileLoadingView extends StatelessWidget {
-  const _MobileLoadingView();
-
-  @override
-  Widget build(BuildContext context) => const Scaffold(
-    backgroundColor: _mobileBg,
-    body: Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          CircularProgressIndicator(color: _mobileBrand),
-          SizedBox(height: 18),
-          Text('正在同步你的 Neo Ledger…', style: TextStyle(color: _mobileMuted)),
-        ],
-      ),
-    ),
   );
 }
 
