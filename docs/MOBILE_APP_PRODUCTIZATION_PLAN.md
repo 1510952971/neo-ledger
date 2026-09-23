@@ -593,11 +593,23 @@ iOS 构建：受 Xcode/CocoaPods/工程配置阻塞，见第 14 节。
 版本：Native `1.4.0+21`
 提交：`132ab90`
 完成项：将离线记账队列读写与 JSON 解码从 `LedgerController` 抽出到 `mobile/data`；沿用 `neo_ledger_offline_queue_v1`，保证升级后旧队列继续读取；单条损坏记录不会阻断其他待同步记录。新增队列字段往返、损坏记录隔离及既有键兼容测试。
-未完成项：API/会话、离线快照和同步状态仍需继续拆分；统一 `idempotencyKey`、提交状态与错误映射尚未完成。
+未完成项：API/会话与同步状态仍需继续拆分；统一 `idempotencyKey`、提交状态与错误映射尚未完成。
 验证：Flutter analyze 无问题；Flutter 测试 49 项通过；Android Debug APK 构建通过。
 跨端同步结果：仅提取本地持久化实现，队列补发仍调用现有共享账单 API；Web、Windows、macOS 服务端数据与业务口径不变。
 已知外部验收：Android/iOS 真机断网重启与恢复联网场景仍需设备验证。
 回滚方式：回退 `132ab90`；既有 SharedPreferences 键及 JSON 格式未变，回退不会清除本地待同步数据。
+验收人：待用户真机验收
+验收日期：2026-09-24
+
+阶段：阶段 0（离线核心快照数据层）
+版本：Native `1.4.0+21`
+提交：`521d45e`
+完成项：将核心缓存快照的 JSON 读、写、清理抽出到 `mobile/data`；保留 `neo_ledger_core_snapshot_v1` 键和原有字段格式，损坏或非对象快照不会阻止登录；登出仍清理快照但保留待同步队列。新增旧格式兼容、损坏数据恢复及清理测试。
+未完成项：API/会话与同步状态仍需继续拆分；统一 `idempotencyKey`、提交状态与错误映射尚未完成。
+验证：Flutter analyze 无问题；Flutter 全量测试 52 项通过；Android Debug APK 构建通过。
+跨端同步结果：快照仅是原生客户端离线缓存；在线数据仍通过所有平台共享的 API 读取，未增加平台专属业务数据。
+已知外部验收：Android/iOS 真机断网启动、缓存恢复及登出数据保留场景仍需设备验证。
+回滚方式：回退 `521d45e`；原有 SharedPreferences 键与 JSON 格式未变，缓存和待同步数据仍可被旧代码读取。
 验收人：待用户真机验收
 验收日期：2026-09-24
 
