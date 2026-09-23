@@ -15,6 +15,7 @@ import 'import_file_loader.dart';
 import 'import_parser.dart';
 import 'features/accounts/account_transfer_editor.dart';
 import 'models.dart';
+import 'mobile/data/mobile_offline_queue_store.dart';
 import 'mobile/domain/offline_projection.dart';
 import 'shortcut_entry.dart';
 import 'update_service.dart';
@@ -28,7 +29,6 @@ const _surface = Color(0xff101116);
 const _surfaceAlt = Color(0xff1b1b23);
 const _muted = Color(0xffa4a8a1);
 const _nativeVersion = '1.4.0';
-const _queueKey = 'neo_ledger_offline_queue_v1';
 const _coreSnapshotKey = 'neo_ledger_core_snapshot_v1';
 const _shortcutChannel = MethodChannel('online.eyeme.neo_ledger/shortcuts');
 const _assetTypes = [
@@ -201,6 +201,7 @@ class LedgerController extends ChangeNotifier {
   String? error;
   String? cachedAt;
   SharedPreferences? _preferences;
+  MobileOfflineQueueStore? _offlineQueueStore;
   Future<void>? _refreshOperation;
   Future<void>? _syncOperation;
   String? _transactionRevisionMarker;
@@ -219,6 +220,7 @@ class LedgerController extends ChangeNotifier {
 
   Future<void> initialize() async {
     _preferences = await SharedPreferences.getInstance();
+    _offlineQueueStore = MobileOfflineQueueStore(_preferences!);
     await _loadQueue();
     await api.load();
     if (!api.hasSession) return;
@@ -2649,19 +2651,7 @@ class LedgerController extends ChangeNotifier {
   }
 
   Future<void> _loadQueue() async {
-    final raw = _preferences?.getStringList(_queueKey) ?? const <String>[];
-    queue = raw
-        .map((value) {
-          try {
-            return OfflineEntry.fromJson(
-              jsonDecode(value) as Map<String, dynamic>,
-            );
-          } catch (_) {
-            return null;
-          }
-        })
-        .whereType<OfflineEntry>()
-        .toList();
+    queue = await _offlineQueueStore?.read() ?? const <OfflineEntry>[];
   }
 
   void _projectQueueIntoTransactions({TransactionPage? basePage}) {
@@ -2909,10 +2899,7 @@ class LedgerController extends ChangeNotifier {
   }
 
   Future<void> _persistQueue() async {
-    await _preferences?.setStringList(
-      _queueKey,
-      queue.map((entry) => jsonEncode(entry.toJson())).toList(),
-    );
+    await _offlineQueueStore?.write(queue);
   }
 
   @override
