@@ -293,6 +293,14 @@ class MobileHomePage extends StatelessWidget {
             ),
             const SizedBox(height: 18),
             _MonthlyCard(page: page),
+            if (controller.budgets.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              _HomeBudgetCard(controller: controller),
+            ],
+            if (controller.pendingTransactions.items.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              _HomePendingCard(controller: controller),
+            ],
             const SizedBox(height: 20),
             _SectionHeader(title: '快捷操作', action: '全部功能'),
             const SizedBox(height: 12),
@@ -349,6 +357,124 @@ class MobileHomePage extends StatelessWidget {
                   ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _HomeBudgetCard extends StatelessWidget {
+  const _HomeBudgetCard({required this.controller});
+
+  final LedgerController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final spendByCategory = <String, int>{};
+    for (final bucket in controller.analysis?.categoryData ?? const []) {
+      spendByCategory[bucket.name] = bucket.amountCents;
+    }
+    final totalBudget = controller.budgets.fold<int>(
+      0,
+      (sum, item) => sum + item.amountCents,
+    );
+    final totalSpent = controller.budgets.fold<int>(
+      0,
+      (sum, item) => sum + (spendByCategory[item.category] ?? 0),
+    );
+    final ratio = totalBudget <= 0 ? 0.0 : totalSpent / totalBudget;
+    final danger = ratio >= 1;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: _mobileBoxDecoration(
+        gradient: LinearGradient(
+          colors: danger
+              ? const [Color(0xff42272d), Color(0xff2c2028)]
+              : const [Color(0xff263a34), Color(0xff202a2b)],
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.track_changes_rounded, color: _mobileBrand),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  '本月预算',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+              Text(
+                danger ? '已超支' : '剩余 ${_mobileMoney(totalBudget - totalSpent)}',
+                style: TextStyle(color: danger ? _mobileExpense : _mobileMuted),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: LinearProgressIndicator(
+              minHeight: 9,
+              value: ratio.clamp(0, 1),
+              backgroundColor: const Color(0x24ffffff),
+              valueColor: AlwaysStoppedAnimation(
+                danger ? _mobileExpense : _mobileBrand,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '${_mobileMoney(totalSpent)} / ${_mobileMoney(totalBudget)} · ${controller.budgets.length} 个分类预算',
+            style: const TextStyle(color: _mobileMuted, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HomePendingCard extends StatelessWidget {
+  const _HomePendingCard({required this.controller});
+
+  final LedgerController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final item = controller.pendingTransactions.items.first;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: _mobileBoxDecoration(),
+      child: Row(
+        children: [
+          const Icon(Icons.fact_check_outlined, color: _mobilePurple),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '有待确认账单',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${item.title} · ${_mobileMoney(item.amountCents)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: _mobileMuted, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          Text(
+            '${controller.pendingTransactions.total} 笔',
+            style: const TextStyle(
+              color: _mobilePurple,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
       ),
     );
   }
