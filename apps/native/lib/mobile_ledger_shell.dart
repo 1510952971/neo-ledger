@@ -796,10 +796,28 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
                 for (final item in entry.value)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
-                    child: _TransactionTile(
-                      item: item,
-                      dense: true,
-                      onTap: () => _openDetail(item),
+                    child: Dismissible(
+                      key: ValueKey('mobile-bill-${item.id}'),
+                      direction: DismissDirection.endToStart,
+                      background: Container(
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.only(right: 20),
+                        decoration: BoxDecoration(
+                          color: _mobileExpense.withValues(alpha: .18),
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        child: const Icon(
+                          Icons.delete_outline_rounded,
+                          color: _mobileExpense,
+                        ),
+                      ),
+                      confirmDismiss: (_) => _confirmDelete(item),
+                      child: _TransactionTile(
+                        item: item,
+                        dense: true,
+                        onTap: () => _openDetail(item),
+                        onLongPress: () => _openActions(item),
+                      ),
                     ),
                   ),
                 const SizedBox(height: 8),
@@ -1031,6 +1049,104 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
       ),
     );
     if (mounted) _load();
+  }
+
+  Future<bool> _confirmDelete(TransactionItem item) async {
+    if (item.installmentId != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('分期生成的流水请从分期计划中管理')));
+      return false;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除这笔流水？'),
+        content: Text('“${item.title}”删除后会同步到其他平台。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return false;
+    try {
+      await controller.deleteTransaction(item);
+      if (mounted) {
+        await _load();
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('流水已删除')));
+      }
+      return true;
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('删除失败：$error')));
+      }
+      return false;
+    }
+  }
+
+  Future<void> _openActions(TransactionItem item) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.open_in_new_rounded),
+              title: const Text('查看详情 / 编辑'),
+              onTap: () => Navigator.pop(sheetContext, 'edit'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.copy_rounded),
+              title: const Text('复制流水摘要'),
+              onTap: () => Navigator.pop(sheetContext, 'copy'),
+            ),
+            if (item.installmentId == null)
+              ListTile(
+                leading: const Icon(
+                  Icons.delete_outline_rounded,
+                  color: _mobileExpense,
+                ),
+                title: const Text(
+                  '删除流水',
+                  style: TextStyle(color: _mobileExpense),
+                ),
+                onTap: () => Navigator.pop(sheetContext, 'delete'),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case 'edit':
+        await _openDetail(item);
+      case 'copy':
+        await Clipboard.setData(
+          ClipboardData(
+            text:
+                '${item.type} ${_mobileMoney(item.amountCents)} · ${item.title} · ${item.category ?? item.incomeCategory ?? '未分类'} · ${_mobileDate(item.occurredAt)}',
+          ),
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(const SnackBar(content: Text('流水摘要已复制')));
+        }
+      case 'delete':
+        await _confirmDelete(item);
+    }
   }
 }
 
@@ -3871,11 +3987,17 @@ class _DaySummaryHeader extends StatelessWidget {
 }
 
 class _TransactionTile extends StatelessWidget {
-  const _TransactionTile({required this.item, this.dense = false, this.onTap});
+  const _TransactionTile({
+    required this.item,
+    this.dense = false,
+    this.onTap,
+    this.onLongPress,
+  });
 
   final TransactionItem item;
   final bool dense;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -3887,6 +4009,7 @@ class _TransactionTile extends StatelessWidget {
     final color = item.isIncome ? _mobileIncome : _mobileExpense;
     return InkWell(
       onTap: onTap,
+      onLongPress: onLongPress,
       borderRadius: BorderRadius.circular(18),
       child: Container(
         padding: EdgeInsets.symmetric(
