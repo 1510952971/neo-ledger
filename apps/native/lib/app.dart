@@ -9779,6 +9779,29 @@ class _ImportSheetState extends State<ImportSheet> {
     }
   }
 
+  Future<void> _pasteImportText() async {
+    try {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      final text = data?.text?.trim() ?? '';
+      if (text.isEmpty) {
+        throw const FormatException('剪贴板没有可读取的文本');
+      }
+      if (!mounted) return;
+      rawText.text = text;
+      setState(() {
+        preview = null;
+        normalizedItems = const [];
+      });
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('已读取剪贴板内容，请预览并检查')));
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('读取剪贴板失败：$error')));
+      }
+    }
+  }
+
   int _number(String key) {
     final value = preview?[key];
     return value is num ? value.toInt() : int.tryParse('$value') ?? 0;
@@ -9873,10 +9896,26 @@ class _ImportSheetState extends State<ImportSheet> {
               style: TextStyle(color: Colors.grey.shade500, height: 1.4),
             ),
             const SizedBox(height: 14),
-            OutlinedButton.icon(
-              onPressed: previewing || importing ? null : _pickImportFile,
-              icon: const Icon(Icons.folder_open_outlined),
-              label: const Text('选择 JSON / CSV 文件'),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: previewing || importing ? null : _pickImportFile,
+                    icon: const Icon(Icons.folder_open_outlined),
+                    label: const Text('选择文件'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: previewing || importing
+                        ? null
+                        : _pasteImportText,
+                    icon: const Icon(Icons.content_paste_outlined),
+                    label: const Text('读取剪贴板'),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 10),
             TextField(
