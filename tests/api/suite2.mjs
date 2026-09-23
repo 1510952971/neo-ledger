@@ -203,7 +203,7 @@ check("分期列表具备容量与缓存边界", r.status === 200 && r.headers?.
 const paidInstallmentVersion = r.json?.[0]?.updatedAt;
 r = await call(inst, "DELETE", `/api/installments?id=${instId}&expectedUpdatedAt=${encodeURIComponent(paidInstallmentVersion)}`);
 check("已还款分期拒绝删除(保护)", r.status >= 400 && (r.json?.error||"").includes("不能直接删除"), `${r.status} ${r.text}`);
-const freshInstallmentBody = { ledgerId: L, name: "未开始分期", totalAmount: 1200, periods: 6, feeAmount: 0, accountId: debtId, paymentAccountId: cashId, chargeDay: 15, startMonth: "2026-09", idempotencyKey: "installment-create-retry-002" };
+const freshInstallmentBody = { ledgerId: L, name: "未开始分期", totalAmount: 1200, periods: 6, feeAmount: 0, accountId: debtId, paymentAccountId: cashId, chargeDay: 15, startMonth: "2099-01", idempotencyKey: "installment-create-retry-002" };
 r = await call(inst, "POST", "/api/installments", { body: freshInstallmentBody });
 check("POST 未开始分期", r.status === 200 || r.status === 201, r.text);
 r = await call(inst, "GET", `/api/installments?ledger=${L}`);

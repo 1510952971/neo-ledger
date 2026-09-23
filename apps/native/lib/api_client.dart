@@ -969,6 +969,8 @@ class NeoLedgerApi {
     required int accountId,
     required String category,
     String? mood,
+    String? note,
+    List<String> tags = const [],
   }) async {
     if (item.ledgerId <= 0 || item.updatedAt == null) {
       throw const ApiException('流水缺少版本信息，请刷新后再编辑');
@@ -983,6 +985,8 @@ class NeoLedgerApi {
       'amount': amount,
       'type': type,
       'title': title,
+      if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+      if (tags.isNotEmpty) 'tags': tags,
       'mood': mood ?? item.mood ?? '刚需',
       'category': type == '支出' ? category : '其它',
       'incomeCategory': type == '收入' ? category : '其它收入',

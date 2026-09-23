@@ -11,6 +11,8 @@ type TransactionRow = {
   id: number;
   ledgerId: number;
   title: string;
+  note: string | null;
+  tagsJson: string;
   amount: number;
   type: "支出" | "收入";
   mood: string | null;
@@ -31,6 +33,9 @@ type TransactionRow = {
   installmentId: number | null;
   installmentNumber: number | null;
   isSideHustle: number;
+  reimbursable: number;
+  discountAmount: number;
+  excludeFromBudget: number;
   offlineId: string | null;
   crdtId: string | null;
   updatedAt: string;
@@ -171,8 +176,8 @@ export async function GET(request: Request) {
     }
     if (query) {
       const like = `%${escapeLike(query.toLocaleLowerCase("zh-CN"))}%`;
-      filters.push(`(LOWER(t.title) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(t.category_dynamic,t.category,'')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(t.income_category_dynamic,t.income_category,'')) LIKE ? ESCAPE '\\' OR LOWER(t.type) LIKE ? ESCAPE '\\' OR LOWER(t.currency) LIKE ? ESCAPE '\\' OR LOWER(a.name) LIKE ? ESCAPE '\\' OR CAST(t.amount/100.0 AS TEXT) LIKE ? ESCAPE '\\' OR date(${localDateExpr}) LIKE ? ESCAPE '\\')`);
-      params.push(like, like, like, like, like, like, like, like);
+      filters.push(`(LOWER(t.title) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(t.note,'')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(t.tags_json,'')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(t.category_dynamic,t.category,'')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(t.income_category_dynamic,t.income_category,'')) LIKE ? ESCAPE '\\' OR LOWER(t.type) LIKE ? ESCAPE '\\' OR LOWER(t.currency) LIKE ? ESCAPE '\\' OR LOWER(a.name) LIKE ? ESCAPE '\\' OR CAST(t.amount/100.0 AS TEXT) LIKE ? ESCAPE '\\' OR date(${localDateExpr}) LIKE ? ESCAPE '\\')`);
+      params.push(like, like, like, like, like, like, like, like, like, like);
     }
     const pageFilters = cursor
       ? [...filters, "(t.occurred_at<? OR (t.occurred_at=? AND t.id<?))"]
@@ -185,7 +190,7 @@ export async function GET(request: Request) {
     const db = getDbBinding();
     const rows = await db
       .prepare(
-        `SELECT t.id,t.ledger_id ledgerId,t.title,t.amount,t.type,t.mood,t.category,
+        `SELECT t.id,t.ledger_id ledgerId,t.title,t.note,t.tags_json tagsJson,t.amount,t.type,t.mood,t.category,
           t.category_dynamic categoryDynamic,t.income_category incomeCategory,
           t.income_category_dynamic incomeCategoryDynamic,t.account_id accountId,
           t.paid_by_member_id paidByMemberId,t.split_with_member_id splitWithMemberId,
@@ -193,7 +198,8 @@ export async function GET(request: Request) {
           t.original_amount originalAmount,t.original_currency originalCurrency,
           t.exchange_rate_micros exchangeRateMicros,t.original_timezone originalTimezone,
           t.installment_id installmentId,t.installment_number installmentNumber,
-          t.is_side_hustle isSideHustle,t.offline_id offlineId,t.crdt_id crdtId,
+          t.is_side_hustle isSideHustle,t.reimbursable,t.discount_amount discountAmount,
+          t.exclude_from_budget excludeFromBudget,t.offline_id offlineId,t.crdt_id crdtId,
           t.updated_at updatedAt,t.occurred_at occurredAt,t.created_at createdAt,
           a.name accountName
         FROM transactions t JOIN accounts a ON a.id=t.account_id
@@ -215,6 +221,14 @@ export async function GET(request: Request) {
       .first<{ income: number; expense: number }>();
     const items = rows.results.map((row) => ({
       ...row,
+      tags: (() => {
+        try {
+          const value = JSON.parse(row.tagsJson || "[]");
+          return Array.isArray(value) ? value.filter((tag): tag is string => typeof tag === "string") : [];
+        } catch {
+          return [];
+        }
+      })(),
       category: row.categoryDynamic ?? row.category,
       incomeCategory: row.incomeCategoryDynamic ?? row.incomeCategory,
       isSideHustle: Boolean(row.isSideHustle),

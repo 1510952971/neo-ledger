@@ -31,6 +31,15 @@ export function normalizeTransactionEdit(input) {
   const title = String(input?.title || "")
     .trim()
     .slice(0, 40);
+  const note = String(input?.note || "")
+    .trim()
+    .slice(0, 240);
+  const rawTags = Array.isArray(input?.tags)
+    ? input.tags
+    : String(input?.tags || "").split(",");
+  const tags = [...new Set(rawTags
+    .map((tag) => String(tag).trim().slice(0, 24))
+    .filter(Boolean))].slice(0, 12);
   const mood = String(input?.mood || "");
   const category = String(input?.category || "").trim();
   const incomeCategory = String(input?.incomeCategory || "").trim();
@@ -60,6 +69,8 @@ export function normalizeTransactionEdit(input) {
     amount,
     type,
     title,
+    note,
+    tags,
     mood: type === "支出" ? mood : null,
     category: type === "支出" ? category : null,
     incomeCategory: type === "收入" ? incomeCategory : null,

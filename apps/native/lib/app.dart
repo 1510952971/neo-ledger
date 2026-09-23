@@ -1148,6 +1148,8 @@ class LedgerController extends ChangeNotifier {
     double mySharePercent = 100,
     bool isSideHustle = false,
     bool isBusinessExpense = false,
+    String? note,
+    List<String> tags = const [],
   }) async {
     final ledger = selectedLedger;
     final account = accounts.isEmpty
@@ -1174,6 +1176,8 @@ class LedgerController extends ChangeNotifier {
       amount: amount,
       type: type,
       title: title,
+      note: note,
+      tags: tags,
       category: category,
       occurredAt: occurredAtValue,
       mood: mood,
@@ -1187,6 +1191,8 @@ class LedgerController extends ChangeNotifier {
       final item = TransactionItem(
         id: DateTime.now().millisecondsSinceEpoch,
         title: title,
+        note: note,
+        tags: tags,
         amountCents: (amount * 100).round(),
         type: type,
         occurredAt: entry.occurredAt,
@@ -1888,6 +1894,8 @@ class LedgerController extends ChangeNotifier {
     required int accountId,
     required String category,
     String? mood,
+    String? note,
+    List<String> tags = const [],
   }) async {
     if (demoMode) {
       String? accountName;
@@ -1899,6 +1907,8 @@ class LedgerController extends ChangeNotifier {
       }
       final updated = item.copyWith(
         title: title,
+        note: note,
+        tags: tags,
         amountCents: (amount * 100).round(),
         type: type,
         accountId: accountId,
@@ -1933,6 +1943,8 @@ class LedgerController extends ChangeNotifier {
       accountId: accountId,
       category: category,
       mood: mood,
+      note: note,
+      tags: tags,
     );
     await refresh();
   }
@@ -3720,6 +3732,10 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
                       detailLine('来源', item.source),
                       detailLine('账户', item.accountName ?? '未指定账户'),
                       detailLine('分类', item.category ?? '未分类'),
+                      if (item.note != null && item.note!.trim().isNotEmpty)
+                        detailLine('备注', item.note!.trim()),
+                      if (item.tags.isNotEmpty)
+                        detailLine('标签', item.tags.join(' · ')),
                       detailLine('币种', item.currency),
                       if (item.updatedAt != null)
                         detailLine('更新时间', _date(item.updatedAt!)),
@@ -4908,7 +4924,7 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
             ),
             title: Text(item.title),
             subtitle: Text(
-              '${item.category ?? '未分类'} · ${item.accountName ?? item.source} · ${_date(item.occurredAt)}',
+              '${item.category ?? '未分类'} · ${item.accountName ?? item.source} · ${_date(item.occurredAt)}${item.tags.isEmpty ? '' : ' · ${item.tags.join('、')}'}',
             ),
             trailing: SizedBox(
               width: 190,
@@ -11423,6 +11439,8 @@ class EntrySheet extends StatefulWidget {
 class _EntrySheetState extends State<EntrySheet> {
   final amount = TextEditingController();
   final title = TextEditingController();
+  final note = TextEditingController();
+  final tags = TextEditingController();
   final category = TextEditingController(text: '餐饮');
   String type = '支出';
   bool saving = false;
@@ -11443,6 +11461,8 @@ class _EntrySheetState extends State<EntrySheet> {
   void dispose() {
     amount.dispose();
     title.dispose();
+    note.dispose();
+    tags.dispose();
     category.dispose();
     super.dispose();
   }
@@ -11507,6 +11527,24 @@ class _EntrySheetState extends State<EntrySheet> {
             ),
             const SizedBox(height: 12),
             TextField(
+              controller: note,
+              maxLines: 2,
+              maxLength: 240,
+              decoration: const InputDecoration(
+                labelText: '备注（可选）',
+                hintText: '记录更具体的用途或上下文',
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: tags,
+              decoration: const InputDecoration(
+                labelText: '标签（可选）',
+                hintText: '多个标签用逗号分隔，例如：工作、报销',
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
               controller: category,
               decoration: const InputDecoration(labelText: '分类'),
             ),
@@ -11531,9 +11569,18 @@ class _EntrySheetState extends State<EntrySheet> {
     }
     setState(() => saving = true);
     try {
+      final parsedTags = tags.text
+          .split(RegExp(r'[,，]'))
+          .map((tag) => tag.trim())
+          .where((tag) => tag.isNotEmpty)
+          .toSet()
+          .take(12)
+          .toList();
       await widget.controller.addEntry(
         amount: value,
         title: title.text.trim().isEmpty ? '未命名流水' : title.text.trim(),
+        note: note.text.trim().isEmpty ? null : note.text.trim(),
+        tags: parsedTags,
         category: category.text.trim().isEmpty ? '其他' : category.text.trim(),
         type: type,
         occurredAt: widget.initialDraft?.occurredAt?.toIso8601String(),
@@ -11566,6 +11613,8 @@ class EditTransactionSheet extends StatefulWidget {
 
 class _EditTransactionSheetState extends State<EditTransactionSheet> {
   late final TextEditingController title;
+  late final TextEditingController note;
+  late final TextEditingController tags;
   late final TextEditingController amount;
   late final TextEditingController category;
   late String type;
@@ -11578,6 +11627,8 @@ class _EditTransactionSheetState extends State<EditTransactionSheet> {
     super.initState();
     final item = widget.item;
     title = TextEditingController(text: item.title);
+    note = TextEditingController(text: item.note ?? '');
+    tags = TextEditingController(text: item.tags.join('，'));
     amount = TextEditingController(text: item.amount.toStringAsFixed(2));
     category = TextEditingController(
       text: item.category ?? item.incomeCategory ?? '其他',
@@ -11590,6 +11641,8 @@ class _EditTransactionSheetState extends State<EditTransactionSheet> {
   @override
   void dispose() {
     title.dispose();
+    note.dispose();
+    tags.dispose();
     amount.dispose();
     category.dispose();
     super.dispose();
@@ -11644,6 +11697,21 @@ class _EditTransactionSheetState extends State<EditTransactionSheet> {
             TextField(
               controller: title,
               decoration: const InputDecoration(labelText: '项目'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: note,
+              maxLines: 2,
+              maxLength: 240,
+              decoration: const InputDecoration(labelText: '备注（可选）'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: tags,
+              decoration: const InputDecoration(
+                labelText: '标签（可选）',
+                hintText: '多个标签用逗号分隔',
+              ),
             ),
             const SizedBox(height: 12),
             if (accounts.isNotEmpty)
@@ -11716,9 +11784,18 @@ class _EditTransactionSheetState extends State<EditTransactionSheet> {
     }
     setState(() => saving = true);
     try {
+      final parsedTags = tags.text
+          .split(RegExp(r'[,，]'))
+          .map((tag) => tag.trim())
+          .where((tag) => tag.isNotEmpty)
+          .toSet()
+          .take(12)
+          .toList();
       await widget.controller.updateTransaction(
         widget.item,
         title: title.text.trim().isEmpty ? '未命名流水' : title.text.trim(),
+        note: note.text.trim().isEmpty ? null : note.text.trim(),
+        tags: parsedTags,
         amount: value,
         type: type,
         accountId: selectedAccount,

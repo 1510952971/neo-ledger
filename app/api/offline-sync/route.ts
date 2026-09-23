@@ -51,6 +51,10 @@ export async function POST(request: Request) {
       const mood = moods.includes(String(item.mood))
           ? String(item.mood)
           : "刚需",
+        note = String(item.note || "").trim().slice(0, 240),
+        tags = [...new Set((Array.isArray(item.tags) ? item.tags : [])
+          .map((tag) => String(tag).trim().slice(0, 24))
+          .filter(Boolean))].slice(0, 12),
         requestedCategory = String(item.category || ""),
         requestedIncomeCategory = String(item.incomeCategory || ""),
         originalTimezone = String(item.originalTimezone || "Asia/Shanghai"),
@@ -93,11 +97,13 @@ export async function POST(request: Request) {
       const results = await db.batch([
         db
           .prepare(
-            "INSERT INTO transactions(ledger_id,title,amount,type,mood,category,category_dynamic,income_category,income_category_dynamic,account_id,paid_by_member_id,split_with_member_id,split_mode,my_share_percent,currency,original_amount,original_currency,exchange_rate_micros,original_timezone,is_side_hustle,occurred_at,offline_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1000000,?,?,?,?)",
+            "INSERT INTO transactions(ledger_id,title,note,tags_json,amount,type,mood,category,category_dynamic,income_category,income_category_dynamic,account_id,paid_by_member_id,split_with_member_id,split_mode,my_share_percent,currency,original_amount,original_currency,exchange_rate_micros,original_timezone,is_side_hustle,occurred_at,offline_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1000000,?,?,?,?)",
           )
           .bind(
             ledgerId,
             String(item.title || "离线记账").slice(0, 40),
+            note,
+            JSON.stringify(tags),
             amount,
             type,
             type === "支出" ? mood : null,

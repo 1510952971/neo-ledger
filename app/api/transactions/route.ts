@@ -200,7 +200,7 @@ export async function PUT(request: Request) {
             ),
       db
         .prepare(
-          `UPDATE transactions SET title=?,amount=?,type=?,mood=?,category=?,category_dynamic=?,
+          `UPDATE transactions SET title=?,note=?,tags_json=?,amount=?,type=?,mood=?,category=?,category_dynamic=?,
             income_category=?,income_category_dynamic=?,account_id=?,currency=?,original_amount=?,
             original_currency=?,exchange_rate_micros=?,original_timezone=?,occurred_at=?,
             paid_by_member_id=CASE WHEN ?='收入' THEN NULL ELSE paid_by_member_id END,
@@ -212,6 +212,8 @@ export async function PUT(request: Request) {
         )
         .bind(
           value.title,
+          value.note,
+          JSON.stringify(value.tags),
           value.amount,
           value.type,
           value.mood,

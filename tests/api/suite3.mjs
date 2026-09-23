@@ -386,7 +386,7 @@ describe("账号头像");
 
   const schemaVersion = await q("SELECT value FROM app_meta WHERE key='schema_version'");
   const userColumns = await q("PRAGMA table_info(app_users)");
-  check("数据库迁移到 32", schemaVersion[0]?.value === "32", JSON.stringify(schemaVersion));
+  check("数据库迁移到 33", schemaVersion[0]?.value === "33", JSON.stringify(schemaVersion));
   const expectedIndexes = await q("SELECT name FROM sqlite_master WHERE type='index' AND name IN ('transactions_ledger_occurred_idx','accounts_ledger_id_idx','subscriptions_ledger_charge_idx','pending_transactions_ledger_status_idx')");
   check("核心账本查询索引已创建", expectedIndexes.length === 4, JSON.stringify(expectedIndexes));
   const planLedgerId = (await q("SELECT id FROM ledgers WHERE owner_id=? ORDER BY id LIMIT 1", "user:" + (await q("SELECT id FROM app_users WHERE username='pengtest'")).at(0)?.id))[0]?.id;

@@ -295,6 +295,8 @@ class TransactionItem {
     this.ledgerId = 0,
     this.accountId = 0,
     required this.title,
+    this.note,
+    this.tags = const [],
     required this.amountCents,
     required this.type,
     required this.occurredAt,
@@ -307,12 +309,17 @@ class TransactionItem {
     this.accountName,
     this.currency = 'CNY',
     this.source = '账本',
+    this.reimbursable = false,
+    this.discountAmountCents = 0,
+    this.excludeFromBudget = false,
   });
 
   final int id;
   final int ledgerId;
   final int accountId;
   final String title;
+  final String? note;
+  final List<String> tags;
   final int amountCents;
   final String type;
   final String occurredAt;
@@ -325,12 +332,17 @@ class TransactionItem {
   final String? accountName;
   final String currency;
   final String source;
+  final bool reimbursable;
+  final int discountAmountCents;
+  final bool excludeFromBudget;
 
   bool get isIncome => type == '收入';
   double get amount => amountCents / 100;
 
   TransactionItem copyWith({
     String? title,
+    String? note,
+    List<String>? tags,
     int? amountCents,
     String? type,
     String? occurredAt,
@@ -340,11 +352,16 @@ class TransactionItem {
     int? accountId,
     String? accountName,
     String? updatedAt,
+    bool? reimbursable,
+    int? discountAmountCents,
+    bool? excludeFromBudget,
   }) => TransactionItem(
     id: id,
     ledgerId: ledgerId,
     accountId: accountId ?? this.accountId,
     title: title ?? this.title,
+    note: note ?? this.note,
+    tags: tags ?? this.tags,
     amountCents: amountCents ?? this.amountCents,
     type: type ?? this.type,
     occurredAt: occurredAt ?? this.occurredAt,
@@ -357,6 +374,9 @@ class TransactionItem {
     accountName: accountName ?? this.accountName,
     currency: currency,
     source: source,
+    reimbursable: reimbursable ?? this.reimbursable,
+    discountAmountCents: discountAmountCents ?? this.discountAmountCents,
+    excludeFromBudget: excludeFromBudget ?? this.excludeFromBudget,
   );
 
   factory TransactionItem.fromJson(
@@ -366,6 +386,10 @@ class TransactionItem {
     ledgerId: _asInt(json['ledgerId'] ?? json['ledger_id']),
     accountId: _asInt(json['accountId'] ?? json['account_id']),
     title: '${json['title'] ?? '未命名流水'}',
+    note: json['note'] as String?,
+    tags: (json['tags'] as List<dynamic>? ?? const [])
+        .map((tag) => '$tag')
+        .toList(),
     amountCents: _asInt(json['amount']),
     type: '${json['type'] ?? '支出'}',
     occurredAt: '${json['occurredAt'] ?? json['occurred_at'] ?? ''}',
@@ -385,6 +409,10 @@ class TransactionItem {
     accountName: json['accountName'] as String?,
     currency: '${json['currency'] ?? 'CNY'}',
     source: '${json['source'] ?? '账本'}',
+    reimbursable: json['reimbursable'] == true || json['reimbursable'] == 1,
+    discountAmountCents: _asInt(json['discountAmount'] ?? 0),
+    excludeFromBudget:
+        json['excludeFromBudget'] == true || json['excludeFromBudget'] == 1,
   );
 
   Map<String, dynamic> toJson() => {
@@ -392,6 +420,8 @@ class TransactionItem {
     'ledgerId': ledgerId,
     'accountId': accountId,
     'title': title,
+    if (note != null) 'note': note,
+    if (tags.isNotEmpty) 'tags': tags,
     'amount': amountCents,
     'type': type,
     'occurredAt': occurredAt,
@@ -404,6 +434,9 @@ class TransactionItem {
     if (accountName != null) 'accountName': accountName,
     'currency': currency,
     'source': source,
+    'reimbursable': reimbursable,
+    'discountAmount': discountAmountCents,
+    'excludeFromBudget': excludeFromBudget,
   };
 }
 
@@ -1025,6 +1058,8 @@ class OfflineEntry {
     required this.amount,
     required this.type,
     required this.title,
+    this.note,
+    this.tags = const [],
     required this.category,
     required this.occurredAt,
     this.mood,
@@ -1042,6 +1077,8 @@ class OfflineEntry {
   final double amount;
   final String type;
   final String title;
+  final String? note;
+  final List<String> tags;
   final String category;
   final String occurredAt;
   final String? mood;
@@ -1059,6 +1096,8 @@ class OfflineEntry {
     'amount': amount,
     'type': type,
     'title': title,
+    if (note != null && note!.trim().isNotEmpty) 'note': note!.trim(),
+    if (tags.isNotEmpty) 'tags': tags,
     if (type == '支出') 'category': category,
     if (type == '收入') 'incomeCategory': category,
     if (type == '支出') 'mood': mood ?? '刚需',
@@ -1078,6 +1117,10 @@ class OfflineEntry {
     amount: (json['amount'] as num?)?.toDouble() ?? 0,
     type: '${json['type'] ?? '支出'}',
     title: '${json['title'] ?? '离线记账'}',
+    note: json['note']?.toString(),
+    tags: (json['tags'] as List<dynamic>? ?? const [])
+        .map((tag) => '$tag')
+        .toList(),
     category: '${json['category'] ?? '餐饮'}',
     occurredAt: '${json['occurredAt'] ?? ''}',
     mood: json['mood']?.toString(),

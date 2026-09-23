@@ -190,6 +190,13 @@ export const transactions = sqliteTable("transactions", {
   isSideHustle: integer("is_side_hustle", { mode: "boolean" })
     .notNull()
     .default(false),
+  reimbursable: integer("reimbursable", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  discountAmount: integer("discount_amount").notNull().default(0),
+  excludeFromBudget: integer("exclude_from_budget", { mode: "boolean" })
+    .notNull()
+    .default(false),
   offlineId: text("offline_id"),
   crdtId: text("crdt_id"),
   updatedAt: text("updated_at")

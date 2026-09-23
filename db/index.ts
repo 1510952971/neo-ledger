@@ -12,7 +12,7 @@ import {
   SCHEDULED_OCCURRENCES_TABLE_SQL,
 } from "./transfer-schema.js";
 
-export const DB_SCHEMA_VERSION = "32";
+export const DB_SCHEMA_VERSION = "33";
 const SCHEMA_VERSION = DB_SCHEMA_VERSION;
 let ensuredDbBinding: ReturnType<typeof getDbBinding> | null = null;
 
@@ -222,6 +222,18 @@ export async function ensureDb() {
     await runIdempotentAlter(binding, "ALTER TABLE import_batches ADD COLUMN undo_started_at TEXT");
     await runIdempotentAlter(binding, "ALTER TABLE import_batches ADD COLUMN undo_lock_id TEXT");
     await binding.prepare("UPDATE app_meta SET value='32' WHERE key='schema_version'").run();
+    return ensureDb();
+  }
+  if (version?.value === "32") {
+    await runMigrationBatch(binding, [
+      binding.prepare("ALTER TABLE transactions ADD COLUMN note TEXT"),
+      binding.prepare("ALTER TABLE transactions ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'"),
+      binding.prepare("ALTER TABLE transactions ADD COLUMN reimbursable INTEGER NOT NULL DEFAULT 0"),
+      binding.prepare("ALTER TABLE transactions ADD COLUMN discount_amount INTEGER NOT NULL DEFAULT 0"),
+      binding.prepare("ALTER TABLE transactions ADD COLUMN exclude_from_budget INTEGER NOT NULL DEFAULT 0"),
+      binding.prepare("CREATE INDEX IF NOT EXISTS transactions_ledger_tags_idx ON transactions(ledger_id,tags_json)"),
+      binding.prepare("UPDATE app_meta SET value='33' WHERE key='schema_version'"),
+    ]);
     return ensureDb();
   }
   if (version?.value === "30") {
