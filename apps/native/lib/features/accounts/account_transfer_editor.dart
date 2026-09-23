@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
-import 'models.dart';
+import '../../models.dart';
 
 class AccountTransferEditValues {
   const AccountTransferEditValues({
@@ -29,10 +29,8 @@ Future<AccountTransferEditValues?> showAccountTransferEditor(
   required List<Account> accounts,
 }) => showDialog<AccountTransferEditValues>(
   context: context,
-  builder: (_) => _AccountTransferEditorDialog(
-    transfer: transfer,
-    accounts: accounts,
-  ),
+  builder: (_) =>
+      _AccountTransferEditorDialog(transfer: transfer, accounts: accounts),
 );
 
 class _AccountTransferEditorDialog extends StatefulWidget {
@@ -65,7 +63,8 @@ class _AccountTransferEditorDialogState
     _kind = widget.transfer.kind == '信用卡还款' ? '信用卡还款' : '账户转账';
     _fromId = widget.transfer.fromAccountId ?? 0;
     _toId = widget.transfer.toAccountId ?? 0;
-    _occurredAt = DateTime.tryParse(widget.transfer.occurredAt)?.toLocal() ??
+    _occurredAt =
+        DateTime.tryParse(widget.transfer.occurredAt)?.toLocal() ??
         DateTime.now();
     _amountController = TextEditingController(
       text: (widget.transfer.amountCents / 100).toStringAsFixed(2),
@@ -170,7 +169,8 @@ class _AccountTransferEditorDialogState
                 setState(() {
                   _kind = value;
                   if (!_toOptions.any((account) => account.id == _toId)) {
-                    _toId = _toOptions
+                    _toId =
+                        _toOptions
                             .where((account) => account.isActive)
                             .firstOrNull
                             ?.id ??
@@ -189,7 +189,9 @@ class _AccountTransferEditorDialogState
                   .map(
                     (item) => DropdownMenuItem(
                       value: item.id,
-                      child: Text('${item.name}${item.isActive ? '' : '（已停用）'}'),
+                      child: Text(
+                        '${item.name}${item.isActive ? '' : '（已停用）'}',
+                      ),
                     ),
                   )
                   .toList(),
@@ -205,7 +207,9 @@ class _AccountTransferEditorDialogState
                   .map(
                     (item) => DropdownMenuItem(
                       value: item.id,
-                      child: Text('${item.name}${item.isActive ? '' : '（已停用）'}'),
+                      child: Text(
+                        '${item.name}${item.isActive ? '' : '（已停用）'}',
+                      ),
                     ),
                   )
                   .toList(),
@@ -214,7 +218,9 @@ class _AccountTransferEditorDialogState
             const SizedBox(height: 12),
             TextField(
               controller: _amountController,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               decoration: InputDecoration(
                 labelText: '金额',
                 prefixText: '${widget.transfer.currency} ',
@@ -234,14 +240,20 @@ class _AccountTransferEditorDialogState
             ),
             if (_error != null) ...[
               const SizedBox(height: 8),
-              Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             ],
           ],
         ),
       ),
     ),
     actions: [
-      TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('取消'),
+      ),
       FilledButton(onPressed: _submit, child: const Text('保存修改')),
     ],
   );

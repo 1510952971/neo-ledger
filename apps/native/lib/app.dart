@@ -10,10 +10,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
-import 'account_transfer_editor.dart';
 import 'feature_catalog.dart';
 import 'import_file_loader.dart';
 import 'import_parser.dart';
+import 'features/accounts/account_transfer_editor.dart';
 import 'models.dart';
 import 'mobile/domain/offline_projection.dart';
 import 'shortcut_entry.dart';
@@ -4546,131 +4546,188 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
   }
 
   Future<void> _showNativeAccountTransfers(Account account) async {
-    Future<List<AccountTransfer>> history =
-        widget.controller.fetchAccountTransfers(account.id);
+    Future<List<AccountTransfer>> history = widget.controller
+        .fetchAccountTransfers(account.id);
     await showDialog<void>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-        title: Text('${account.name} · 转账记录'),
-        content: SizedBox(
-          width: 460,
-          height: 420,
-          child: FutureBuilder<List<AccountTransfer>>(
-            future: history,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState != ConnectionState.done) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              if (snapshot.hasError) {
-                return Center(child: Text('读取失败：${snapshot.error}'));
-              }
-              final records = snapshot.data ?? const <AccountTransfer>[];
-              if (records.isEmpty) return const Center(child: Text('暂无转账记录'));
-              return ListView.separated(
-                itemCount: records.length,
-                separatorBuilder: (_, _) => const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  final item = records[index];
-                  final from = item.fromAccountName ?? '外部';
-                  final to = item.toAccountName ?? '外部';
-                  final parsedDate = DateTime.tryParse(item.occurredAt);
-                  final dateLabel = parsedDate == null
-                      ? item.occurredAt
-                      : DateFormat('MM-dd HH:mm').format(parsedDate.toLocal());
-                  final amount = widget.controller.preferences.hideAmounts
-                      ? '••••'
-                      : NumberFormat.currency(
-                          locale: 'zh_CN',
-                          name: item.currency,
-                          symbol: item.currency,
-                          decimalDigits: item.currency == 'JPY' ? 0 : 2,
-                        ).format(item.amountCents / 100);
-                      final editable = item.targetType == null &&
-                          item.fromAccountId != null &&
-                          item.toAccountId != null &&
-                          const ['账户转账', '信用卡还款'].contains(item.kind);
-                      return ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.swap_horiz_rounded),
-                    title: Text(
-                      item.note.trim().isEmpty ? item.kind : item.note,
-                    ),
-                    subtitle: Text('$from → $to · $dateLabel'),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(amount),
-                        if (editable)
-                          PopupMenuButton<String>(
-                            tooltip: '管理转账',
-                            onSelected: (action) async {
-                              if (action == 'edit') {
-                                final values = await showAccountTransferEditor(
-                                  context,
-                                  transfer: item,
-                                  accounts: widget.controller.accounts,
-                                );
-                                if (values == null) return;
-                                try {
-                                  await widget.controller.updateAccountTransfer(
-                                    item,
-                                    kind: values.kind,
-                                    fromAccountId: values.fromAccountId,
-                                    toAccountId: values.toAccountId,
-                                    amount: values.amount,
-                                    occurredAt: values.occurredAt,
-                                    originalTimezone: values.originalTimezone,
-                                    note: values.note,
+          title: Text('${account.name} · 转账记录'),
+          content: SizedBox(
+            width: 460,
+            height: 420,
+            child: FutureBuilder<List<AccountTransfer>>(
+              future: history,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError) {
+                  return Center(child: Text('读取失败：${snapshot.error}'));
+                }
+                final records = snapshot.data ?? const <AccountTransfer>[];
+                if (records.isEmpty) return const Center(child: Text('暂无转账记录'));
+                return ListView.separated(
+                  itemCount: records.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final item = records[index];
+                    final from = item.fromAccountName ?? '外部';
+                    final to = item.toAccountName ?? '外部';
+                    final parsedDate = DateTime.tryParse(item.occurredAt);
+                    final dateLabel = parsedDate == null
+                        ? item.occurredAt
+                        : DateFormat('MM-dd HH:mm')
+                              .format(parsedDate.toLocal());
+                    final amount = widget.controller.preferences.hideAmounts
+                        ? '••••'
+                        : NumberFormat.currency(
+                            locale: 'zh_CN',
+                            name: item.currency,
+                            symbol: item.currency,
+                            decimalDigits: item.currency == 'JPY' ? 0 : 2,
+                          ).format(item.amountCents / 100);
+                    final editable =
+                        item.targetType == null &&
+                        item.fromAccountId != null &&
+                        item.toAccountId != null &&
+                        const ['账户转账', '信用卡还款'].contains(item.kind);
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.swap_horiz_rounded),
+                      title: Text(
+                        item.note.trim().isEmpty ? item.kind : item.note,
+                      ),
+                      subtitle: Text('$from → $to · $dateLabel'),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(amount),
+                          if (editable)
+                            PopupMenuButton<String>(
+                              tooltip: '管理转账',
+                              onSelected: (action) async {
+                                if (action == 'edit') {
+                                  final values =
+                                      await showAccountTransferEditor(
+                                        context,
+                                        transfer: item,
+                                        accounts: widget.controller.accounts,
+                                      );
+                                  if (values == null) return;
+                                  try {
+                                    await widget.controller
+                                        .updateAccountTransfer(
+                                          item,
+                                          kind: values.kind,
+                                          fromAccountId: values.fromAccountId,
+                                          toAccountId: values.toAccountId,
+                                          amount: values.amount,
+                                          occurredAt: values.occurredAt,
+                                          originalTimezone:
+                                              values.originalTimezone,
+                                          note: values.note,
+                                        );
+                                    setDialogState(
+                                      () => history = widget.controller
+                                          .fetchAccountTransfers(account.id),
+                                    );
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                            const SnackBar(
+                                              content: Text('转账已更新，双方余额已同步'),
+                                            ),
+                                          );
+                                    }
+                                  } catch (error) {
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                            SnackBar(
+                                              content: Text('更新转账失败：$error'),
+                                            ),
+                                          );
+                                    }
+                                  }
+                                } else if (action == 'delete') {
+                                  final agreed = await showDialog<bool>(
+                                    context: context,
+                                    builder: (confirmContext) => AlertDialog(
+                                      title: const Text('删除这笔转账？'),
+                                      content: const Text(
+                                        '删除后会同时冲正转出与转入账户余额，此操作不可撤销。',
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () => Navigator.pop(
+                                            confirmContext,
+                                            false,
+                                          ),
+                                          child: const Text('取消'),
+                                        ),
+                                        FilledButton(
+                                          onPressed: () => Navigator.pop(
+                                            confirmContext,
+                                            true,
+                                          ),
+                                          child: const Text('删除转账'),
+                                        ),
+                                      ],
+                                    ),
                                   );
-                                  setDialogState(() => history = widget.controller.fetchAccountTransfers(account.id));
-                                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('转账已更新，双方余额已同步')));
-                                } catch (error) {
-                                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('更新转账失败：$error')));
+                                  if (agreed != true) return;
+                                  try {
+                                    await widget.controller
+                                        .deleteAccountTransfer(item);
+                                    setDialogState(
+                                      () => history = widget.controller
+                                          .fetchAccountTransfers(account.id),
+                                    );
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                            const SnackBar(
+                                              content: Text('转账已删除，双方余额已恢复'),
+                                            ),
+                                          );
+                                    }
+                                  } catch (error) {
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                            SnackBar(
+                                              content: Text('删除转账失败：$error'),
+                                            ),
+                                          );
+                                    }
+                                  }
                                 }
-                              } else if (action == 'delete') {
-                                final agreed = await showDialog<bool>(
-                                  context: context,
-                                  builder: (confirmContext) => AlertDialog(
-                                    title: const Text('删除这笔转账？'),
-                                    content: const Text('删除后会同时冲正转出与转入账户余额，此操作不可撤销。'),
-                                    actions: [
-                                      TextButton(onPressed: () => Navigator.pop(confirmContext, false), child: const Text('取消')),
-                                      FilledButton(onPressed: () => Navigator.pop(confirmContext, true), child: const Text('删除转账')),
-                                    ],
-                                  ),
-                                );
-                                if (agreed != true) return;
-                                try {
-                                  await widget.controller.deleteAccountTransfer(item);
-                                  setDialogState(() => history = widget.controller.fetchAccountTransfers(account.id));
-                                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('转账已删除，双方余额已恢复')));
-                                } catch (error) {
-                                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('删除转账失败：$error')));
-                                }
-                              }
-                            },
-                            itemBuilder: (_) => const [
-                              PopupMenuItem(value: 'edit', child: Text('编辑')),
-                              PopupMenuItem(value: 'delete', child: Text('删除')),
-                            ],
-                          )
-                        else
-                          const Icon(Icons.lock_outline_rounded, size: 18),
-                      ],
-                    ),
-                  );
-                },
-              );
-            },
+                              },
+                              itemBuilder: (_) => const [
+                                PopupMenuItem(value: 'edit', child: Text('编辑')),
+                                PopupMenuItem(
+                                  value: 'delete',
+                                  child: Text('删除'),
+                                ),
+                              ],
+                            )
+                          else
+                            const Icon(Icons.lock_outline_rounded, size: 18),
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('关闭'),
-          ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('关闭'),
+            ),
+          ],
         ),
       ),
     );

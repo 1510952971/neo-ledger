@@ -7,10 +7,10 @@ import 'package:intl/intl.dart';
 
 import 'app.dart';
 import 'api_client.dart';
-import 'account_transfer_editor.dart';
 import 'mobile/core/mobile_design.dart';
 import 'mobile/data/mobile_entry_preferences.dart';
 import 'mobile/domain/amount_expression.dart';
+import 'features/accounts/account_transfer_history_sheet.dart';
 import 'models.dart';
 
 const _mobileBg = MobileColors.background;
@@ -3956,11 +3956,23 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
       isScrollControlled: true,
       showDragHandle: true,
       backgroundColor: _mobileSurface,
-      builder: (_) => _AccountTransferHistorySheet(
-        controller: controller,
+      builder: (_) => AccountTransferHistorySheet(
         account: account,
+        accounts: controller.accounts,
         hideAmounts: controller.preferences.hideAmounts,
         history: controller.fetchAccountTransfers(account.id),
+        fetchHistory: controller.fetchAccountTransfers,
+        onEdit: (transfer, values) => controller.updateAccountTransfer(
+          transfer,
+          kind: values.kind,
+          fromAccountId: values.fromAccountId,
+          toAccountId: values.toAccountId,
+          amount: values.amount,
+          occurredAt: values.occurredAt,
+          originalTimezone: values.originalTimezone,
+          note: values.note,
+        ),
+        onDelete: controller.deleteAccountTransfer,
       ),
     );
   }
@@ -4158,197 +4170,6 @@ class _AccountGroup extends StatelessWidget {
       ],
     );
   }
-}
-
-class _AccountTransferHistorySheet extends StatefulWidget {
-  const _AccountTransferHistorySheet({
-    required this.controller,
-    required this.account,
-    required this.hideAmounts,
-    required this.history,
-  });
-
-  final LedgerController controller;
-  final Account account;
-  final bool hideAmounts;
-  final Future<List<AccountTransfer>> history;
-
-  @override
-  State<_AccountTransferHistorySheet> createState() =>
-      _AccountTransferHistorySheetState();
-}
-
-class _AccountTransferHistorySheetState
-    extends State<_AccountTransferHistorySheet> {
-  late Future<List<AccountTransfer>> _history;
-
-  @override
-  void initState() {
-    super.initState();
-    _history = widget.history;
-  }
-
-  Future<void> _refresh() async {
-    setState(() => _history = widget.controller.fetchAccountTransfers(widget.account.id));
-  }
-
-  Future<void> _manage(AccountTransfer transfer, String action) async {
-    final messenger = ScaffoldMessenger.of(context);
-    if (action == 'edit') {
-      final values = await showAccountTransferEditor(
-        context,
-        transfer: transfer,
-        accounts: widget.controller.accounts,
-      );
-      if (values == null) return;
-      try {
-        await widget.controller.updateAccountTransfer(
-          transfer,
-          kind: values.kind,
-          fromAccountId: values.fromAccountId,
-          toAccountId: values.toAccountId,
-          amount: values.amount,
-          occurredAt: values.occurredAt,
-          originalTimezone: values.originalTimezone,
-          note: values.note,
-        );
-        if (!mounted) return;
-        await _refresh();
-        messenger.showSnackBar(
-          const SnackBar(content: Text('转账已更新，双方账户余额已同步')),
-        );
-      } catch (error) {
-        if (mounted) {
-          messenger.showSnackBar(
-            SnackBar(content: Text('更新转账失败：$error')),
-          );
-        }
-      }
-      return;
-    }
-
-    final agreed = await showDialog<bool>(
-      context: context,
-      builder: (confirmContext) => AlertDialog(
-        title: const Text('删除这笔转账？'),
-        content: const Text('删除后会同时冲正转出与转入账户余额，此操作不可撤销。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(confirmContext, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(confirmContext, true),
-            child: const Text('删除转账'),
-          ),
-        ],
-      ),
-    );
-    if (agreed != true) return;
-    try {
-      await widget.controller.deleteAccountTransfer(transfer);
-      if (!mounted) return;
-      await _refresh();
-      messenger.showSnackBar(
-        const SnackBar(content: Text('转账已删除，双方账户余额已恢复')),
-      );
-    } catch (error) {
-      if (mounted) {
-        messenger.showSnackBar(
-          SnackBar(content: Text('删除转账失败：$error')),
-        );
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => SafeArea(
-    child: SizedBox(
-      height: MediaQuery.sizeOf(context).height * .72,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 8, 18, 20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              '${widget.account.name} · 转账记录',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: FutureBuilder<List<AccountTransfer>>(
-                future: _history,
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState != ConnectionState.done) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  if (snapshot.hasError) {
-                    return Center(child: Text('读取转账记录失败：${snapshot.error}'));
-                  }
-                  final records = snapshot.data ?? const <AccountTransfer>[];
-                  if (records.isEmpty) {
-                    return const Center(child: Text('这个账户还没有转账记录'));
-                  }
-                  return ListView.separated(
-                    itemCount: records.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final item = records[index];
-                      final from = item.fromAccountName ?? '外部';
-                      final to = item.toAccountName ?? '外部';
-                      final amount = widget.hideAmounts
-                          ? '••••'
-                          : _mobileMoneyCurrency(
-                              item.amountCents,
-                              item.currency,
-                            );
-                      final editable = item.targetType == null &&
-                          item.fromAccountId != null &&
-                          item.toAccountId != null &&
-                          const ['账户转账', '信用卡还款'].contains(item.kind);
-                      return ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.swap_horiz_rounded),
-                        title: Text(
-                          item.note.trim().isEmpty ? item.kind : item.note,
-                        ),
-                        subtitle: Text(
-                          '$from → $to · ${_mobileDate(item.occurredAt)}',
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              amount,
-                              style: const TextStyle(fontWeight: FontWeight.w700),
-                            ),
-                            if (editable)
-                              PopupMenuButton<String>(
-                                tooltip: '管理转账',
-                                onSelected: (action) => _manage(item, action),
-                                itemBuilder: (_) => const [
-                                  PopupMenuItem(value: 'edit', child: Text('编辑')),
-                                  PopupMenuItem(value: 'delete', child: Text('删除')),
-                                ],
-                              )
-                            else
-                              const Padding(
-                                padding: EdgeInsets.all(12),
-                                child: Icon(Icons.lock_outline_rounded, size: 18),
-                              ),
-                          ],
-                        ),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
 }
 
 class _MobileAccountEditor extends StatefulWidget {
