@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -1134,7 +1137,7 @@ class MobileProfilePage extends StatelessWidget {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(18, 8, 18, 110),
         children: [
-          _ProfileHeader(user: user),
+          _ProfileHeader(user: user, onAvatarTap: () => _pickAvatar(context)),
           const SizedBox(height: 16),
           _NetWorthCard(
             accountTotal: accountTotal,
@@ -1223,6 +1226,68 @@ class MobileProfilePage extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _pickAvatar(BuildContext context) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('从相册选择'),
+              onTap: () => Navigator.pop(context, 'pick'),
+            ),
+            if (controller.user?.avatarUrl != null)
+              ListTile(
+                leading: const Icon(Icons.delete_outline_rounded),
+                title: const Text('删除头像'),
+                onTap: () => Navigator.pop(context, 'remove'),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (!context.mounted || action == null) return;
+    if (action == 'remove') {
+      try {
+        await controller.updateAvatar(null);
+      } catch (error) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text('删除头像失败：$error')));
+        }
+      }
+      return;
+    }
+    final file = await FilePicker.pickFile(type: FileType.image);
+    if (!context.mounted || file == null) return;
+    final bytes = await file.readAsBytes();
+    if (!context.mounted) return;
+    if (bytes.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('无法读取所选图片')));
+      return;
+    }
+    if (bytes.length > 512 * 1024) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('头像图片不能超过 512 KB')));
+      return;
+    }
+    final extension = (file.extension ?? 'jpeg').toLowerCase();
+    final mime = extension == 'png' ? 'image/png' : 'image/jpeg';
+    try {
+      await controller.updateAvatar('data:$mime;base64,${base64Encode(bytes)}');
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('上传头像失败：$error')));
+      }
+    }
   }
 }
 
@@ -2668,26 +2733,20 @@ class _ChartBar extends StatelessWidget {
 }
 
 class _ProfileHeader extends StatelessWidget {
-  const _ProfileHeader({required this.user});
+  const _ProfileHeader({required this.user, required this.onAvatarTap});
 
   final SessionUser? user;
+  final VoidCallback onAvatarTap;
 
   @override
   Widget build(BuildContext context) {
     final name = user?.displayName ?? 'Neo Ledger 用户';
     return Row(
       children: [
-        CircleAvatar(
-          radius: 28,
-          backgroundColor: _mobileBrand.withAlpha(40),
-          child: Text(
-            name.isEmpty ? '?' : name.substring(0, 1),
-            style: const TextStyle(
-              color: _mobileBrand,
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
+        InkWell(
+          onTap: onAvatarTap,
+          customBorder: const CircleBorder(),
+          child: _MobileAvatar(user: user, radius: 28),
         ),
         const SizedBox(width: 14),
         Expanded(
@@ -2712,6 +2771,44 @@ class _ProfileHeader extends StatelessWidget {
         ),
         const Icon(Icons.chevron_right_rounded, color: _mobileMuted),
       ],
+    );
+  }
+}
+
+class _MobileAvatar extends StatelessWidget {
+  const _MobileAvatar({required this.user, required this.radius});
+
+  final SessionUser? user;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    final avatar = user?.avatarUrl;
+    ImageProvider<Object>? image;
+    if (avatar != null && avatar.startsWith('data:image/')) {
+      final comma = avatar.indexOf(',');
+      if (comma >= 0) {
+        try {
+          image = MemoryImage(base64Decode(avatar.substring(comma + 1)));
+        } catch (_) {}
+      }
+    }
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: _mobileBrand.withAlpha(40),
+      backgroundImage: image,
+      child: image == null
+          ? Text(
+              (user?.displayName.isNotEmpty == true)
+                  ? user!.displayName.substring(0, 1)
+                  : '?',
+              style: TextStyle(
+                color: _mobileBrand,
+                fontSize: radius * .78,
+                fontWeight: FontWeight.w800,
+              ),
+            )
+          : null,
     );
   }
 }

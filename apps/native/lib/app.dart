@@ -764,6 +764,30 @@ class LedgerController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> updateAvatar(String? dataUrl) async {
+    if (demoMode) {
+      final current = user;
+      if (current == null) return;
+      user = SessionUser(
+        username: current.username,
+        displayName: current.displayName,
+        avatarUrl: dataUrl,
+      );
+      notifyListeners();
+      return;
+    }
+    final avatarUrl = await api.updateAvatar(dataUrl);
+    final current = user;
+    if (current == null) return;
+    user = SessionUser(
+      username: current.username,
+      displayName: current.displayName,
+      avatarUrl: avatarUrl,
+    );
+    await _persistCoreSnapshot();
+    notifyListeners();
+  }
+
   bool get isAndroid =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 

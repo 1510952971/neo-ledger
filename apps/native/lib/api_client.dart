@@ -62,6 +62,14 @@ class NeoLedgerApi {
     return SessionUser.fromJson(Map<String, dynamic>.from(rawUser));
   }
 
+  Future<String?> updateAvatar(String? dataUrl) async {
+    final data = await patchJson('/api/auth', {'avatarUrl': dataUrl});
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('头像响应格式无效');
+    }
+    return data['avatarUrl'] as String?;
+  }
+
   Future<void> setBaseUrl(String value) async {
     final normalized = value.trim().replaceFirst(RegExp(r'/$'), '');
     if (normalized.isEmpty) return;
