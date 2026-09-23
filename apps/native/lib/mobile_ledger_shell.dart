@@ -970,6 +970,9 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
   String? _categoryFilter;
   double? _minAmount;
   double? _maxAmount;
+  DateTime? _dateFrom;
+  DateTime? _dateTo;
+  bool _loadingMore = false;
   bool _selectionMode = false;
   final _selectedIds = <int>{};
   List<String> _searchHistory = const [];
@@ -1033,7 +1036,7 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
                     child: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 10),
                       child: Text(
-                        DateFormat('yyyy年MM月').format(_month),
+                        _periodLabel,
                         textAlign: TextAlign.center,
                         style: const TextStyle(
                           color: Colors.white,
@@ -1161,6 +1164,20 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
                   ),
                 const SizedBox(height: 8),
               ],
+            if (page.nextCursor != null) ...[
+              const SizedBox(height: 4),
+              OutlinedButton.icon(
+                onPressed: _loading || _loadingMore ? null : _loadMore,
+                icon: _loadingMore
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.expand_more_rounded),
+                label: Text(_loadingMore ? '加载中…' : '加载更多历史账单'),
+              ),
+            ],
           ],
         ),
       ),
@@ -1411,22 +1428,30 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
     }
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool append = false}) async {
     final ledger = controller.selectedLedger;
     if (ledger == null) return;
-    final from = DateFormat('yyyy-MM-dd').format(_month);
+    final fromDate = _dateFrom ?? _month;
     final last = DateTime(_month.year, _month.month + 1, 0);
+    final toDate = _dateTo ?? last;
+    final previous = _page;
+    if (append && previous?.nextCursor == null) return;
     setState(() {
-      _loading = true;
-      _error = null;
+      if (append) {
+        _loadingMore = true;
+      } else {
+        _loading = true;
+        _error = null;
+      }
     });
     try {
       final page = await controller.api.fetchTransactions(
         ledger.id,
         limit: 100,
         query: _search.text,
-        from: from,
-        to: DateFormat('yyyy-MM-dd').format(last),
+        from: DateFormat('yyyy-MM-dd').format(fromDate),
+        to: DateFormat('yyyy-MM-dd').format(toDate),
+        cursor: append ? previous?.nextCursor : null,
         timezoneOffsetMinutes: DateTime.now().timeZoneOffset.inMinutes,
         accountId: _accountFilter,
         type: _typeFilter,
@@ -1434,13 +1459,32 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
         minAmount: _minAmount,
         maxAmount: _maxAmount,
       );
-      if (mounted) setState(() => _page = page);
+      if (mounted) {
+        setState(() {
+          _page = append && previous != null
+              ? TransactionPage(
+                  items: [...previous.items, ...page.items],
+                  total: page.total,
+                  incomeCents: page.incomeCents,
+                  expenseCents: page.expenseCents,
+                  nextCursor: page.nextCursor,
+                )
+              : page;
+        });
+      }
     } catch (error) {
       if (mounted) setState(() => _error = '$error');
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadingMore = false;
+        });
+      }
     }
   }
+
+  Future<void> _loadMore() => _load(append: true);
 
   Future<void> _loadSearchHistory() async {
     final history = await _searchPreferences.recentBillSearches();
@@ -1462,13 +1506,21 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
   }
 
   void _changeMonth(int delta) {
-    setState(() => _month = DateTime(_month.year, _month.month + delta));
+    setState(() {
+      _month = DateTime(_month.year, _month.month + delta);
+      _dateFrom = null;
+      _dateTo = null;
+    });
     _load();
   }
 
   void _goToCurrentMonth() {
     final now = DateTime.now();
-    setState(() => _month = DateTime(now.year, now.month));
+    setState(() {
+      _month = DateTime(now.year, now.month);
+      _dateFrom = null;
+      _dateTo = null;
+    });
     _load();
   }
 
@@ -1477,7 +1529,20 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
       _typeFilter != null ||
       _categoryFilter != null ||
       _minAmount != null ||
-      _maxAmount != null;
+      _maxAmount != null ||
+      _dateFrom != null ||
+      _dateTo != null;
+
+  String get _periodLabel {
+    if (_dateFrom == null && _dateTo == null) {
+      return DateFormat('yyyy年MM月').format(_month);
+    }
+    final from = _dateFrom == null
+        ? '不限起始'
+        : DateFormat('MM月dd日').format(_dateFrom!);
+    final to = _dateTo == null ? '不限结束' : DateFormat('MM月dd日').format(_dateTo!);
+    return '$from – $to';
+  }
 
   void _clearFilters() {
     setState(() {
@@ -1486,6 +1551,8 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
       _categoryFilter = null;
       _minAmount = null;
       _maxAmount = null;
+      _dateFrom = null;
+      _dateTo = null;
     });
     _load();
   }
@@ -1494,6 +1561,8 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
     var accountId = _accountFilter;
     var type = _typeFilter;
     var category = _categoryFilter;
+    var dateFrom = _dateFrom;
+    var dateTo = _dateTo;
     final minimum = TextEditingController(text: _minAmount?.toString() ?? '');
     final maximum = TextEditingController(text: _maxAmount?.toString() ?? '');
     final categories = {
@@ -1551,6 +1620,69 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
                 onChanged: (value) => setSheetState(() => accountId = value),
               ),
               const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.calendar_today_rounded),
+                      label: Text(
+                        dateFrom == null
+                            ? '不限起始日期'
+                            : DateFormat('yyyy-MM-dd').format(dateFrom!),
+                      ),
+                      onPressed: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          firstDate: DateTime(2000),
+                          lastDate: DateTime.now().add(
+                            const Duration(days: 365),
+                          ),
+                          initialDate: dateFrom ?? dateTo ?? _month,
+                        );
+                        if (picked != null) {
+                          setSheetState(() => dateFrom = picked);
+                        }
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.event_rounded),
+                      label: Text(
+                        dateTo == null
+                            ? '不限结束日期'
+                            : DateFormat('yyyy-MM-dd').format(dateTo!),
+                      ),
+                      onPressed: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          firstDate: DateTime(2000),
+                          lastDate: DateTime.now().add(
+                            const Duration(days: 365),
+                          ),
+                          initialDate: dateTo ?? dateFrom ?? _month,
+                        );
+                        if (picked != null) {
+                          setSheetState(() => dateTo = picked);
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              if (dateFrom != null || dateTo != null)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () => setSheetState(() {
+                      dateFrom = null;
+                      dateTo = null;
+                    }),
+                    child: const Text('清除日期'),
+                  ),
+                ),
+              const SizedBox(height: 10),
               DropdownButtonFormField<String?>(
                 initialValue: category,
                 decoration: const InputDecoration(labelText: '分类'),
@@ -1601,6 +1733,11 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
       if (min != null && max != null && min > max) {
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text('最低金额不能大于最高金额')));
+      } else if (dateFrom != null &&
+          dateTo != null &&
+          dateFrom!.isAfter(dateTo!)) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('起始日期不能晚于结束日期')));
       } else {
         setState(() {
           _accountFilter = accountId;
@@ -1608,6 +1745,8 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
           _categoryFilter = category;
           _minAmount = min;
           _maxAmount = max;
+          _dateFrom = dateFrom;
+          _dateTo = dateTo;
         });
         _load();
       }
@@ -1625,7 +1764,11 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
       helpText: '选择月份（日期不影响结果）',
     );
     if (selected == null) return;
-    setState(() => _month = DateTime(selected.year, selected.month));
+    setState(() {
+      _month = DateTime(selected.year, selected.month);
+      _dateFrom = null;
+      _dateTo = null;
+    });
     _load();
   }
 
