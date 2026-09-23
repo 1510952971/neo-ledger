@@ -2344,11 +2344,13 @@ class MobileProfilePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final user = controller.user;
-    final accountTotal = controller.accounts.fold<int>(
-      0,
-      (sum, item) => sum + item.balanceCents,
-    );
-    final assetTotal = controller.assets.fold<int>(
+    final accountAssets = controller.accounts
+        .where((item) => item.type == '资产')
+        .fold<int>(0, (sum, item) => sum + item.balanceCents);
+    final liabilityTotal = controller.accounts
+        .where((item) => item.type == '负债')
+        .fold<int>(0, (sum, item) => sum + item.balanceCents.abs());
+    final digitalAssetTotal = controller.assets.fold<int>(
       0,
       (sum, item) => sum + (item.currentValueCents ?? item.valueCents),
     );
@@ -2361,9 +2363,10 @@ class MobileProfilePage extends StatelessWidget {
           _ProfileHeader(user: user, onAvatarTap: () => _pickAvatar(context)),
           const SizedBox(height: 16),
           _NetWorthCard(
-            accountTotal: accountTotal,
-            assetTotal: assetTotal,
+            assetTotal: accountAssets + digitalAssetTotal,
+            liabilityTotal: liabilityTotal,
             ledgerName: controller.selectedLedger?.name ?? '日常账本',
+            hideAmounts: controller.preferences.hideAmounts,
           ),
           const SizedBox(height: 22),
           _SectionHeader(
@@ -3629,8 +3632,20 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final assets = controller.accounts.where((item) => item.type == '资产');
-    final liabilities = controller.accounts.where((item) => item.type == '负债');
+    final assetGroups = <String, List<Account>>{};
+    for (final account in controller.accounts.where(
+      (item) => item.type == '资产',
+    )) {
+      final group = account.isInvestment
+          ? '投资账户'
+          : account.assetClass.trim().isEmpty
+          ? '现金流账户'
+          : account.assetClass;
+      assetGroups.putIfAbsent(group, () => []).add(account);
+    }
+    final liabilities = controller.accounts
+        .where((item) => item.type == '负债')
+        .toList();
     return Scaffold(
       backgroundColor: _mobileBg,
       appBar: AppBar(
@@ -3655,16 +3670,26 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(18, 12, 18, 110),
           children: [
-            _AccountGroup(
-              title: '资产账户',
-              accounts: assets.toList(),
-              onEdit: _editAccount,
-              onDelete: _deleteAccount,
-            ),
-            const SizedBox(height: 18),
+            if (assetGroups.isEmpty)
+              _AccountGroup(
+                title: '资产账户',
+                accounts: const [],
+                onEdit: _editAccount,
+                onDelete: _deleteAccount,
+              )
+            else
+              for (final group in assetGroups.entries) ...[
+                _AccountGroup(
+                  title: group.key,
+                  accounts: group.value,
+                  onEdit: _editAccount,
+                  onDelete: _deleteAccount,
+                ),
+                const SizedBox(height: 18),
+              ],
             _AccountGroup(
               title: '负债账户',
-              accounts: liabilities.toList(),
+              accounts: liabilities,
               onEdit: _editAccount,
               onDelete: _deleteAccount,
             ),
@@ -5799,14 +5824,16 @@ class _MobileAvatar extends StatelessWidget {
 
 class _NetWorthCard extends StatelessWidget {
   const _NetWorthCard({
-    required this.accountTotal,
     required this.assetTotal,
+    required this.liabilityTotal,
     required this.ledgerName,
+    required this.hideAmounts,
   });
 
-  final int accountTotal;
   final int assetTotal;
+  final int liabilityTotal;
   final String ledgerName;
+  final bool hideAmounts;
 
   @override
   Widget build(BuildContext context) {
@@ -5826,7 +5853,7 @@ class _NetWorthCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            _mobileMoney(accountTotal + assetTotal),
+            hideAmounts ? '••••' : _mobileMoney(assetTotal - liabilityTotal),
             style: const TextStyle(
               color: Colors.white,
               fontSize: 28,
@@ -5838,16 +5865,18 @@ class _NetWorthCard extends StatelessWidget {
             children: [
               Expanded(
                 child: _SummaryValue(
-                  label: '账户余额',
-                  amount: accountTotal,
+                  label: '总资产',
+                  amount: assetTotal,
                   color: _mobileBrand,
+                  hideAmount: hideAmounts,
                 ),
               ),
               Expanded(
                 child: _SummaryValue(
-                  label: '数字资产',
-                  amount: assetTotal,
-                  color: _mobilePurple,
+                  label: '总负债',
+                  amount: liabilityTotal,
+                  color: _mobileExpense,
+                  hideAmount: hideAmounts,
                 ),
               ),
             ],
