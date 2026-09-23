@@ -3060,6 +3060,14 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
   final _billSearchController = TextEditingController();
   String _billQuery = '';
   String _billType = '全部';
+  int? _billAccountId;
+  String? _billCategory;
+  double? _billMinAmount;
+  double? _billMaxAmount;
+  TransactionPage? _billServerPage;
+  Timer? _billQueryTimer;
+  int _billQueryGeneration = 0;
+  bool _billQueryLoading = false;
   Timer? _backgroundRefreshTimer;
   AppLifecycleState _lifecycleState = AppLifecycleState.resumed;
   bool _backgroundRefreshInFlight = false;
@@ -3228,6 +3236,7 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
   @override
   void dispose() {
     _backgroundRefreshTimer?.cancel();
+    _billQueryTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _billSearchController.dispose();
     unawaited(NeoWindowsPlatform.clearFilesDroppedHandler());
@@ -4390,22 +4399,47 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
   }
 
   Widget _bills() {
-    final allItems = widget.controller.transactions.items;
+    final sourcePage = _billServerPage ?? widget.controller.transactions;
+    final allItems = sourcePage.items;
     final query = _billQuery.trim().toLowerCase();
-    final items = allItems.where((item) {
-      if (_billType != '全部' && item.type != _billType) return false;
-      if (query.isEmpty) return true;
-      final searchable = [
-        item.title,
-        item.category,
-        item.incomeCategory,
-        item.accountName,
-        item.source,
-        item.type,
-        _money(item.amountCents),
-      ].whereType<String>().join(' ').toLowerCase();
-      return searchable.contains(query);
-    }).toList();
+    final serverFiltering = _billServerPage != null;
+    final items = serverFiltering
+        ? allItems
+        : allItems.where((item) {
+            if (_billType != '全部' && item.type != _billType) return false;
+            if (_billAccountId != null && item.accountId != _billAccountId) {
+              return false;
+            }
+            if (_billCategory != null &&
+                item.category != _billCategory &&
+                item.incomeCategory != _billCategory) {
+              return false;
+            }
+            if (_billMinAmount != null && item.amount < _billMinAmount!) {
+              return false;
+            }
+            if (_billMaxAmount != null && item.amount > _billMaxAmount!) {
+              return false;
+            }
+            if (query.isEmpty) return true;
+            final searchable = [
+              item.title,
+              item.note,
+              ...item.tags,
+              item.category,
+              item.incomeCategory,
+              item.accountName,
+              item.source,
+              item.type,
+              _money(item.amountCents),
+            ].whereType<String>().join(' ').toLowerCase();
+            return searchable.contains(query);
+          }).toList();
+    final activeFilters = [
+      if (_billAccountId != null) '账户',
+      if (_billCategory != null) '分类',
+      if (_billMinAmount != null || _billMaxAmount != null) '金额',
+    ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -4413,20 +4447,52 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
         const SizedBox(height: 12),
         TextField(
           controller: _billSearchController,
-          onChanged: (value) => setState(() => _billQuery = value),
+          onChanged: (value) {
+            setState(() => _billQuery = value);
+            _queueBillQuery();
+          },
           decoration: InputDecoration(
             prefixIcon: const Icon(Icons.search),
-            hintText: '搜索项目、分类、账户、来源或金额',
-            suffixIcon: _billQuery.isEmpty
-                ? null
-                : IconButton(
+            hintText: '搜索项目、备注、标签、分类、账户或金额',
+            suffixIcon: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_billQueryLoading)
+                  const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                if (activeFilters.isNotEmpty)
+                  IconButton(
+                    tooltip: '筛选',
+                    onPressed: _openBillFilters,
+                    icon: Badge(
+                      label: Text('${activeFilters.length}'),
+                      child: const Icon(Icons.tune_outlined),
+                    ),
+                  )
+                else
+                  IconButton(
+                    tooltip: '筛选',
+                    onPressed: _openBillFilters,
+                    icon: const Icon(Icons.tune_outlined),
+                  ),
+                if (_billQuery.isNotEmpty)
+                  IconButton(
                     tooltip: '清除搜索',
                     onPressed: () {
                       _billSearchController.clear();
                       setState(() => _billQuery = '');
+                      _queueBillQuery();
                     },
                     icon: const Icon(Icons.clear),
                   ),
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 10),
@@ -4437,19 +4503,198 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
               FilterChip(
                 label: Text(type),
                 selected: _billType == type,
-                onSelected: (_) => setState(() => _billType = type),
+                onSelected: (_) {
+                  setState(() => _billType = type);
+                  _queueBillQuery();
+                },
               ),
           ],
         ),
         const SizedBox(height: 8),
         Text(
-          '显示 ${items.length} / ${allItems.length} 条流水',
+          '显示 ${items.length} / ${sourcePage.total} 条流水${activeFilters.isEmpty ? '' : ' · ${activeFilters.join('、')}筛选中'}',
           style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
         ),
         const SizedBox(height: 10),
         _transactionList(items),
       ],
     );
+  }
+
+  bool get _hasBillQuery =>
+      _billQuery.trim().isNotEmpty ||
+      _billType != '全部' ||
+      _billAccountId != null ||
+      _billCategory != null ||
+      _billMinAmount != null ||
+      _billMaxAmount != null;
+
+  void _queueBillQuery() {
+    _billQueryTimer?.cancel();
+    if (!_hasBillQuery) {
+      if (mounted) setState(() => _billServerPage = null);
+      return;
+    }
+    if (widget.controller.demoMode) return;
+    final generation = ++_billQueryGeneration;
+    _billQueryTimer = Timer(const Duration(milliseconds: 320), () {
+      unawaited(_loadBillQuery(generation));
+    });
+  }
+
+  Future<void> _loadBillQuery(int generation) async {
+    final ledger = widget.controller.selectedLedger;
+    if (ledger == null || !mounted) return;
+    setState(() => _billQueryLoading = true);
+    try {
+      final page = await widget.controller.api.fetchTransactions(
+        ledger.id,
+        limit: 100,
+        query: _billQuery,
+        type: _billType == '全部' ? null : _billType,
+        accountId: _billAccountId,
+        category: _billCategory,
+        minAmount: _billMinAmount,
+        maxAmount: _billMaxAmount,
+        timezoneOffsetMinutes: DateTime.now().timeZoneOffset.inMinutes,
+      );
+      if (mounted && generation == _billQueryGeneration) {
+        setState(() => _billServerPage = page);
+      }
+    } catch (error) {
+      if (mounted && generation == _billQueryGeneration) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('查询账单失败：$error')));
+      }
+    } finally {
+      if (mounted && generation == _billQueryGeneration) {
+        setState(() => _billQueryLoading = false);
+      }
+    }
+  }
+
+  Future<void> _openBillFilters() async {
+    final min = TextEditingController(text: _billMinAmount?.toString() ?? '');
+    final max = TextEditingController(text: _billMaxAmount?.toString() ?? '');
+    var accountId = _billAccountId ?? 0;
+    var category = _billCategory ?? '';
+    final categories = {
+      ...widget.controller.expenseCategories.map((item) => item.name),
+      ...widget.controller.incomeCategories.map((item) => item.name),
+    }.toList()..sort();
+    final result = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => Padding(
+          padding: EdgeInsets.fromLTRB(
+            20,
+            4,
+            20,
+            MediaQuery.viewInsetsOf(context).bottom + 24,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  '组合筛选',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 14),
+                DropdownButtonFormField<int>(
+                  initialValue: accountId,
+                  decoration: const InputDecoration(labelText: '账户'),
+                  items: [
+                    const DropdownMenuItem(value: 0, child: Text('全部账户')),
+                    ...widget.controller.accounts.map(
+                      (item) => DropdownMenuItem(
+                        value: item.id,
+                        child: Text('${item.icon} ${item.name}'),
+                      ),
+                    ),
+                  ],
+                  onChanged: (value) =>
+                      setSheetState(() => accountId = value ?? 0),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: category,
+                  decoration: const InputDecoration(labelText: '分类'),
+                  items: [
+                    const DropdownMenuItem(value: '', child: Text('全部分类')),
+                    ...categories.map(
+                      (item) =>
+                          DropdownMenuItem(value: item, child: Text(item)),
+                    ),
+                  ],
+                  onChanged: (value) =>
+                      setSheetState(() => category = value ?? ''),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: min,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(labelText: '最低金额'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: max,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(labelText: '最高金额'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(sheetContext, const {}),
+                        child: const Text('清除筛选'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () => Navigator.pop(sheetContext, {
+                          'accountId': accountId == 0 ? null : accountId,
+                          'category': category.isEmpty ? null : category,
+                          'min': double.tryParse(min.text.trim()),
+                          'max': double.tryParse(max.text.trim()),
+                        }),
+                        child: const Text('应用筛选'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    min.dispose();
+    max.dispose();
+    if (!mounted || result == null) return;
+    setState(() {
+      _billAccountId = result['accountId'] as int?;
+      _billCategory = result['category'] as String?;
+      _billMinAmount = result['min'] as double?;
+      _billMaxAmount = result['max'] as double?;
+    });
+    _queueBillQuery();
   }
 
   Widget _plans() {
@@ -4912,7 +5157,12 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
           color: selected ? _brand.withValues(alpha: .12) : null,
           child: ListTile(
             selected: selected,
-            onTap: () => _selectTransaction(item),
+            onTap: () {
+              _selectTransaction(item);
+              if (MediaQuery.sizeOf(context).width < 900) {
+                _openTransactionDetails(item);
+              }
+            },
             leading: CircleAvatar(
               backgroundColor: item.isIncome
                   ? Colors.green.withValues(alpha: .18)
@@ -5376,6 +5626,26 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
       showDragHandle: true,
       builder: (_) =>
           EditTransactionSheet(controller: widget.controller, item: item),
+    );
+  }
+
+  Future<void> _openTransactionDetails(TransactionItem item) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => TransactionDetailSheet(
+        controller: widget.controller,
+        item: item,
+        onEdit: () {
+          Navigator.pop(context);
+          _editTransaction(item);
+        },
+        onDelete: () {
+          Navigator.pop(context);
+          _deleteTransaction(item);
+        },
+      ),
     );
   }
 
@@ -11594,6 +11864,124 @@ class _EntrySheetState extends State<EntrySheet> {
     } finally {
       if (mounted) setState(() => saving = false);
     }
+  }
+}
+
+class TransactionDetailSheet extends StatelessWidget {
+  const TransactionDetailSheet({
+    required this.controller,
+    required this.item,
+    required this.onEdit,
+    required this.onDelete,
+    super.key,
+  });
+
+  final LedgerController controller;
+  final TransactionItem item;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final canDelete = item.installmentId == null;
+    final amountColor = item.isIncome ? _brand : Colors.orangeAccent;
+    final bottom = MediaQuery.viewInsetsOf(context).bottom;
+    Widget row(String label, String value) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 74,
+              child: Text(label, style: TextStyle(color: Colors.grey.shade500)),
+            ),
+            Expanded(child: Text(value, textAlign: TextAlign.end)),
+          ],
+        ),
+      );
+    }
+
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(20, 4, 20, bottom + 24),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(item.title, style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 8),
+              Text(
+                '${item.isIncome ? '+' : '-'}${_money(item.amountCents)}',
+                style: Theme.of(context).textTheme.displaySmall
+                    ?.copyWith(color: amountColor, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 4),
+              Text(item.isIncome ? '收入' : '支出'),
+              const SizedBox(height: 14),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                  child: Column(
+                    children: [
+                      row('发生时间', _date(item.occurredAt)),
+                      row('账户', item.accountName ?? '未指定账户'),
+                      row('分类', item.category ?? item.incomeCategory ?? '未分类'),
+                      row('币种', item.currency),
+                      row('来源', item.source),
+                      if (item.note != null && item.note!.trim().isNotEmpty)
+                        row('备注', item.note!.trim()),
+                      if (item.tags.isNotEmpty)
+                        row('标签', item.tags.join(' · ')),
+                      if (item.reimbursable) row('报销', '待报销'),
+                      if (item.excludeFromBudget) row('预算', '不计入预算'),
+                      if (item.updatedAt != null)
+                        row('同步时间', _date(item.updatedAt!)),
+                    ],
+                  ),
+                ),
+              ),
+              if (item.installmentId != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Text(
+                    '这笔流水由分期计划生成，不能单独删除或修改。',
+                    style: TextStyle(color: Colors.orange.shade300),
+                  ),
+                ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: onEdit,
+                      icon: const Icon(Icons.edit_outlined),
+                      label: const Text('编辑'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: canDelete ? onDelete : null,
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('删除'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                item.source == offlineTransactionSource
+                    ? '当前状态：等待联网同步'
+                    : '当前状态：已与账本服务同步',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
