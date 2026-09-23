@@ -208,6 +208,22 @@ class NeoLedgerApi {
         : const [];
   }
 
+  Future<List<AccountTransfer>> fetchAccountTransfers({
+    required int ledgerId,
+    required int accountId,
+  }) async {
+    final query = Uri(
+      queryParameters: {'ledger': '$ledgerId', 'account': '$accountId'},
+    ).query;
+    final data = await getJson('/api/transfers?$query');
+    return data is List
+        ? data
+              .whereType<Map<String, dynamic>>()
+              .map(AccountTransfer.fromJson)
+              .toList()
+        : const [];
+  }
+
   Future<List<Member>> fetchMembers(int ledgerId) async {
     final data = await getJson('/api/members?ledger=$ledgerId');
     return data is List

@@ -2,6 +2,29 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:neo_ledger/models.dart';
 
 void main() {
+  test('transfer history preserves both linked accounts and currency', () {
+    final transfer = AccountTransfer.fromJson({
+      'uuid': 'transfer-1',
+      'kind': '账户转账',
+      'fromAccountId': 7,
+      'fromAccountName': '工资卡',
+      'toAccountId': 9,
+      'toAccountName': '储蓄卡',
+      'amount': 12550,
+      'currency': 'CNY',
+      'occurredAt': '2026-09-23T10:00:00Z',
+      'note': '每月存款',
+    });
+
+    expect(transfer.fromAccountId, 7);
+    expect(transfer.fromAccountName, '工资卡');
+    expect(transfer.toAccountId, 9);
+    expect(transfer.toAccountName, '储蓄卡');
+    expect(transfer.amountCents, 12550);
+    expect(transfer.currency, 'CNY');
+    expect(transfer.note, '每月存款');
+  });
+
   group('TransactionItem', () {
     test('identifies income and preserves edits with copyWith', () {
       const expense = TransactionItem(

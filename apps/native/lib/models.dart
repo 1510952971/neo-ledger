@@ -156,6 +156,50 @@ class Account {
   };
 }
 
+class AccountTransfer {
+  const AccountTransfer({
+    required this.uuid,
+    required this.kind,
+    required this.amountCents,
+    required this.currency,
+    required this.occurredAt,
+    required this.note,
+    this.fromAccountId,
+    this.fromAccountName,
+    this.toAccountId,
+    this.toAccountName,
+  });
+
+  final String uuid;
+  final String kind;
+  final int amountCents;
+  final String currency;
+  final String occurredAt;
+  final String note;
+  final int? fromAccountId;
+  final String? fromAccountName;
+  final int? toAccountId;
+  final String? toAccountName;
+
+  factory AccountTransfer.fromJson(Map<String, dynamic> json) =>
+      AccountTransfer(
+        uuid: '${json['uuid'] ?? ''}',
+        kind: '${json['kind'] ?? '账户转账'}',
+        amountCents: _asInt(json['amount']),
+        currency: '${json['currency'] ?? 'CNY'}',
+        occurredAt: '${json['occurredAt'] ?? ''}',
+        note: '${json['note'] ?? ''}',
+        fromAccountId: json['fromAccountId'] == null
+            ? null
+            : _asInt(json['fromAccountId']),
+        fromAccountName: json['fromAccountName'] as String?,
+        toAccountId: json['toAccountId'] == null
+            ? null
+            : _asInt(json['toAccountId']),
+        toAccountName: json['toAccountName'] as String?,
+      );
+}
+
 class Member {
   const Member({
     required this.id,

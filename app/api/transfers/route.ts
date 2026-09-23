@@ -42,11 +42,23 @@ export async function GET(request: Request) {
   try {
     await ensureDb();
     const ledgerId = Number(new URL(request.url).searchParams.get("ledger") || 1);
+    const accountParam = new URL(request.url).searchParams.get("account");
+    const accountId = accountParam == null ? null : Number(accountParam);
+    if (accountId != null && (!Number.isSafeInteger(accountId) || accountId <= 0))
+      throw new ApiAccessError("账户参数无效", 400);
     await claimAndRequireLedger(request, ledgerId);
-    const rows = await getDbBinding()
-      .prepare("SELECT uuid,ledger_id AS ledgerId,kind,from_account_id AS fromAccountId,to_account_id AS toAccountId,amount,currency,target_type AS targetType,target_id AS targetId,occurrence_key AS occurrenceKey,occurred_at AS occurredAt,original_timezone AS originalTimezone,note,updated_at AS updatedAt FROM account_transfers WHERE ledger_id=? ORDER BY occurred_at DESC LIMIT 500")
-      .bind(ledgerId)
-      .all();
+    const db = getDbBinding();
+    if (accountId != null) {
+      const account = await db.prepare("SELECT id FROM accounts WHERE id=? AND ledger_id=?")
+        .bind(accountId, ledgerId).first<{ id: number }>();
+      if (!account) throw new ApiAccessError("账户不存在", 404);
+    }
+    const query = accountId == null
+      ? db.prepare("SELECT t.uuid,t.ledger_id AS ledgerId,t.kind,t.from_account_id AS fromAccountId,src.name AS fromAccountName,t.to_account_id AS toAccountId,dst.name AS toAccountName,t.amount,t.currency,t.target_type AS targetType,t.target_id AS targetId,t.occurrence_key AS occurrenceKey,t.occurred_at AS occurredAt,t.original_timezone AS originalTimezone,t.note,t.updated_at AS updatedAt FROM account_transfers t LEFT JOIN accounts src ON src.id=t.from_account_id LEFT JOIN accounts dst ON dst.id=t.to_account_id WHERE t.ledger_id=? ORDER BY t.occurred_at DESC LIMIT 500")
+        .bind(ledgerId)
+      : db.prepare("SELECT t.uuid,t.ledger_id AS ledgerId,t.kind,t.from_account_id AS fromAccountId,src.name AS fromAccountName,t.to_account_id AS toAccountId,dst.name AS toAccountName,t.amount,t.currency,t.target_type AS targetType,t.target_id AS targetId,t.occurrence_key AS occurrenceKey,t.occurred_at AS occurredAt,t.original_timezone AS originalTimezone,t.note,t.updated_at AS updatedAt FROM account_transfers t LEFT JOIN accounts src ON src.id=t.from_account_id LEFT JOIN accounts dst ON dst.id=t.to_account_id WHERE t.ledger_id=? AND (t.from_account_id=? OR t.to_account_id=?) ORDER BY t.occurred_at DESC LIMIT 500")
+        .bind(ledgerId, accountId, accountId);
+    const rows = await query.all();
     return privateJson(rows.results);
   } catch (error) {
     return accessErrorResponse(error, "读取转账记录失败", request);

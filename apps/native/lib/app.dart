@@ -719,6 +719,13 @@ class LedgerController extends ChangeNotifier {
     await refresh();
   }
 
+  Future<List<AccountTransfer>> fetchAccountTransfers(int accountId) async {
+    final ledger = selectedLedger;
+    if (ledger == null) throw const ApiException('没有可用的账本');
+    if (demoMode) return const [];
+    return api.fetchAccountTransfers(ledgerId: ledger.id, accountId: accountId);
+  }
+
   Future<void> transfer({
     required String kind,
     required int fromAccountId,
@@ -4487,6 +4494,69 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _showNativeAccountTransfers(Account account) async {
+    final history = widget.controller.fetchAccountTransfers(account.id);
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('${account.name} · 转账记录'),
+        content: SizedBox(
+          width: 460,
+          height: 420,
+          child: FutureBuilder<List<AccountTransfer>>(
+            future: history,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snapshot.hasError) {
+                return Center(child: Text('读取失败：${snapshot.error}'));
+              }
+              final records = snapshot.data ?? const <AccountTransfer>[];
+              if (records.isEmpty) return const Center(child: Text('暂无转账记录'));
+              return ListView.separated(
+                itemCount: records.length,
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final item = records[index];
+                  final from = item.fromAccountName ?? '外部';
+                  final to = item.toAccountName ?? '外部';
+                  final parsedDate = DateTime.tryParse(item.occurredAt);
+                  final dateLabel = parsedDate == null
+                      ? item.occurredAt
+                      : DateFormat('MM-dd HH:mm').format(parsedDate.toLocal());
+                  final amount = widget.controller.preferences.hideAmounts
+                      ? '••••'
+                      : NumberFormat.currency(
+                          locale: 'zh_CN',
+                          name: item.currency,
+                          symbol: item.currency,
+                          decimalDigits: item.currency == 'JPY' ? 0 : 2,
+                        ).format(item.amountCents / 100);
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.swap_horiz_rounded),
+                    title: Text(
+                      item.note.trim().isEmpty ? item.kind : item.note,
+                    ),
+                    subtitle: Text('$from → $to · $dateLabel'),
+                    trailing: Text(amount),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _assets() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -4549,10 +4619,13 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
                         _deleteAccount(account);
                       } else if (value == 'transfer') {
                         _openTransfer(initialFrom: account);
+                      } else if (value == 'history') {
+                        _showNativeAccountTransfers(account);
                       }
                     },
                     itemBuilder: (context) => const [
                       PopupMenuItem(value: 'edit', child: Text('编辑账户')),
+                      PopupMenuItem(value: 'history', child: Text('转账记录')),
                       PopupMenuItem(value: 'transfer', child: Text('转账/还款')),
                       PopupMenuItem(value: 'delete', child: Text('删除账户')),
                     ],

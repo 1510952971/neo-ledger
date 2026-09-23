@@ -7,6 +7,7 @@ import {
   useCallback,
   useMemo,
   useRef,
+  useState,
   useTransition,
 } from "react";
 import { MobileBottomNav } from "./mobile-bottom-nav";
@@ -49,7 +50,8 @@ import { TransactionEntryDialog } from "./transaction-entry-dialog";
 import { AssetDialogs } from "./asset-dialogs";
 import { CategoryDialogs } from "./category-dialogs";
 import { BillSection, type BillSectionRow } from "./bill-section";
-import { AccountSection } from "./account-section";
+import { AccountSection, type AccountSectionAccount } from "./account-section";
+import { AccountTransferHistoryDialog, type AccountTransferHistoryRow } from "./account-transfer-history-dialog";
 import { DigitalAssetSection } from "./digital-asset-section";
 import { FinanceOverviewSection } from "./finance-overview-section";
 import { AnalyticsSection } from "./analytics-section";
@@ -168,6 +170,7 @@ import { confirmBillImportWorkflow } from "./confirm-bill-import-workflow";
 import { useLedgerEntryActions } from "./ledger-entry-actions";
 import { createMember } from "./member-actions";
 import {
+  fetchClientJson,
   fetchClientText,
   MAX_P2P_PACKAGE_RESPONSE_BYTES,
 } from "./client-api";
@@ -643,6 +646,15 @@ export function LedgerApp({
     setToast,
   } = shell;
   const accountManager = useAccountManagerState<Account>({ accounts });
+  const accountTransferHistoryRef = useRef<HTMLDialogElement>(null);
+  const accountTransferHistoryRequestRef = useRef(0);
+  const [accountTransferHistory, setAccountTransferHistory] = useState<{
+    accountName: string;
+    rows: AccountTransferHistoryRow[];
+    loading: boolean;
+    error: string;
+    hideAmounts: boolean;
+  }>({ accountName: "", rows: [], loading: false, error: "", hideAmounts: true });
   const {
     accounts: accountList,
     setAccounts: setAccountList,
@@ -991,6 +1003,45 @@ export function LedgerApp({
     removeAccount: removeAccountRequest,
     reorderAccounts,
   } = ledgerAccountActions;
+  async function showAccountTransferHistory(account: AccountSectionAccount) {
+    const requestId = ++accountTransferHistoryRequestRef.current;
+    setAccountTransferHistory({
+      accountName: account.name,
+      rows: [],
+      loading: true,
+      error: "",
+      hideAmounts: true,
+    });
+    if (accountTransferHistoryRef.current && !accountTransferHistoryRef.current.open)
+      accountTransferHistoryRef.current.showModal();
+    try {
+      const query = new URLSearchParams({ ledger: String(currentLedgerId), account: String(account.id) });
+      const [history, preferences] = await Promise.all([
+        fetchClientJson<AccountTransferHistoryRow[] | { error?: string }>(`/api/transfers?${query}`),
+        fetchClientJson<{ hideAmounts?: boolean }>("/api/preferences"),
+      ]);
+      if (requestId !== accountTransferHistoryRequestRef.current) return;
+      if (!history.response.ok || !Array.isArray(history.data))
+        throw new Error((!Array.isArray(history.data) && history.data?.error) || "读取转账记录失败");
+      setAccountTransferHistory({
+        accountName: account.name,
+        rows: history.data,
+        loading: false,
+        error: "",
+        hideAmounts: !preferences.response.ok || preferences.data?.hideAmounts === true,
+      });
+    } catch (error) {
+      if (requestId !== accountTransferHistoryRequestRef.current) return;
+      setAccountTransferHistory((current) => ({
+        ...current,
+        loading: false,
+        error: error instanceof Error ? error.message : "读取转账记录失败",
+      }));
+    }
+  }
+  function closeAccountTransferHistory() {
+    accountTransferHistoryRef.current?.close();
+  }
   async function confirmRemoveAccount() {
     if (!editingAccount) return;
     const agreed = await confirmAsk({
@@ -3557,7 +3608,19 @@ export function LedgerApp({
               }}
               onAddAccount={() => showAccountDialog(null)}
               onEditAccount={showAccountDialog}
+              onShowTransfers={showAccountTransferHistory}
               onReorderAccounts={reorderAccounts}
+            />
+            <AccountTransferHistoryDialog
+              dialogRef={accountTransferHistoryRef}
+              accountName={accountTransferHistory.accountName}
+              rows={accountTransferHistory.rows}
+              loading={accountTransferHistory.loading}
+              error={accountTransferHistory.error}
+              hideAmounts={accountTransferHistory.hideAmounts}
+              formatCurrency={(amount, currency) => formatCurrency(amount, currency as Currency)}
+              formatDateTime={formatTimestamp}
+              onClose={closeAccountTransferHistory}
             />
 
             <DigitalAssetSection

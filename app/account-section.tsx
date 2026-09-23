@@ -33,6 +33,7 @@ type AccountSectionProps = {
   onTransfer: () => void;
   onAddAccount: () => void;
   onEditAccount: (account: AccountSectionAccount) => void;
+  onShowTransfers: (account: AccountSectionAccount) => void;
   onReorderAccounts: (accountIds: number[]) => void;
 };
 
@@ -47,6 +48,7 @@ export function AccountSection({
   onTransfer,
   onAddAccount,
   onEditAccount,
+  onShowTransfers,
   onReorderAccounts,
 }: AccountSectionProps) {
   return (
@@ -115,6 +117,7 @@ export function AccountSection({
                 )}
               </button>
               <div className="account-order-actions" aria-label={`${account.name}排序`}>
+                <button type="button" aria-label={`${account.name}转账记录`} title="转账记录" onClick={() => onShowTransfers(account)}>↔</button>
                 <button type="button" aria-label="上移账户" disabled={index === 0 || accounts[index - 1].isActive !== account.isActive} onClick={() => {
                   const next = [...accounts];
                   [next[index - 1], next[index]] = [next[index], next[index - 1]];

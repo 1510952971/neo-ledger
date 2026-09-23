@@ -173,6 +173,10 @@ check("触发器扣减转出方(精确)", b1 === 1200000 - 3550 + 888888 - 3050 
 check("触发器增加转入方", b2 === -500000 + 30000, String(b2));
 r = await call(transfers, "GET", `/api/transfers?ledger=${L}`);
 check("GET 转账列表", r.status === 200 && (r.json?.length ?? 0) >= 2, r.text?.slice(0,120));
+r = await call(transfers, "GET", `/api/transfers?ledger=${L}&account=${acct2}`);
+check("按任一关联账户读取转账详情并显示账户名", r.status === 200 && r.json?.every(item => item.fromAccountId === acct2 || item.toAccountId === acct2) && r.json?.some(item => item.fromAccountName && item.toAccountName), r.text?.slice(0,180));
+r = await call(transfers, "GET", `/api/transfers?ledger=${L}&account=99999999`);
+check("跨账本或不存在的账户不能读取转账历史", r.status === 404, `${r.status} ${r.text}`);
 const retryTransferBody = { ledgerId: L, kind: "账户转账", fromAccountId: acct1, toAccountId: acct2, amount: 1, idempotencyKey: "transfer-retry-001", occurredAt: "2026-07-21T11:00", originalTimezone: "Asia/Shanghai", note: "可重试转账" };
 const transferCountBeforeRetry = Number((await q("SELECT COUNT(*) n FROM account_transfers WHERE ledger_id=?", L))[0].n);
 r = await call(transfers, "POST", "/api/transfers", { body: retryTransferBody });

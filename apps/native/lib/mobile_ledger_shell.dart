@@ -3811,6 +3811,7 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
                 onEdit: _editAccount,
                 onDelete: _deleteAccount,
                 onMove: _moveAccount,
+                onShowTransfers: _showAccountTransfers,
                 recentByAccount: recentByAccount,
                 pendingByAccount: pendingByAccount,
                 hideAmounts: hideAmounts,
@@ -3823,6 +3824,7 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
                   onEdit: _editAccount,
                   onDelete: _deleteAccount,
                   onMove: _moveAccount,
+                  onShowTransfers: _showAccountTransfers,
                   recentByAccount: recentByAccount,
                   pendingByAccount: pendingByAccount,
                   hideAmounts: hideAmounts,
@@ -3835,6 +3837,7 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
               onEdit: _editAccount,
               onDelete: _deleteAccount,
               onMove: _moveAccount,
+              onShowTransfers: _showAccountTransfers,
               recentByAccount: recentByAccount,
               pendingByAccount: pendingByAccount,
               hideAmounts: hideAmounts,
@@ -3946,6 +3949,20 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
     }
   }
 
+  Future<void> _showAccountTransfers(Account account) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (_) => _AccountTransferHistorySheet(
+        account: account,
+        hideAmounts: controller.preferences.hideAmounts,
+        history: controller.fetchAccountTransfers(account.id),
+      ),
+    );
+  }
+
   Future<void> _editAsset([DigitalAsset? asset]) async {
     await showModalBottomSheet<void>(
       context: context,
@@ -4035,6 +4052,7 @@ class _AccountGroup extends StatelessWidget {
     required this.onEdit,
     required this.onDelete,
     required this.onMove,
+    required this.onShowTransfers,
     required this.recentByAccount,
     required this.pendingByAccount,
     required this.hideAmounts,
@@ -4045,6 +4063,7 @@ class _AccountGroup extends StatelessWidget {
   final Future<void> Function([Account?]) onEdit;
   final Future<void> Function(Account) onDelete;
   final Future<void> Function(List<Account>, Account, int) onMove;
+  final Future<void> Function(Account) onShowTransfers;
   final Map<int, TransactionItem> recentByAccount;
   final Map<int, int> pendingByAccount;
   final bool hideAmounts;
@@ -4102,6 +4121,12 @@ class _AccountGroup extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
+                        tooltip: '查看转账记录',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => onShowTransfers(entry.value),
+                        icon: const Icon(Icons.receipt_long_outlined),
+                      ),
+                      IconButton(
                         tooltip: '上移账户',
                         visualDensity: VisualDensity.compact,
                         onPressed:
@@ -4131,6 +4156,84 @@ class _AccountGroup extends StatelessWidget {
       ],
     );
   }
+}
+
+class _AccountTransferHistorySheet extends StatelessWidget {
+  const _AccountTransferHistorySheet({
+    required this.account,
+    required this.hideAmounts,
+    required this.history,
+  });
+
+  final Account account;
+  final bool hideAmounts;
+  final Future<List<AccountTransfer>> history;
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: SizedBox(
+      height: MediaQuery.sizeOf(context).height * .72,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 8, 18, 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              '${account.name} · 转账记录',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: FutureBuilder<List<AccountTransfer>>(
+                future: history,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState != ConnectionState.done) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snapshot.hasError) {
+                    return Center(child: Text('读取转账记录失败：${snapshot.error}'));
+                  }
+                  final records = snapshot.data ?? const <AccountTransfer>[];
+                  if (records.isEmpty) {
+                    return const Center(child: Text('这个账户还没有转账记录'));
+                  }
+                  return ListView.separated(
+                    itemCount: records.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final item = records[index];
+                      final from = item.fromAccountName ?? '外部';
+                      final to = item.toAccountName ?? '外部';
+                      final amount = hideAmounts
+                          ? '••••'
+                          : _mobileMoneyCurrency(
+                              item.amountCents,
+                              item.currency,
+                            );
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.swap_horiz_rounded),
+                        title: Text(
+                          item.note.trim().isEmpty ? item.kind : item.note,
+                        ),
+                        subtitle: Text(
+                          '$from → $to · ${_mobileDate(item.occurredAt)}',
+                        ),
+                        trailing: Text(
+                          amount,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _MobileAccountEditor extends StatefulWidget {
