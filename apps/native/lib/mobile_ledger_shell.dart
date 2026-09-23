@@ -1140,7 +1140,10 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
               _InlineError(message: _error!, onRetry: _load),
               const SizedBox(height: 12),
             ],
-            _BillSummary(page: page),
+            _BillSummary(
+              page: page,
+              hideAmounts: controller.preferences.hideAmounts,
+            ),
             const SizedBox(height: 20),
             _SectionHeader(title: '全部流水', action: '${page.total} 笔'),
             const SizedBox(height: 10),
@@ -1152,7 +1155,11 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
               )
             else
               for (final entry in groups.entries) ...[
-                _DaySummaryHeader(day: entry.key, items: entry.value),
+                _DaySummaryHeader(
+                  day: entry.key,
+                  items: entry.value,
+                  hideAmounts: controller.preferences.hideAmounts,
+                ),
                 const SizedBox(height: 8),
                 for (final item in entry.value)
                   Padding(
@@ -2078,6 +2085,7 @@ class _MobileTransactionDetailPageState
   @override
   Widget build(BuildContext context) {
     final item = widget.item;
+    final hideAmounts = widget.controller.preferences.hideAmounts;
     final occurredAt = DateTime.tryParse(item.occurredAt)?.toLocal();
     final color = item.isIncome ? _mobileIncome : _mobileExpense;
     return Scaffold(
@@ -2108,7 +2116,9 @@ class _MobileTransactionDetailPageState
                 Text(item.type, style: const TextStyle(color: _mobileMuted)),
                 const SizedBox(height: 8),
                 Text(
-                  '${item.isIncome ? '+' : '-'}${_mobileMoneyCurrency(item.amountCents, item.currency)}',
+                  hideAmounts
+                      ? '••••'
+                      : '${item.isIncome ? '+' : '-'}${_mobileMoneyCurrency(item.amountCents, item.currency)}',
                   style: TextStyle(
                     color: color,
                     fontSize: 38,
@@ -2134,7 +2144,9 @@ class _MobileTransactionDetailPageState
           ),
           _DetailRow(label: '账户', value: item.accountName ?? '未知账户'),
           _DetailRow(label: '币种', value: item.currency),
-          if (item.originalAmountCents != null && item.originalCurrency != null)
+          if (!hideAmounts &&
+              item.originalAmountCents != null &&
+              item.originalCurrency != null)
             _DetailRow(
               label: '原币金额',
               value: _mobileMoneyCurrency(
@@ -2155,7 +2167,7 @@ class _MobileTransactionDetailPageState
           if (item.tags.isNotEmpty)
             _DetailRow(label: '标签', value: item.tags.join(' · ')),
           if (item.reimbursable) _DetailRow(label: '报销', value: '待报销'),
-          if (item.discountAmountCents > 0)
+          if (!hideAmounts && item.discountAmountCents > 0)
             _DetailRow(
               label: '优惠金额',
               value: _mobileMoney(item.discountAmountCents),
@@ -2273,6 +2285,7 @@ class MobileAnalysisPage extends StatelessWidget {
         : buckets
               .map((item) => item.amountCents)
               .reduce((a, b) => a > b ? a : b);
+    final hideAmounts = controller.preferences.hideAmounts;
     return _MobilePage(
       controller: controller,
       title: '分析',
@@ -2282,7 +2295,7 @@ class MobileAnalysisPage extends StatelessWidget {
         children: [
           _InsightCard(
             title: '本月结余',
-            value: _mobileMoney(page.balanceCents),
+            value: hideAmounts ? '••••' : _mobileMoney(page.balanceCents),
             caption: analysis == null
                 ? '正在同步分类分析…'
                 : '储蓄率 ${analysis.savingRate.toStringAsFixed(1)}%',
@@ -2294,7 +2307,7 @@ class MobileAnalysisPage extends StatelessWidget {
               Expanded(
                 child: _MetricCard(
                   label: '收入',
-                  value: _mobileMoney(page.incomeCents),
+                  value: hideAmounts ? '••••' : _mobileMoney(page.incomeCents),
                   color: _mobileIncome,
                 ),
               ),
@@ -2302,7 +2315,7 @@ class MobileAnalysisPage extends StatelessWidget {
               Expanded(
                 child: _MetricCard(
                   label: '支出',
-                  value: _mobileMoney(page.expenseCents),
+                  value: hideAmounts ? '••••' : _mobileMoney(page.expenseCents),
                   color: _mobileExpense,
                 ),
               ),
@@ -2318,7 +2331,11 @@ class MobileAnalysisPage extends StatelessWidget {
               message: '多记几笔账后，这里会显示你的消费结构。',
             )
           else
-            _CategoryChart(buckets: buckets, maxAmount: maxAmount),
+            _CategoryChart(
+              buckets: buckets,
+              maxAmount: maxAmount,
+              hideAmounts: hideAmounts,
+            ),
           if (analysis?.trend.isNotEmpty == true) ...[
             const SizedBox(height: 24),
             _SectionHeader(title: '收支趋势', action: '近期开销'),
@@ -2881,6 +2898,7 @@ class _MobilePlanningPageState extends State<MobilePlanningPage> {
                                     const [])
                               bucket.name: bucket.amountCents,
                           },
+                          hideAmounts: controller.preferences.hideAmounts,
                         ),
                         const SizedBox(height: 10),
                         for (final budget in controller.budgets)
@@ -2888,6 +2906,7 @@ class _MobilePlanningPageState extends State<MobilePlanningPage> {
                             budget: budget,
                             spentCents: _categorySpent(budget.category),
                             onTap: () => _openBudget(budget),
+                            hideAmounts: controller.preferences.hideAmounts,
                           ),
                       ],
                     ),
@@ -2908,7 +2927,9 @@ class _MobilePlanningPageState extends State<MobilePlanningPage> {
                             title: item.name,
                             subtitle:
                                 '${item.cycle} · ${item.category ?? '未分类'}${item.nextChargeDate == null ? '' : ' · 下次 ${item.nextChargeDate}'}',
-                            value: _mobileMoney(item.amountCents),
+                            value: controller.preferences.hideAmounts
+                                ? '••••'
+                                : _mobileMoney(item.amountCents),
                             onEdit: () => _openSubscription(item),
                             onDelete: () => _deleteSubscription(item),
                           ),
@@ -2930,8 +2951,10 @@ class _MobilePlanningPageState extends State<MobilePlanningPage> {
                             icon: Icons.payments_outlined,
                             title: item.name,
                             subtitle:
-                                '剩余 ${item.remainingPeriods}/${item.periods} 期 · 每月 ${_mobileMoney(item.periods == 0 ? 0 : (item.totalAmountCents + item.feeAmountCents) ~/ item.periods)}',
-                            value: _mobileMoney(item.totalAmountCents),
+                                '剩余 ${item.remainingPeriods}/${item.periods} 期 · 每月 ${controller.preferences.hideAmounts ? '••••' : _mobileMoney(item.periods == 0 ? 0 : (item.totalAmountCents + item.feeAmountCents) ~/ item.periods)}',
+                            value: controller.preferences.hideAmounts
+                                ? '••••'
+                                : _mobileMoney(item.totalAmountCents),
                             onDelete: () => _deleteInstallment(item),
                           ),
                       ],
@@ -2951,6 +2974,7 @@ class _MobilePlanningPageState extends State<MobilePlanningPage> {
                           _SavingsGoalCard(
                             goal: goal,
                             onTap: () => _openGoal(goal),
+                            hideAmounts: controller.preferences.hideAmounts,
                           ),
                       ],
                     ),
@@ -3271,10 +3295,15 @@ class _PlanningItemCard extends StatelessWidget {
 }
 
 class _SavingsGoalCard extends StatelessWidget {
-  const _SavingsGoalCard({required this.goal, required this.onTap});
+  const _SavingsGoalCard({
+    required this.goal,
+    required this.onTap,
+    required this.hideAmounts,
+  });
 
   final SavingsGoal goal;
   final VoidCallback onTap;
+  final bool hideAmounts;
 
   @override
   Widget build(BuildContext context) => InkWell(
@@ -3298,7 +3327,9 @@ class _SavingsGoalCard extends StatelessWidget {
                 ),
               ),
               Text(
-                '${_mobileMoney(goal.savedAmountCents)} / ${_mobileMoney(goal.targetAmountCents)}',
+                hideAmounts
+                    ? '•••• / ••••'
+                    : '${_mobileMoney(goal.savedAmountCents)} / ${_mobileMoney(goal.targetAmountCents)}',
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ],
@@ -3378,7 +3409,11 @@ class _MobileBudgetPageState extends State<MobileBudgetPage> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(18, 12, 18, 110),
           children: [
-            _BudgetTotalCard(budgets: controller.budgets, spent: spent),
+            _BudgetTotalCard(
+              budgets: controller.budgets,
+              spent: spent,
+              hideAmounts: controller.preferences.hideAmounts,
+            ),
             const SizedBox(height: 18),
             if (controller.budgets.isEmpty)
               const _EmptyState(
@@ -3392,6 +3427,7 @@ class _MobileBudgetPageState extends State<MobileBudgetPage> {
                   budget: budget,
                   spentCents: spent[budget.category] ?? 0,
                   onTap: () => _editBudget(budget),
+                  hideAmounts: controller.preferences.hideAmounts,
                 ),
           ],
         ),
@@ -3413,10 +3449,15 @@ class _MobileBudgetPageState extends State<MobileBudgetPage> {
 }
 
 class _BudgetTotalCard extends StatelessWidget {
-  const _BudgetTotalCard({required this.budgets, required this.spent});
+  const _BudgetTotalCard({
+    required this.budgets,
+    required this.spent,
+    required this.hideAmounts,
+  });
 
   final List<CategoryBudget> budgets;
   final Map<String, int> spent;
+  final bool hideAmounts;
 
   @override
   Widget build(BuildContext context) {
@@ -3439,7 +3480,9 @@ class _BudgetTotalCard extends StatelessWidget {
           const Text('本月预算总览', style: TextStyle(color: _mobileMuted)),
           const SizedBox(height: 8),
           Text(
-            '${_mobileMoney(used)} / ${_mobileMoney(total)}',
+            hideAmounts
+                ? '•••• / ••••'
+                : '${_mobileMoney(used)} / ${_mobileMoney(total)}',
             style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 12),
@@ -3456,7 +3499,11 @@ class _BudgetTotalCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            ratio >= 1 ? '已超出本月预算' : '还可使用 ${_mobileMoney(total - used)}',
+            ratio >= 1
+                ? '已超出本月预算'
+                : hideAmounts
+                ? '剩余金额已隐藏'
+                : '还可使用 ${_mobileMoney(total - used)}',
             style: TextStyle(color: ratio >= 1 ? _mobileExpense : _mobileMuted),
           ),
         ],
@@ -3470,11 +3517,13 @@ class _BudgetRow extends StatelessWidget {
     required this.budget,
     required this.spentCents,
     required this.onTap,
+    required this.hideAmounts,
   });
 
   final CategoryBudget budget;
   final int spentCents;
   final VoidCallback onTap;
+  final bool hideAmounts;
 
   @override
   Widget build(BuildContext context) {
@@ -3500,7 +3549,9 @@ class _BudgetRow extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  '${_mobileMoney(spentCents)} / ${_mobileMoney(budget.amountCents)}',
+                  hideAmounts
+                      ? '•••• / ••••'
+                      : '${_mobileMoney(spentCents)} / ${_mobileMoney(budget.amountCents)}',
                   style: TextStyle(
                     color: danger ? _mobileExpense : _mobileMuted,
                   ),
@@ -3760,6 +3811,7 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
                   asset: asset,
                   onEdit: () => _editAsset(asset),
                   onLiquidate: () => _liquidateAsset(asset),
+                  hideAmounts: hideAmounts,
                 ),
             ],
           ],
@@ -3839,11 +3891,13 @@ class _MobileAssetRow extends StatelessWidget {
     required this.asset,
     required this.onEdit,
     required this.onLiquidate,
+    required this.hideAmounts,
   });
 
   final DigitalAsset asset;
   final VoidCallback onEdit;
   final VoidCallback onLiquidate;
+  final bool hideAmounts;
 
   @override
   Widget build(BuildContext context) {
@@ -3868,7 +3922,9 @@ class _MobileAssetRow extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              _mobileMoney(asset.currentValueCents ?? asset.valueCents),
+              hideAmounts
+                  ? '••••'
+                  : _mobileMoney(asset.currentValueCents ?? asset.valueCents),
               style: const TextStyle(fontWeight: FontWeight.w800),
             ),
             PopupMenuButton<String>(
@@ -4921,7 +4977,7 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
                   ),
                   title: Text(account.name),
                   subtitle: Text(
-                    '${_mobileMoney(account.balanceCents)} · ${account.currency} · ${account.type}',
+                    '${controller.preferences.hideAmounts ? '••••' : _mobileMoney(account.balanceCents)} · ${account.currency} · ${account.type}',
                     style: const TextStyle(color: _mobileMuted),
                   ),
                   trailing:
@@ -5468,9 +5524,10 @@ class _MonthlyCard extends StatelessWidget {
 }
 
 class _BillSummary extends StatelessWidget {
-  const _BillSummary({required this.page});
+  const _BillSummary({required this.page, required this.hideAmounts});
 
   final TransactionPage page;
+  final bool hideAmounts;
 
   @override
   Widget build(BuildContext context) {
@@ -5479,7 +5536,7 @@ class _BillSummary extends StatelessWidget {
         Expanded(
           child: _MetricCard(
             label: '收入',
-            value: _mobileMoney(page.incomeCents),
+            value: hideAmounts ? '••••' : _mobileMoney(page.incomeCents),
             color: _mobileIncome,
           ),
         ),
@@ -5487,7 +5544,7 @@ class _BillSummary extends StatelessWidget {
         Expanded(
           child: _MetricCard(
             label: '支出',
-            value: _mobileMoney(page.expenseCents),
+            value: hideAmounts ? '••••' : _mobileMoney(page.expenseCents),
             color: _mobileExpense,
           ),
         ),
@@ -5505,10 +5562,15 @@ class _BillSummary extends StatelessWidget {
 }
 
 class _DaySummaryHeader extends StatelessWidget {
-  const _DaySummaryHeader({required this.day, required this.items});
+  const _DaySummaryHeader({
+    required this.day,
+    required this.items,
+    required this.hideAmounts,
+  });
 
   final DateTime day;
   final List<TransactionItem> items;
+  final bool hideAmounts;
 
   @override
   Widget build(BuildContext context) {
@@ -5529,7 +5591,9 @@ class _DaySummaryHeader extends StatelessWidget {
         ),
         const Spacer(),
         Text(
-          '收 ${_mobileMoney(income)}  支 ${_mobileMoney(expense)}  结 ${_mobileMoney(income - expense)}',
+          hideAmounts
+              ? '金额已隐藏'
+              : '收 ${_mobileMoney(income)}  支 ${_mobileMoney(expense)}  结 ${_mobileMoney(income - expense)}',
           style: const TextStyle(color: _mobileMuted, fontSize: 12),
         ),
       ],
@@ -5677,10 +5741,15 @@ class _TransactionTile extends StatelessWidget {
 }
 
 class _CategoryChart extends StatelessWidget {
-  const _CategoryChart({required this.buckets, required this.maxAmount});
+  const _CategoryChart({
+    required this.buckets,
+    required this.maxAmount,
+    required this.hideAmounts,
+  });
 
   final List<AnalysisBucket> buckets;
   final int maxAmount;
+  final bool hideAmounts;
 
   @override
   Widget build(BuildContext context) {
@@ -5715,7 +5784,7 @@ class _CategoryChart extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 Text(
-                  _mobileMoney(bucket.amountCents),
+                  hideAmounts ? '••••' : _mobileMoney(bucket.amountCents),
                   style: const TextStyle(color: _mobileMuted, fontSize: 12),
                 ),
               ],
