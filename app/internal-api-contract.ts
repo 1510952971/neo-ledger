@@ -171,13 +171,21 @@ const bulkTransactionSchema = z
     category: z.string().trim().min(1).max(40).nullish(),
     incomeCategory: z.string().trim().min(1).max(40).nullish(),
     mood: z.enum(["悦己", "刚需", "冲动"]).nullish(),
+    tags: z.array(z.string().trim().min(1).max(24)).max(12).nullish(),
+    reimbursable: z.boolean().nullish(),
+    discountAmount: moneyYuan.nullish(),
+    excludeFromBudget: z.boolean().nullish(),
   })
   .strict()
   .refine(
     (value) =>
       value.category != null ||
       value.incomeCategory != null ||
-      value.mood != null,
+      value.mood != null ||
+      value.tags != null ||
+      value.reimbursable != null ||
+      value.discountAmount != null ||
+      value.excludeFromBudget != null,
     { message: "至少选择一个批量修改字段" },
   );
 

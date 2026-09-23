@@ -35,6 +35,7 @@ type ExistingTransaction = {
   splitWithMemberId: number | null;
   updatedAt: string;
   oldAccountInvestment: number;
+  [key: string]: unknown;
 };
 
 export async function PUT(request: Request) {
@@ -272,9 +273,12 @@ export async function DELETE(request: Request) {
 
     await claimAndRequireLedger(request, ledgerId);
     const db = getDbBinding();
+    await db
+      .prepare("DELETE FROM transaction_delete_snapshots WHERE deleted_at < datetime('now','-1 day')")
+      .run();
     const current = await db
       .prepare(
-        `SELECT t.id,t.amount,t.type,t.income_category incomeCategory,
+        `SELECT t.*,t.income_category incomeCategory,
           t.account_id accountId,t.installment_id installmentId,t.crdt_id crdtId,
           t.ledger_id ledgerId,t.split_mode splitMode,
           t.split_with_member_id splitWithMemberId,t.updated_at updatedAt,
@@ -311,6 +315,17 @@ export async function DELETE(request: Request) {
     const guard =
       "EXISTS(SELECT 1 FROM transactions WHERE id=? AND ledger_id=? AND updated_at=?)";
     const crdtId = current.crdtId ?? `legacy:${current.id}`;
+    const sideHustle = await db
+      .prepare(
+        "SELECT amount,note FROM side_hustle_deductions WHERE transaction_id=? AND ledger_id=?",
+      )
+      .bind(id, ledgerId)
+      .first<{ amount: number; note: string }>();
+    const undoToken = crypto.randomUUID();
+    const snapshotPayload = JSON.stringify({
+      transaction: current,
+      sideHustle: sideHustle ?? null,
+    });
     const reverseDelta = -transactionBalanceDelta(
       current.type,
       current.amount,
@@ -318,6 +333,11 @@ export async function DELETE(request: Request) {
       current.splitWithMemberId ?? 0,
     );
     const results = await db.batch([
+      db
+        .prepare(
+          "INSERT INTO transaction_delete_snapshots(token,ledger_id,transaction_id,deleted_at,payload) VALUES(?,?,?,?,?)",
+        )
+        .bind(undoToken, ledgerId, id, new Date().toISOString(), snapshotPayload),
       db
         .prepare(
           `UPDATE accounts SET current_balance=current_balance+?,
@@ -367,7 +387,7 @@ export async function DELETE(request: Request) {
         { error: "这笔账单已在其他位置更新，请刷新后重试" },
         { status: 409 },
       );
-    return privateJson({ ok: true });
+    return privateJson({ ok: true, undoToken });
   } catch (error) {
     return accessErrorResponse(error, "删除失败", request);
   }

@@ -47,6 +47,22 @@ export async function POST(request: Request) {
       fields.push("mood=?");
       values.push(body.mood);
     }
+    if (body.tags != null) {
+      fields.push("tags_json=?");
+      values.push(JSON.stringify([...new Set(body.tags)]));
+    }
+    if (body.reimbursable != null) {
+      fields.push("reimbursable=?");
+      values.push(body.reimbursable ? 1 : 0);
+    }
+    if (body.discountAmount != null) {
+      fields.push("discount_amount=?");
+      values.push(Math.round(body.discountAmount * 100));
+    }
+    if (body.excludeFromBudget != null) {
+      fields.push("exclude_from_budget=?");
+      values.push(body.excludeFromBudget ? 1 : 0);
+    }
     values.push(ledgerId, ...ids);
     const result = await db
       .prepare(`UPDATE transactions SET ${fields.join(",")},updated_at=CURRENT_TIMESTAMP WHERE ledger_id=? AND id IN (${placeholders})`)

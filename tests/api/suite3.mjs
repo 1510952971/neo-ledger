@@ -25,6 +25,8 @@ const mfaApi = await import("../../app/api/auth/mfa/route.ts");
 const passkeysApi = await import("../../app/api/auth/passkeys/route.ts");
 const transactionQueryApi = await import("../../app/api/transactions/query/route.ts");
 const transactionSummaryApi = await import("../../app/api/transactions/summary/route.ts");
+const transactionsApi = await import("../../app/api/transactions/route.ts");
+const transactionRestoreApi = await import("../../app/api/transactions/restore/route.ts");
 const aiChatApi = await import("../../app/api/v1/ai/chat/route.ts");
 const { totpCodeAt } = await import("../../app/totp.ts");
 const passkeyChallenges = await import("../../app/passkey-challenge.ts");
@@ -752,10 +754,27 @@ if (workLedger && workTransactions.length) {
   check("对账状态拒绝非法流水ID范围", r.status === 400, `${r.status} ${r.text?.slice(0,160)}`);
   r = await call(bulkTransactionsApi, "POST", "/api/transactions/bulk", { cookie: cookie2, body: { ledgerId: workLedger, transactionIds: [workTransactions[0].id], mood: "刚需" } });
   check("批量修改流水字段", r.status === 200 && r.json?.updated === 1, `${r.status} ${r.text?.slice(0,160)}`);
+  const batchCategoryTarget = workTransactions[0].type === "收入" ? { incomeCategory: "薪资发放" } : { category: "餐饮" };
+  r = await call(bulkTransactionsApi, "POST", "/api/transactions/bulk", { cookie: cookie2, body: { ledgerId: workLedger, transactionIds: [workTransactions[0].id], ...batchCategoryTarget } });
+  const bulkCategory = (await q("SELECT type,category,income_category FROM transactions WHERE id=?", workTransactions[0].id))[0];
+  check("批量修改账单分类", r.status === 200 && (bulkCategory?.type === "收入" ? bulkCategory?.income_category === "薪资发放" : bulkCategory?.category === "餐饮"), `${r.status} ${JSON.stringify(bulkCategory)}`);
+  r = await call(bulkTransactionsApi, "POST", "/api/transactions/bulk", { cookie: cookie2, body: { ledgerId: workLedger, transactionIds: [workTransactions[0].id], tags: ["工作", "报销"], reimbursable: true, excludeFromBudget: true } });
+  const bulkMetadata = (await q("SELECT tags_json,reimbursable,exclude_from_budget FROM transactions WHERE id=?", workTransactions[0].id))[0];
+  check("批量修改账单元数据", r.status === 200 && bulkMetadata?.tags_json === '["工作","报销"]' && bulkMetadata?.reimbursable === 1 && bulkMetadata?.exclude_from_budget === 1, `${r.status} ${JSON.stringify(bulkMetadata)}`);
   r = await call(bulkTransactionsApi, "POST", "/api/transactions/bulk", { cookie: cookie2, body: { ledgerId: workLedger, transactionIds: [workTransactions[0].id, "bad"], mood: "刚需" } });
   check("批量修改不再静默过滤非法ID", r.status === 400 && r.json?.code === "request_failed", `${r.status} ${r.text?.slice(0,160)}`);
   r = await call(bulkTransactionsApi, "POST", "/api/transactions/bulk", { cookie: cookie2, body: { ledgerId: workLedger, transactionIds: [workTransactions[0].id], mood: "无效情绪" } });
   check("批量修改枚举由schema拒绝", r.status === 400, `${r.status} ${r.text?.slice(0,160)}`);
+  const undoTarget = (await q("SELECT id,ledger_id ledgerId,updated_at updatedAt FROM transactions WHERE ledger_id=? AND installment_id IS NULL ORDER BY id LIMIT 1", workLedger))[0];
+  if (undoTarget) {
+    r = await call(transactionsApi, "DELETE", "/api/transactions", { cookie: cookie2, body: { id: undoTarget.id, ledgerId: workLedger, expectedUpdatedAt: undoTarget.updatedAt } });
+    const undoToken = r.json?.undoToken;
+    const deletedRow = (await q("SELECT id FROM transactions WHERE id=?", undoTarget.id))[0];
+    check("删除流水返回短时撤销令牌", r.status === 200 && typeof undoToken === "string" && !deletedRow, `${r.status} ${r.text?.slice(0,160)}`);
+    r = await call(transactionRestoreApi, "POST", "/api/transactions/restore", { cookie: cookie2, body: { ledgerId: workLedger, undoToken } });
+    const restoredRow = (await q("SELECT id FROM transactions WHERE id=? AND ledger_id=?", undoTarget.id, workLedger))[0];
+    check("删除流水可在窗口内安全撤销", r.status === 200 && restoredRow?.id === undoTarget.id, `${r.status} ${r.text?.slice(0,160)}`);
+  }
   r = await call(reconciliationApi, "POST", "/api/transactions/reconciliation", { cookie: cookie2, body: { ledgerId: workLedger, transactionIds: [workTransactions[0].id], status: "reconciled", note: "x".repeat(301) } });
   check("对账备注超限不再静默截断", r.status === 400, `${r.status} ${r.text?.slice(0,160)}`);
   r = await call(rulesApi, "POST", "/api/automation/rules", { cookie: cookie2, body: { ledgerId: workLedger, name: "测试餐饮规则", enabled: true, conditions: { merchantContains: "测试咖啡", minAmount: 1 }, actions: { category: "餐饮", mood: "悦己" } } });

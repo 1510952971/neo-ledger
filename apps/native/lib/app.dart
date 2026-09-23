@@ -2409,7 +2409,7 @@ class LedgerController extends ChangeNotifier {
     await refresh();
   }
 
-  Future<void> deleteTransaction(TransactionItem item) async {
+  Future<String?> deleteTransaction(TransactionItem item) async {
     final before = transactions;
     final remaining = before.items
         .where((candidate) => candidate.id != item.id)
@@ -2425,18 +2425,90 @@ class LedgerController extends ChangeNotifier {
           : before.expenseCents - item.amountCents,
     );
     notifyListeners();
-    if (demoMode) return;
+    if (demoMode) return null;
     try {
-      await api.deleteTransaction(item);
+      final undoToken = await api.deleteTransaction(item);
       // The list and totals were already updated optimistically. Avoid a
       // visible full-page refresh; the normal background refresh reconciles
       // other derived panels later without interrupting the deletion motion.
+      return undoToken;
     } catch (value) {
       transactions = before;
       error = '$value';
       notifyListeners();
       rethrow;
     }
+  }
+
+  Future<void> restoreTransaction(
+    TransactionItem item,
+    String undoToken,
+  ) async {
+    final ledger = selectedLedger;
+    if (ledger == null) throw const ApiException('没有可用的账本');
+    if (demoMode) {
+      final items = [item, ...transactions.items]
+        ..sort((a, b) => b.occurredAt.compareTo(a.occurredAt));
+      transactions = TransactionPage(
+        items: items,
+        total: transactions.total + 1,
+        incomeCents:
+            transactions.incomeCents + (item.isIncome ? item.amountCents : 0),
+        expenseCents:
+            transactions.expenseCents + (item.isIncome ? 0 : item.amountCents),
+        nextCursor: transactions.nextCursor,
+      );
+      notifyListeners();
+      return;
+    }
+    await api.restoreTransaction(ledgerId: ledger.id, undoToken: undoToken);
+    await refresh();
+  }
+
+  Future<void> bulkUpdateTransactions({
+    required List<int> transactionIds,
+    String? category,
+    String? incomeCategory,
+    String? mood,
+    List<String>? tags,
+    bool? reimbursable,
+    bool? excludeFromBudget,
+  }) async {
+    final ledger = selectedLedger;
+    if (ledger == null) throw const ApiException('没有可用的账本');
+    if (transactionIds.isEmpty) throw const ApiException('请至少选择一笔已同步流水');
+    if (demoMode) {
+      transactions = TransactionPage(
+        items: transactions.items.map((item) {
+          if (!transactionIds.contains(item.id)) return item;
+          return item.copyWith(
+            category: category,
+            incomeCategory: incomeCategory,
+            mood: mood,
+            tags: tags,
+            reimbursable: reimbursable,
+            excludeFromBudget: excludeFromBudget,
+          );
+        }).toList(),
+        total: transactions.total,
+        incomeCents: transactions.incomeCents,
+        expenseCents: transactions.expenseCents,
+        nextCursor: transactions.nextCursor,
+      );
+      notifyListeners();
+      return;
+    }
+    await api.bulkUpdateTransactions(
+      ledgerId: ledger.id,
+      transactionIds: transactionIds,
+      category: category,
+      incomeCategory: incomeCategory,
+      mood: mood,
+      tags: tags,
+      reimbursable: reimbursable,
+      excludeFromBudget: excludeFromBudget,
+    );
+    await refresh();
   }
 
   Future<T?> _optional<T>(Future<T> Function() request) async {

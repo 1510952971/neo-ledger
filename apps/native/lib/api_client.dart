@@ -1026,15 +1026,55 @@ class NeoLedgerApi {
     return data;
   }
 
-  Future<void> deleteTransaction(TransactionItem item) async {
+  Future<String?> deleteTransaction(TransactionItem item) async {
     if (item.ledgerId <= 0 || item.updatedAt == null) {
       throw const ApiException('流水缺少版本信息，请刷新后再删除');
     }
-    await deleteJson('/api/transactions', {
+    final data = await deleteJson('/api/transactions', {
       'id': item.id,
       'ledgerId': item.ledgerId,
       'expectedUpdatedAt': item.updatedAt,
     });
+    return data is Map<String, dynamic> ? data['undoToken'] as String? : null;
+  }
+
+  Future<void> restoreTransaction({
+    required int ledgerId,
+    required String undoToken,
+  }) async {
+    await postJson('/api/transactions/restore', {
+      'ledgerId': ledgerId,
+      'undoToken': undoToken,
+    });
+  }
+
+  Future<void> bulkUpdateTransactions({
+    required int ledgerId,
+    required List<int> transactionIds,
+    String? category,
+    String? incomeCategory,
+    String? mood,
+    List<String>? tags,
+    bool? reimbursable,
+    bool? excludeFromBudget,
+  }) async {
+    final payload = <String, dynamic>{
+      'ledgerId': ledgerId,
+      'transactionIds': transactionIds,
+    };
+    if (category != null && category.trim().isNotEmpty) {
+      payload['category'] = category.trim();
+    }
+    if (incomeCategory != null && incomeCategory.trim().isNotEmpty) {
+      payload['incomeCategory'] = incomeCategory.trim();
+    }
+    if (mood != null && mood.trim().isNotEmpty) payload['mood'] = mood.trim();
+    if (tags != null) payload['tags'] = tags;
+    if (reimbursable != null) payload['reimbursable'] = reimbursable;
+    if (excludeFromBudget != null) {
+      payload['excludeFromBudget'] = excludeFromBudget;
+    }
+    await postJson('/api/transactions/bulk', payload);
   }
 
   Future<List<String>> syncEntries(List<OfflineEntry> entries) async {

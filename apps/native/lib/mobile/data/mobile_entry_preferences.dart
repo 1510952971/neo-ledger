@@ -7,6 +7,7 @@ class MobileEntryPreferences {
   static const _accountPrefix = 'mobile.entry.account.';
   static const _hapticsKey = 'mobile.entry.haptics';
   static const _hideAmountsKey = 'mobile.home.hideAmounts';
+  static const _billSearchHistoryKey = 'mobile.bill.searchHistory';
 
   Future<List<String>> recentCategories() async {
     final preferences = await SharedPreferences.getInstance();
@@ -50,5 +51,24 @@ class MobileEntryPreferences {
   Future<void> setHideAmounts(bool enabled) async {
     final preferences = await SharedPreferences.getInstance();
     await preferences.setBool(_hideAmountsKey, enabled);
+  }
+
+  Future<List<String>> recentBillSearches() async {
+    final preferences = await SharedPreferences.getInstance();
+    return preferences.getStringList(_billSearchHistoryKey) ?? const [];
+  }
+
+  Future<void> rememberBillSearch(String query) async {
+    final normalized = query.trim();
+    if (normalized.isEmpty) return;
+    final preferences = await SharedPreferences.getInstance();
+    final recent = preferences.getStringList(_billSearchHistoryKey) ?? const [];
+    await preferences.setStringList(
+      _billSearchHistoryKey,
+      [
+        normalized,
+        ...recent.where((item) => item != normalized),
+      ].take(6).toList(),
+    );
   }
 }

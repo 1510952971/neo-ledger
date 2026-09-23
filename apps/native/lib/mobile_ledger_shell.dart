@@ -846,6 +846,7 @@ class MobileBillsPage extends StatefulWidget {
 
 class _MobileBillsPageState extends State<MobileBillsPage> {
   final _search = TextEditingController();
+  final _searchPreferences = const MobileEntryPreferences();
   late DateTime _month;
   TransactionPage? _page;
   bool _loading = false;
@@ -855,6 +856,9 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
   String? _categoryFilter;
   double? _minAmount;
   double? _maxAmount;
+  bool _selectionMode = false;
+  final _selectedIds = <int>{};
+  List<String> _searchHistory = const [];
 
   LedgerController get controller => widget.controller;
 
@@ -864,6 +868,7 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
     final now = DateTime.now();
     _month = DateTime(now.year, now.month);
     _page = controller.transactions;
+    _loadSearchHistory();
     _load();
   }
 
@@ -882,14 +887,25 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
       title: '账单',
       trailing: IconButton(
         tooltip: '回到本月',
-        onPressed: _goToCurrentMonth,
-        icon: const Icon(Icons.today_rounded, color: _mobileMuted),
+        onPressed: _selectionMode ? _exitSelectionMode : _goToCurrentMonth,
+        icon: Icon(
+          _selectionMode ? Icons.close_rounded : Icons.today_rounded,
+          color: _mobileMuted,
+        ),
       ),
       child: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
           padding: const EdgeInsets.fromLTRB(18, 8, 18, 110),
           children: [
+            if (_selectionMode) ...[
+              _MobileSelectionToolbar(
+                count: _selectedIds.length,
+                onCancel: _exitSelectionMode,
+                onApply: _openBatchActions,
+              ),
+              const SizedBox(height: 12),
+            ],
             Row(
               children: [
                 IconButton(
@@ -923,10 +939,14 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
             TextField(
               controller: _search,
               textInputAction: TextInputAction.search,
-              onSubmitted: (_) => _load(),
+              onChanged: (_) => setState(() {}),
+              onSubmitted: (_) {
+                _rememberSearch();
+                _load();
+              },
               decoration: InputDecoration(
                 prefixIcon: const Icon(Icons.search_rounded),
-                hintText: '搜索标题、分类、账户、金额…',
+                hintText: '搜索标题、备注、标签、分类、账户、金额…',
                 suffixIcon: _search.text.isEmpty
                     ? null
                     : IconButton(
@@ -938,6 +958,27 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
                       ),
               ),
             ),
+            if (_search.text.trim().isEmpty && _searchHistory.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  for (final query in _searchHistory)
+                    ActionChip(
+                      label: Text(query),
+                      onPressed: () {
+                        _search.text = query;
+                        _search.selection = TextSelection.collapsed(
+                          offset: query.length,
+                        );
+                        _rememberSearch();
+                        _load();
+                      },
+                    ),
+                ],
+              ),
+            ],
             const SizedBox(height: 8),
             Row(
               children: [
@@ -994,8 +1035,13 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
                       child: _TransactionTile(
                         item: item,
                         dense: true,
-                        onTap: () => _openDetail(item),
-                        onLongPress: () => _openActions(item),
+                        selected: _selectedIds.contains(item.id),
+                        onTap: _selectionMode
+                            ? () => _toggleSelection(item)
+                            : () => _openDetail(item),
+                        onLongPress: _selectionMode
+                            ? () => _toggleSelection(item)
+                            : () => _openActions(item),
                       ),
                     ),
                   ),
@@ -1005,6 +1051,250 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
         ),
       ),
     );
+  }
+
+  void _enterSelectionMode(TransactionItem item) {
+    setState(() {
+      _selectionMode = true;
+      _selectedIds.add(item.id);
+    });
+  }
+
+  void _toggleSelection(TransactionItem item) {
+    setState(() {
+      if (!_selectedIds.remove(item.id)) _selectedIds.add(item.id);
+      if (_selectedIds.isEmpty) _selectionMode = false;
+    });
+  }
+
+  void _exitSelectionMode() {
+    setState(() {
+      _selectionMode = false;
+      _selectedIds.clear();
+    });
+  }
+
+  Future<void> _openBatchActions() async {
+    final selected = (_page?.items ?? const <TransactionItem>[])
+        .where((item) => _selectedIds.contains(item.id))
+        .toList(growable: false);
+    final synced = selected
+        .where((item) => item.id > 0 && item.updatedAt != null)
+        .toList(growable: false);
+    if (synced.length != selected.length) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('离线待同步流水暂不支持批量修改，请先联网同步')));
+      return;
+    }
+    if (synced.isEmpty) return;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.category_outlined),
+              title: const Text('批量设置分类'),
+              onTap: () => Navigator.pop(sheetContext, 'category'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.label_outline_rounded),
+              title: const Text('批量设置标签'),
+              onTap: () => Navigator.pop(sheetContext, 'tags'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.receipt_long_outlined),
+              title: const Text('标记为待报销'),
+              onTap: () => Navigator.pop(sheetContext, 'reimbursable'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.account_balance_wallet_outlined),
+              title: const Text('不计入预算'),
+              onTap: () => Navigator.pop(sheetContext, 'exclude'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.restart_alt_rounded),
+              title: const Text('清除报销与预算标记'),
+              onTap: () => Navigator.pop(sheetContext, 'clear-flags'),
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.delete_sweep_outlined,
+                color: _mobileExpense,
+              ),
+              title: const Text(
+                '批量删除流水',
+                style: TextStyle(color: _mobileExpense),
+              ),
+              onTap: () => Navigator.pop(sheetContext, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    if (action == 'delete') {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('删除 ${synced.length} 笔流水？'),
+          content: const Text('删除会同步到网页、Windows、macOS 和其他移动设备，且当前没有撤销入口。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('确认删除'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      try {
+        for (final item in synced) {
+          await controller.deleteTransaction(item);
+        }
+        if (mounted) {
+          _exitSelectionMode();
+          await _load();
+          if (mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text('已删除 ${synced.length} 笔流水')));
+          }
+        }
+      } catch (error) {
+        if (mounted) {
+          await _load();
+          if (mounted) {
+            ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text('批量删除中断：$error')));
+          }
+        }
+      }
+      return;
+    }
+    String? category;
+    String? incomeCategory;
+    if (action == 'category') {
+      final types = synced.map((item) => item.type).toSet();
+      if (types.length != 1) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('请先只选择支出或收入流水，再批量设置分类')));
+        return;
+      }
+      final income = types.single == '收入';
+      final choices =
+          (income ? controller.incomeCategories : controller.expenseCategories)
+              .where((item) => item.isActive)
+              .toList(growable: false);
+      final selected = await showModalBottomSheet<String>(
+        context: context,
+        showDragHandle: true,
+        backgroundColor: _mobileSurface,
+        builder: (sheetContext) => SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              const ListTile(
+                title: Text(
+                  '选择分类',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+              for (final choice in choices)
+                ListTile(
+                  leading: Text(
+                    choice.icon,
+                    style: const TextStyle(fontSize: 22),
+                  ),
+                  title: Text(choice.name),
+                  onTap: () => Navigator.pop(sheetContext, choice.name),
+                ),
+            ],
+          ),
+        ),
+      );
+      if (!mounted || selected == null) return;
+      if (income) {
+        incomeCategory = selected;
+      } else {
+        category = selected;
+      }
+    }
+    List<String>? tags;
+    if (action == 'tags') {
+      final input = TextEditingController();
+      final value = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('批量设置标签'),
+          content: TextField(
+            controller: input,
+            autofocus: true,
+            decoration: const InputDecoration(hintText: '多个标签用逗号分隔'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, input.text),
+              child: const Text('应用'),
+            ),
+          ],
+        ),
+      );
+      input.dispose();
+      if (value == null) return;
+      tags = value
+          .split(RegExp(r'[,，]'))
+          .map((tag) => tag.trim())
+          .where((tag) => tag.isNotEmpty)
+          .toSet()
+          .take(12)
+          .toList();
+    }
+    try {
+      await controller.bulkUpdateTransactions(
+        transactionIds: synced.map((item) => item.id).toList(),
+        category: category,
+        incomeCategory: incomeCategory,
+        tags: tags,
+        reimbursable: action == 'reimbursable'
+            ? true
+            : action == 'clear-flags'
+            ? false
+            : null,
+        excludeFromBudget: action == 'exclude'
+            ? true
+            : action == 'clear-flags'
+            ? false
+            : null,
+      );
+      if (mounted) {
+        _exitSelectionMode();
+        await _load();
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('已更新 ${synced.length} 笔流水')));
+        }
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('批量更新失败：$error')));
+      }
+    }
   }
 
   Future<void> _load() async {
@@ -1035,6 +1325,25 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
       if (mounted) setState(() => _error = '$error');
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loadSearchHistory() async {
+    final history = await _searchPreferences.recentBillSearches();
+    if (mounted) setState(() => _searchHistory = history);
+  }
+
+  Future<void> _rememberSearch() async {
+    final query = _search.text.trim();
+    if (query.isEmpty) return;
+    await _searchPreferences.rememberBillSearch(query);
+    if (mounted) {
+      setState(() {
+        _searchHistory = [
+          query,
+          ..._searchHistory.where((item) => item != query),
+        ].take(6).toList();
+      });
     }
   }
 
@@ -1255,13 +1564,34 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
     );
     if (confirmed != true || !mounted) return false;
     try {
-      await controller.deleteTransaction(item);
+      final undoToken = await controller.deleteTransaction(item);
       if (mounted) {
         await _load();
       }
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('流水已删除')));
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.showSnackBar(
+          SnackBar(
+            content: const Text('流水已删除，可在 2 分钟内撤销'),
+            action: undoToken == null
+                ? null
+                : SnackBarAction(
+                    label: '撤销',
+                    onPressed: () async {
+                      try {
+                        await controller.restoreTransaction(item, undoToken);
+                        if (mounted) await _load();
+                      } catch (error) {
+                        if (mounted) {
+                          messenger.showSnackBar(
+                            SnackBar(content: Text('撤销失败：$error')),
+                          );
+                        }
+                      }
+                    },
+                  ),
+          ),
+        );
       }
       return true;
     } catch (error) {
@@ -1291,6 +1621,11 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
               leading: const Icon(Icons.copy_rounded),
               title: const Text('复制流水摘要'),
               onTap: () => Navigator.pop(sheetContext, 'copy'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.checklist_rounded),
+              title: const Text('进入多选模式'),
+              onTap: () => Navigator.pop(sheetContext, 'select'),
             ),
             if (item.installmentId == null)
               ListTile(
@@ -1325,6 +1660,8 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
         }
       case 'delete':
         await _confirmDelete(item);
+      case 'select':
+        _enterSelectionMode(item);
     }
   }
 }
@@ -4278,6 +4615,43 @@ class _DaySummaryHeader extends StatelessWidget {
   }
 }
 
+class _MobileSelectionToolbar extends StatelessWidget {
+  const _MobileSelectionToolbar({
+    required this.count,
+    required this.onCancel,
+    required this.onApply,
+  });
+
+  final int count;
+  final VoidCallback onCancel;
+  final VoidCallback onApply;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+    decoration: BoxDecoration(
+      color: _mobileBrand.withValues(alpha: .12),
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: _mobileBrand.withValues(alpha: .45)),
+    ),
+    child: Row(
+      children: [
+        Text(
+          '已选 $count 笔',
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
+        const Spacer(),
+        TextButton(onPressed: onCancel, child: const Text('取消')),
+        FilledButton.icon(
+          onPressed: count == 0 ? null : onApply,
+          icon: const Icon(Icons.tune_rounded, size: 18),
+          label: const Text('批量操作'),
+        ),
+      ],
+    ),
+  );
+}
+
 class _TransactionTile extends StatelessWidget {
   const _TransactionTile({
     required this.item,
@@ -4285,6 +4659,7 @@ class _TransactionTile extends StatelessWidget {
     this.onTap,
     this.onLongPress,
     this.hideAmount = false,
+    this.selected = false,
   });
 
   final TransactionItem item;
@@ -4292,6 +4667,7 @@ class _TransactionTile extends StatelessWidget {
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
   final bool hideAmount;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
@@ -4313,19 +4689,34 @@ class _TransactionTile extends StatelessWidget {
         decoration: BoxDecoration(
           color: _mobileSurface,
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: _mobileLine),
+          border: Border.all(color: selected ? _mobileBrand : _mobileLine),
         ),
         child: Row(
           children: [
-            Container(
-              width: 42,
-              height: 42,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: color.withAlpha(24),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Text(icon, style: const TextStyle(fontSize: 21)),
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: color.withAlpha(24),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Text(icon, style: const TextStyle(fontSize: 21)),
+                ),
+                if (selected)
+                  const Positioned(
+                    right: -6,
+                    top: -6,
+                    child: Icon(
+                      Icons.check_circle,
+                      color: _mobileBrand,
+                      size: 19,
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(width: 12),
             Expanded(

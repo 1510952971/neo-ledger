@@ -209,6 +209,12 @@ export async function ensureDb() {
     binding.prepare(
       "CREATE INDEX IF NOT EXISTS import_batch_items_transaction_idx ON import_batch_items(transaction_id)",
     ),
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS transaction_delete_snapshots(token TEXT PRIMARY KEY,ledger_id INTEGER NOT NULL,transaction_id INTEGER NOT NULL,deleted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,payload TEXT NOT NULL)",
+    ),
+    binding.prepare(
+      "CREATE INDEX IF NOT EXISTS transaction_delete_snapshots_ledger_idx ON transaction_delete_snapshots(ledger_id,deleted_at DESC)",
+    ),
   ]);
   const version = await binding
     .prepare("SELECT value FROM app_meta WHERE key = 'schema_version'")
