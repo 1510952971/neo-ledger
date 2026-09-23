@@ -158,24 +158,32 @@ class Account {
 
 class AccountTransfer {
   const AccountTransfer({
+    required this.ledgerId,
     required this.uuid,
     required this.kind,
     required this.amountCents,
     required this.currency,
     required this.occurredAt,
     required this.note,
+    this.originalTimezone = 'Asia/Shanghai',
+    this.updatedAt = '',
+    this.targetType,
     this.fromAccountId,
     this.fromAccountName,
     this.toAccountId,
     this.toAccountName,
   });
 
+  final int ledgerId;
   final String uuid;
   final String kind;
   final int amountCents;
   final String currency;
   final String occurredAt;
   final String note;
+  final String originalTimezone;
+  final String updatedAt;
+  final String? targetType;
   final int? fromAccountId;
   final String? fromAccountName;
   final int? toAccountId;
@@ -183,12 +191,16 @@ class AccountTransfer {
 
   factory AccountTransfer.fromJson(Map<String, dynamic> json) =>
       AccountTransfer(
+        ledgerId: _asInt(json['ledgerId']),
         uuid: '${json['uuid'] ?? ''}',
         kind: '${json['kind'] ?? '账户转账'}',
         amountCents: _asInt(json['amount']),
         currency: '${json['currency'] ?? 'CNY'}',
         occurredAt: '${json['occurredAt'] ?? ''}',
         note: '${json['note'] ?? ''}',
+        originalTimezone: '${json['originalTimezone'] ?? 'Asia/Shanghai'}',
+        updatedAt: '${json['updatedAt'] ?? ''}',
+        targetType: json['targetType'] as String?,
         fromAccountId: json['fromAccountId'] == null
             ? null
             : _asInt(json['fromAccountId']),

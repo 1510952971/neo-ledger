@@ -57,12 +57,13 @@ test("asset-to-liability repayment preserves net worth", () => {
 
 test("failed overpayment and insufficient-funds transfers leave balances unchanged", () => {
   const db = database();
+  db.exec("INSERT INTO accounts(id,ledger_id,type,current_balance,currency) VALUES(5,1,'资产',1000,'CNY')");
   assert.throws(
     () => transfer(db, { uuid: "overpay", kind: "信用卡还款", from: 1, to: 2, amount: 6000 }),
     /超过当前负债/,
   );
   assert.throws(
-    () => transfer(db, { uuid: "empty", from: 1, to: 2, amount: 11000 }),
+    () => transfer(db, { uuid: "empty", from: 1, to: 5, amount: 11000 }),
     /余额不足/,
   );
   assert.deepEqual(
@@ -122,9 +123,9 @@ test("one automatic occurrence can be claimed and deducted only once", () => {
   const claim = db.prepare("INSERT OR IGNORE INTO scheduled_occurrences(occurrence_key,ledger_id,source_type,source_id) VALUES('subscription:1:2026-07-15',1,'subscription',1)");
   assert.equal(claim.run().changes, 1);
   assert.equal(claim.run().changes, 0);
-  transfer(db, { uuid: "auto-1", from: 1, amount: 1000, occurrenceKey: "subscription:1:2026-07-15" });
+  transfer(db, { uuid: "auto-1", kind: "分期还款", from: 1, amount: 1000, occurrenceKey: "subscription:1:2026-07-15" });
   assert.throws(
-    () => transfer(db, { uuid: "auto-2", from: 1, amount: 1000, occurrenceKey: "subscription:1:2026-07-15" }),
+    () => transfer(db, { uuid: "auto-2", kind: "分期还款", from: 1, amount: 1000, occurrenceKey: "subscription:1:2026-07-15" }),
     /UNIQUE constraint failed/,
   );
   assert.equal(db.prepare("SELECT current_balance value FROM accounts WHERE id=1").get().value, 9000);

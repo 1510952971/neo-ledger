@@ -51,7 +51,7 @@ import { AssetDialogs } from "./asset-dialogs";
 import { CategoryDialogs } from "./category-dialogs";
 import { BillSection, type BillSectionRow } from "./bill-section";
 import { AccountSection, type AccountSectionAccount } from "./account-section";
-import { AccountTransferHistoryDialog, type AccountTransferHistoryRow } from "./account-transfer-history-dialog";
+import { AccountTransferHistoryDialog, type AccountTransferEditValues, type AccountTransferHistoryRow } from "./account-transfer-history-dialog";
 import { DigitalAssetSection } from "./digital-asset-section";
 import { FinanceOverviewSection } from "./finance-overview-section";
 import { AnalyticsSection } from "./analytics-section";
@@ -649,12 +649,13 @@ export function LedgerApp({
   const accountTransferHistoryRef = useRef<HTMLDialogElement>(null);
   const accountTransferHistoryRequestRef = useRef(0);
   const [accountTransferHistory, setAccountTransferHistory] = useState<{
+    accountId: number | null;
     accountName: string;
     rows: AccountTransferHistoryRow[];
     loading: boolean;
     error: string;
     hideAmounts: boolean;
-  }>({ accountName: "", rows: [], loading: false, error: "", hideAmounts: true });
+  }>({ accountId: null, accountName: "", rows: [], loading: false, error: "", hideAmounts: true });
   const {
     accounts: accountList,
     setAccounts: setAccountList,
@@ -1006,6 +1007,7 @@ export function LedgerApp({
   async function showAccountTransferHistory(account: AccountSectionAccount) {
     const requestId = ++accountTransferHistoryRequestRef.current;
     setAccountTransferHistory({
+      accountId: account.id,
       accountName: account.name,
       rows: [],
       loading: true,
@@ -1024,6 +1026,7 @@ export function LedgerApp({
       if (!history.response.ok || !Array.isArray(history.data))
         throw new Error((!Array.isArray(history.data) && history.data?.error) || "读取转账记录失败");
       setAccountTransferHistory({
+        accountId: account.id,
         accountName: account.name,
         rows: history.data,
         loading: false,
@@ -1041,6 +1044,48 @@ export function LedgerApp({
   }
   function closeAccountTransferHistory() {
     accountTransferHistoryRef.current?.close();
+  }
+  async function saveAccountTransferHistory(row: AccountTransferHistoryRow, values: AccountTransferEditValues) {
+    try {
+      const { response, data } = await fetchClientJson<{ error?: string }>("/api/transfers", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          uuid: row.uuid,
+          ledgerId: currentLedgerId,
+          expectedUpdatedAt: row.updatedAt,
+          ...values,
+        }),
+      });
+      if (!response.ok) throw new Error(data?.error || "更新转账失败");
+      await reloadAccounts();
+      const account = accountList.find((item) => item.id === accountTransferHistory.accountId);
+      if (account) await showAccountTransferHistory(account);
+      setToast({ kind: "success", message: "转账已更新，双方账户余额已同步" });
+    } catch (error) {
+      setToast({ kind: "warning", message: error instanceof Error ? error.message : "更新转账失败" });
+      throw error;
+    }
+  }
+  async function deleteAccountTransferHistory(row: AccountTransferHistoryRow) {
+    const agreed = await confirmAsk({
+      title: "删除这笔转账？",
+      message: "删除后会同时冲正转出与转入账户余额，此操作不可撤销。系统生成的转账需在对应业务记录中处理。",
+      tone: "danger",
+      confirmText: "删除转账",
+    });
+    if (!agreed) return;
+    try {
+      const query = new URLSearchParams({ uuid: row.uuid, ledger: String(currentLedgerId), expectedUpdatedAt: row.updatedAt });
+      const { response, data } = await fetchClientJson<{ error?: string }>(`/api/transfers?${query}`, { method: "DELETE" });
+      if (!response.ok) throw new Error(data?.error || "删除转账失败");
+      await reloadAccounts();
+      const account = accountList.find((item) => item.id === accountTransferHistory.accountId);
+      if (account) await showAccountTransferHistory(account);
+      setToast({ kind: "success", message: "转账已删除，双方账户余额已恢复" });
+    } catch (error) {
+      setToast({ kind: "warning", message: error instanceof Error ? error.message : "删除转账失败" });
+    }
   }
   async function confirmRemoveAccount() {
     if (!editingAccount) return;
@@ -3618,8 +3663,11 @@ export function LedgerApp({
               loading={accountTransferHistory.loading}
               error={accountTransferHistory.error}
               hideAmounts={accountTransferHistory.hideAmounts}
+              accounts={accountList}
               formatCurrency={(amount, currency) => formatCurrency(amount, currency as Currency)}
               formatDateTime={formatTimestamp}
+              onSave={saveAccountTransferHistory}
+              onDelete={deleteAccountTransferHistory}
               onClose={closeAccountTransferHistory}
             />
 

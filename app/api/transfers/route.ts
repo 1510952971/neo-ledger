@@ -2,7 +2,12 @@ import { NextResponse } from "next/server";
 import { ensureDb, getDbBinding } from "../../../db";
 import { createAccountTransfer } from "../../../db/transfers";
 import { ApiAccessError, accessErrorResponse, claimAndRequireLedger } from "../../api-security";
-import { readTransferInput } from "../../internal-api-contract";
+import {
+  readTransferDeleteInput,
+  readTransferInput,
+  readTransferUpdateInput,
+} from "../../internal-api-contract";
+import { localDateTimeToUtc } from "../../time-money.js";
 
 function privateJson(body: unknown, init: ResponseInit = {}) {
   const headers = new Headers(init.headers);
@@ -96,7 +101,11 @@ export async function POST(request: Request) {
     if (!from.isActive || !to.isActive)
       throw new ApiAccessError("停用账户不能用于新转账", 409);
     if (from.currency !== to.currency) throw new Error("跨币种账户请先换汇，不能直接转账");
-    if (kind === "信用卡还款" && (from.type !== "资产" || to.type !== "负债"))
+    if (from.type !== "资产")
+      throw new ApiAccessError("转出账户必须是资产账户", 400);
+    if (kind === "账户转账" && to.type !== "资产")
+      throw new ApiAccessError("账户转账的转入账户必须是资产账户", 400);
+    if (kind === "信用卡还款" && to.type !== "负债")
       throw new Error("信用卡还款应从资产账户转入负债账户");
     let uuid: string;
     try {
@@ -129,5 +138,120 @@ export async function POST(request: Request) {
     return privateJson({ ok: true, uuid, duplicate: false }, { status: 201 });
   } catch (error) {
     return accessErrorResponse(error, "转账失败", request);
+  }
+}
+
+type EditableTransfer = {
+  uuid: string;
+  ledgerId: number;
+  kind: string;
+  fromAccountId: number | null;
+  toAccountId: number | null;
+  amount: number;
+  currency: string;
+  targetType: string | null;
+  occurredAt: string;
+  originalTimezone: string;
+  note: string;
+  updatedAt: string;
+};
+
+type EditableManualTransfer = Omit<EditableTransfer, "fromAccountId" | "toAccountId"> & {
+  fromAccountId: number;
+  toAccountId: number;
+};
+
+async function loadEditableTransfer(
+  ledgerId: number,
+  uuid: string,
+): Promise<EditableManualTransfer> {
+  const current = await getDbBinding()
+    .prepare("SELECT uuid,ledger_id ledgerId,kind,from_account_id fromAccountId,to_account_id toAccountId,amount,currency,target_type targetType,occurred_at occurredAt,original_timezone originalTimezone,note,updated_at updatedAt FROM account_transfers WHERE uuid=? AND ledger_id=?")
+    .bind(uuid, ledgerId)
+    .first<EditableTransfer>();
+  if (!current) throw new ApiAccessError("转账记录不存在", 404);
+  if (
+    !["账户转账", "信用卡还款"].includes(current.kind) ||
+    current.targetType != null ||
+    current.fromAccountId == null ||
+    current.toAccountId == null
+  ) {
+    throw new ApiAccessError("系统生成的转账请在对应的分期、储蓄或资产项目中修改", 409);
+  }
+  return { ...current, fromAccountId: current.fromAccountId, toAccountId: current.toAccountId };
+}
+
+export async function PUT(request: Request) {
+  try {
+    await ensureDb();
+    const body = await readTransferUpdateInput(request);
+    await claimAndRequireLedger(request, body.ledgerId);
+    const db = getDbBinding();
+    const current = await loadEditableTransfer(body.ledgerId, body.uuid);
+    if (current.updatedAt !== body.expectedUpdatedAt)
+      throw new ApiAccessError("这笔转账已在其他位置更新，请刷新后重试", 409);
+
+    const accountRows = await db
+      .prepare("SELECT id,type,currency,is_active isActive,current_balance currentBalance FROM accounts WHERE ledger_id=? AND id IN (?,?,?,?)")
+      .bind(body.ledgerId, current.fromAccountId, current.toAccountId, body.fromAccountId, body.toAccountId)
+      .all<{ id: number; type: string; currency: string; isActive: number; currentBalance: number }>();
+    const allAccounts = new Map(accountRows.results.map((item) => [Number(item.id), item]));
+    const from = allAccounts.get(body.fromAccountId);
+    const to = allAccounts.get(body.toAccountId);
+    const oldFrom = current.fromAccountId == null ? null : allAccounts.get(current.fromAccountId);
+    const oldTo = current.toAccountId == null ? null : allAccounts.get(current.toAccountId);
+    if (!from || !to || !oldFrom || !oldTo)
+      throw new ApiAccessError("转账账户不存在或不属于当前账本", 404);
+    if ((!from.isActive && from.id !== current.fromAccountId) || (!to.isActive && to.id !== current.toAccountId))
+      throw new ApiAccessError("停用账户不能用于新的转账关系", 409);
+    if (from.type !== "资产") throw new ApiAccessError("转出账户必须是资产账户", 400);
+    if (body.kind === "账户转账" && to.type !== "资产")
+      throw new ApiAccessError("账户转账的转入账户必须是资产账户", 400);
+    if (body.kind === "信用卡还款" && to.type !== "负债")
+      throw new ApiAccessError("信用卡还款应转入负债账户", 400);
+    if (from.currency !== to.currency)
+      throw new ApiAccessError("转账双方币种必须一致", 400);
+
+    const amount = Math.round(body.amount * 100);
+    const reversedBalance = (account: { id: number; currentBalance: number }) =>
+      account.currentBalance +
+      (account.id === current.fromAccountId ? current.amount : 0) -
+      (account.id === current.toAccountId ? current.amount : 0);
+    if (from.type === "资产" && reversedBalance(from) < amount)
+      throw new ApiAccessError("转出账户余额不足", 409);
+    if (to.type === "负债" && reversedBalance(to) + amount > 0)
+      throw new ApiAccessError("还款金额超过当前负债", 409);
+    const nextUpdatedAt = new Date().toISOString();
+    const occurredAt = localDateTimeToUtc(body.occurredAt, body.originalTimezone);
+    const result = await db.prepare("UPDATE account_transfers SET kind=?,from_account_id=?,to_account_id=?,amount=?,currency=?,occurred_at=?,original_timezone=?,note=?,updated_at=? WHERE uuid=? AND ledger_id=? AND updated_at=?")
+      .bind(body.kind, body.fromAccountId, body.toAccountId, amount, from.currency, occurredAt, body.originalTimezone, body.note ?? "", nextUpdatedAt, body.uuid, body.ledgerId, body.expectedUpdatedAt)
+      .run();
+    if (Number(result.meta.changes ?? 0) !== 1)
+      throw new ApiAccessError("这笔转账已在其他位置更新，请刷新后重试", 409);
+    return privateJson({ ok: true, uuid: body.uuid, updatedAt: nextUpdatedAt });
+  } catch (error) {
+    if (error instanceof Error && /转出账户余额不足|还款金额超过当前负债/u.test(error.message))
+      return accessErrorResponse(new ApiAccessError(error.message, 409), "更新转账失败", request);
+    return accessErrorResponse(error, "更新转账失败", request);
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    await ensureDb();
+    const body = readTransferDeleteInput(request);
+    await claimAndRequireLedger(request, body.ledgerId);
+    const db = getDbBinding();
+    const current = await loadEditableTransfer(body.ledgerId, body.uuid);
+    if (current.updatedAt !== body.expectedUpdatedAt)
+      throw new ApiAccessError("这笔转账已在其他位置更新，请刷新后重试", 409);
+    const result = await db.prepare("DELETE FROM account_transfers WHERE uuid=? AND ledger_id=? AND updated_at=?")
+      .bind(body.uuid, body.ledgerId, body.expectedUpdatedAt)
+      .run();
+    if (Number(result.meta.changes ?? 0) !== 1)
+      throw new ApiAccessError("这笔转账已在其他位置更新，请刷新后重试", 409);
+    return privateJson({ ok: true, uuid: body.uuid });
+  } catch (error) {
+    return accessErrorResponse(error, "删除转账失败", request);
   }
 }

@@ -5,14 +5,17 @@ import { evaluateTrackedAsset } from "../app/asset-core.js";
 import { dateKeyInZone, localDateTimeToUtc } from "../app/time-money.js";
 import {
   ACCOUNT_TRANSFERS_APPLY_TRIGGER_SQL,
+  ACCOUNT_TRANSFERS_APPLY_UPDATE_TRIGGER_SQL,
   ACCOUNT_TRANSFERS_LEDGER_INDEX_SQL,
   ACCOUNT_TRANSFERS_OCCURRENCE_INDEX_SQL,
+  ACCOUNT_TRANSFERS_REVERSE_DELETE_TRIGGER_SQL,
   ACCOUNT_TRANSFERS_TABLE_SQL,
   ACCOUNT_TRANSFERS_VALIDATE_TRIGGER_SQL,
+  ACCOUNT_TRANSFERS_VALIDATE_UPDATE_TRIGGER_SQL,
   SCHEDULED_OCCURRENCES_TABLE_SQL,
 } from "./transfer-schema.js";
 
-export const DB_SCHEMA_VERSION = "36";
+export const DB_SCHEMA_VERSION = "37";
 const SCHEMA_VERSION = DB_SCHEMA_VERSION;
 let ensuredDbBinding: ReturnType<typeof getDbBinding> | null = null;
 
@@ -235,6 +238,20 @@ export async function ensureDb() {
       binding.prepare("CREATE TRIGGER IF NOT EXISTS transactions_active_account_insert BEFORE INSERT ON transactions WHEN COALESCE((SELECT value FROM app_meta WHERE key='restore_mode'),'0')!='1' AND COALESCE((SELECT is_active FROM accounts WHERE id=NEW.account_id AND ledger_id=NEW.ledger_id),0)!=1 BEGIN SELECT RAISE(ABORT,'账户已停用，不能新增流水'); END"),
       binding.prepare("CREATE TRIGGER IF NOT EXISTS transactions_active_account_update BEFORE UPDATE OF account_id ON transactions WHEN COALESCE((SELECT value FROM app_meta WHERE key='restore_mode'),'0')!='1' AND NEW.account_id!=OLD.account_id AND COALESCE((SELECT is_active FROM accounts WHERE id=NEW.account_id AND ledger_id=NEW.ledger_id),0)!=1 BEGIN SELECT RAISE(ABORT,'账户已停用，不能转入流水'); END"),
       binding.prepare("UPDATE app_meta SET value='36' WHERE key='schema_version'"),
+    ]);
+    return ensureDb();
+  }
+  if (version?.value === "36") {
+    await runMigrationBatch(binding, [
+      binding.prepare("DROP TRIGGER IF EXISTS account_transfers_validate"),
+      binding.prepare(ACCOUNT_TRANSFERS_VALIDATE_TRIGGER_SQL),
+      binding.prepare("DROP TRIGGER IF EXISTS account_transfers_validate_update"),
+      binding.prepare("DROP TRIGGER IF EXISTS account_transfers_apply_update"),
+      binding.prepare("DROP TRIGGER IF EXISTS account_transfers_reverse_delete"),
+      binding.prepare(ACCOUNT_TRANSFERS_VALIDATE_UPDATE_TRIGGER_SQL),
+      binding.prepare(ACCOUNT_TRANSFERS_APPLY_UPDATE_TRIGGER_SQL),
+      binding.prepare(ACCOUNT_TRANSFERS_REVERSE_DELETE_TRIGGER_SQL),
+      binding.prepare("UPDATE app_meta SET value='37' WHERE key='schema_version'"),
     ]);
     return ensureDb();
   }
@@ -533,6 +550,9 @@ export async function ensureDb() {
       binding.prepare(ACCOUNT_TRANSFERS_LEDGER_INDEX_SQL),
       binding.prepare(ACCOUNT_TRANSFERS_VALIDATE_TRIGGER_SQL),
       binding.prepare(ACCOUNT_TRANSFERS_APPLY_TRIGGER_SQL),
+      binding.prepare(ACCOUNT_TRANSFERS_VALIDATE_UPDATE_TRIGGER_SQL),
+      binding.prepare(ACCOUNT_TRANSFERS_APPLY_UPDATE_TRIGGER_SQL),
+      binding.prepare(ACCOUNT_TRANSFERS_REVERSE_DELETE_TRIGGER_SQL),
       binding.prepare(SCHEDULED_OCCURRENCES_TABLE_SQL),
       binding.prepare("CREATE TABLE sync_tombstones(entity_type TEXT NOT NULL,entity_uuid TEXT NOT NULL,ledger_id INTEGER NOT NULL,deleted_at TEXT NOT NULL,PRIMARY KEY(entity_type,entity_uuid))"),
       binding.prepare("CREATE TABLE api_rate_limits(owner_id TEXT NOT NULL,scope TEXT NOT NULL,window_start INTEGER NOT NULL,count INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(owner_id,scope,window_start))"),

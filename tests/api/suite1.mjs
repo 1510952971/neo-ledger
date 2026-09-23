@@ -165,19 +165,52 @@ r = await call(transactions, "PUT", "/api/transactions", { body: { id: t1.id, le
 check("过期版本冲突返回409", r.status === 409, `${r.status} ${r.text}`);
 
 describe("转账");
-r = await call(transfers, "POST", "/api/transfers", { body: { ledgerId: L, kind: "账户转账", fromAccountId: acct1, toAccountId: acct2, amount: 300, occurredAt: "2026-07-21T10:00", originalTimezone: "Asia/Shanghai", note: "还卡" } });
+r = await call(transfers, "POST", "/api/transfers", { body: { ledgerId: L, kind: "信用卡还款", fromAccountId: acct1, toAccountId: acct2, amount: 300, occurredAt: "2026-07-21T10:00", originalTimezone: "Asia/Shanghai", note: "还卡" } });
 check("POST 账户转账", r.status === 200 || r.status === 201, r.text);
+const editableTransferUuid = r.json?.uuid;
+check("转账创建返回可管理标识", Boolean(editableTransferUuid), r.text);
 const b1 = (await q("SELECT current_balance b FROM accounts WHERE id=?", acct1))[0].b;
 const b2 = (await q("SELECT current_balance b FROM accounts WHERE id=?", acct2))[0].b;
 check("触发器扣减转出方(精确)", b1 === 1200000 - 3550 + 888888 - 3050 - 30000, String(b1));
 check("触发器增加转入方", b2 === -500000 + 30000, String(b2));
+const balanceBeforeTransfer = 1200000 - 3550 + 888888 - 3050;
 r = await call(transfers, "GET", `/api/transfers?ledger=${L}`);
 check("GET 转账列表", r.status === 200 && (r.json?.length ?? 0) >= 2, r.text?.slice(0,120));
 r = await call(transfers, "GET", `/api/transfers?ledger=${L}&account=${acct2}`);
 check("按任一关联账户读取转账详情并显示账户名", r.status === 200 && r.json?.every(item => item.fromAccountId === acct2 || item.toAccountId === acct2) && r.json?.some(item => item.fromAccountName && item.toAccountName), r.text?.slice(0,180));
 r = await call(transfers, "GET", `/api/transfers?ledger=${L}&account=99999999`);
 check("跨账本或不存在的账户不能读取转账历史", r.status === 404, `${r.status} ${r.text}`);
-const retryTransferBody = { ledgerId: L, kind: "账户转账", fromAccountId: acct1, toAccountId: acct2, amount: 1, idempotencyKey: "transfer-retry-001", occurredAt: "2026-07-21T11:00", originalTimezone: "Asia/Shanghai", note: "可重试转账" };
+const oldTransferVersion = (await q("SELECT updated_at updatedAt FROM account_transfers WHERE uuid=?", editableTransferUuid))[0].updatedAt;
+r = await call(transfers, "PUT", "/api/transfers", { body: { uuid: editableTransferUuid, ledgerId: L, expectedUpdatedAt: oldTransferVersion, kind: "信用卡还款", fromAccountId: acct1, toAccountId: acct2, amount: 250, occurredAt: "2026-07-21T10:30", originalTimezone: "Asia/Shanghai", note: "编辑转账" } });
+const editedTransfer = (await q("SELECT amount,note,updated_at updatedAt FROM account_transfers WHERE uuid=?", editableTransferUuid))[0];
+check("PUT 编辑转账并自动冲正旧金额", r.status === 200 && editedTransfer?.amount === 25000 && editedTransfer?.note === "编辑转账" && editedTransfer?.updatedAt !== oldTransferVersion && (await q("SELECT current_balance balance FROM accounts WHERE id=?", acct1))[0].balance === balanceBeforeTransfer - 25000 && (await q("SELECT current_balance balance FROM accounts WHERE id=?", acct2))[0].balance === -500000 + 25000, `${r.status} ${r.text} ${JSON.stringify(editedTransfer)}`);
+r = await call(transfers, "PUT", "/api/transfers", { body: { uuid: editableTransferUuid, ledgerId: L, expectedUpdatedAt: editedTransfer.updatedAt, kind: "信用卡还款", fromAccountId: acct1, toAccountId: acct2, amount: 999999, occurredAt: "2026-07-21T10:30", originalTimezone: "Asia/Shanghai", note: "余额不足" } });
+check("编辑转账不能透支且失败不改金额余额", r.status === 409 && (await q("SELECT amount FROM account_transfers WHERE uuid=?", editableTransferUuid))[0].amount === 25000 && (await q("SELECT current_balance balance FROM accounts WHERE id=?", acct1))[0].balance === balanceBeforeTransfer - 25000 && (await q("SELECT current_balance balance FROM accounts WHERE id=?", acct2))[0].balance === -500000 + 25000, `${r.status} ${r.text}`);
+r = await call(transfers, "PUT", "/api/transfers", { body: { uuid: editableTransferUuid, ledgerId: L, expectedUpdatedAt: oldTransferVersion, kind: "信用卡还款", fromAccountId: acct1, toAccountId: acct2, amount: 240, occurredAt: "2026-07-21T10:30", originalTimezone: "Asia/Shanghai", note: "过期编辑" } });
+check("编辑转账拒绝过期版本", r.status === 409, `${r.status} ${r.text}`);
+r = await call(transfers, "DELETE", `/api/transfers?uuid=${editableTransferUuid}&ledger=${L}&expectedUpdatedAt=${encodeURIComponent(oldTransferVersion)}`);
+check("删除转账拒绝过期版本", r.status === 409, `${r.status} ${r.text}`);
+r = await call(transfers, "DELETE", `/api/transfers?uuid=${editableTransferUuid}&ledger=${L}&expectedUpdatedAt=${encodeURIComponent(editedTransfer.updatedAt)}`);
+check("DELETE 删除转账并恢复双方余额", r.status === 200 && (await q("SELECT COUNT(*) n FROM account_transfers WHERE uuid=?", editableTransferUuid))[0].n === 0 && (await q("SELECT current_balance balance FROM accounts WHERE id=?", acct1))[0].balance === balanceBeforeTransfer && (await q("SELECT current_balance balance FROM accounts WHERE id=?", acct2))[0].balance === -500000, `${r.status} ${r.text}`);
+const protectedTransferUuid = "11111111-1111-4111-8111-111111111111";
+await B.batch([
+  B.prepare("INSERT INTO app_meta(key,value) VALUES('restore_mode','1') ON CONFLICT(key) DO UPDATE SET value='1'"),
+  B.prepare("INSERT INTO account_transfers(uuid,ledger_id,kind,from_account_id,to_account_id,amount,currency,target_type,target_id,occurrence_key,occurred_at,original_timezone,note) VALUES(?,?,'周期转账',?,?,100,'CNY','subscription',1,'test-protected-transfer','2026-07-21T12:00:00Z','Asia/Shanghai','系统生成')").bind(protectedTransferUuid, L, acct1, acct2),
+  B.prepare("UPDATE app_meta SET value='0' WHERE key='restore_mode'"),
+]);
+const protectedTransfer = (await q("SELECT updated_at updatedAt FROM account_transfers WHERE uuid=?", protectedTransferUuid))[0];
+const balancesBeforeProtectedOps = await q("SELECT id,current_balance balance FROM accounts WHERE id IN (?,?) ORDER BY id", acct1, acct2);
+r = await call(transfers, "PUT", "/api/transfers", { body: { uuid: protectedTransferUuid, ledgerId: L, expectedUpdatedAt: protectedTransfer.updatedAt, kind: "账户转账", fromAccountId: acct1, toAccountId: acct2, amount: 1, occurredAt: "2026-07-21T12:30", originalTimezone: "Asia/Shanghai", note: "不允许修改" } });
+check("系统生成转账不能通过历史记录编辑", r.status === 409, `${r.status} ${r.text}`);
+r = await call(transfers, "DELETE", `/api/transfers?uuid=${protectedTransferUuid}&ledger=${L}&expectedUpdatedAt=${encodeURIComponent(protectedTransfer.updatedAt)}`);
+check("系统生成转账不能通过历史记录删除", r.status === 409, `${r.status} ${r.text}`);
+check("系统转账操作失败时记录与余额不变", (await q("SELECT COUNT(*) n FROM account_transfers WHERE uuid=?", protectedTransferUuid))[0].n === 1 && JSON.stringify(await q("SELECT id,current_balance balance FROM accounts WHERE id IN (?,?) ORDER BY id", acct1, acct2)) === JSON.stringify(balancesBeforeProtectedOps), "转账记录或账户余额发生变化");
+await B.batch([
+  B.prepare("UPDATE app_meta SET value='1' WHERE key='restore_mode'"),
+  B.prepare("DELETE FROM account_transfers WHERE uuid=?").bind(protectedTransferUuid),
+  B.prepare("UPDATE app_meta SET value='0' WHERE key='restore_mode'"),
+]);
+const retryTransferBody = { ledgerId: L, kind: "信用卡还款", fromAccountId: acct1, toAccountId: acct2, amount: 1, idempotencyKey: "transfer-retry-001", occurredAt: "2026-07-21T11:00", originalTimezone: "Asia/Shanghai", note: "可重试转账" };
 const transferCountBeforeRetry = Number((await q("SELECT COUNT(*) n FROM account_transfers WHERE ledger_id=?", L))[0].n);
 r = await call(transfers, "POST", "/api/transfers", { body: retryTransferBody });
 const firstRetryUuid = r.json?.uuid;

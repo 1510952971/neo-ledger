@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
+import 'account_transfer_editor.dart';
 import 'feature_catalog.dart';
 import 'import_file_loader.dart';
 import 'import_parser.dart';
@@ -724,6 +725,56 @@ class LedgerController extends ChangeNotifier {
     if (ledger == null) throw const ApiException('没有可用的账本');
     if (demoMode) return const [];
     return api.fetchAccountTransfers(ledgerId: ledger.id, accountId: accountId);
+  }
+
+  Future<void> updateAccountTransfer(
+    AccountTransfer transfer, {
+    required String kind,
+    required int fromAccountId,
+    required int toAccountId,
+    required double amount,
+    required String occurredAt,
+    required String originalTimezone,
+    required String note,
+  }) async {
+    final ledger = selectedLedger;
+    if (ledger == null || ledger.id != transfer.ledgerId) {
+      throw const ApiException('转账所属账本已变化，请刷新后重试');
+    }
+    if (demoMode) throw const ApiException('演示模式不支持修改转账记录');
+    if (transfer.updatedAt.isEmpty) {
+      throw const ApiException('转账记录缺少版本信息，请刷新后重试');
+    }
+    await api.updateAccountTransfer(
+      uuid: transfer.uuid,
+      ledgerId: ledger.id,
+      expectedUpdatedAt: transfer.updatedAt,
+      kind: kind,
+      fromAccountId: fromAccountId,
+      toAccountId: toAccountId,
+      amount: amount,
+      occurredAt: occurredAt,
+      originalTimezone: originalTimezone,
+      note: note,
+    );
+    await refresh(silent: true);
+  }
+
+  Future<void> deleteAccountTransfer(AccountTransfer transfer) async {
+    final ledger = selectedLedger;
+    if (ledger == null || ledger.id != transfer.ledgerId) {
+      throw const ApiException('转账所属账本已变化，请刷新后重试');
+    }
+    if (demoMode) throw const ApiException('演示模式不支持删除转账记录');
+    if (transfer.updatedAt.isEmpty) {
+      throw const ApiException('转账记录缺少版本信息，请刷新后重试');
+    }
+    await api.deleteAccountTransfer(
+      uuid: transfer.uuid,
+      ledgerId: ledger.id,
+      expectedUpdatedAt: transfer.updatedAt,
+    );
+    await refresh(silent: true);
   }
 
   Future<void> transfer({
@@ -4495,10 +4546,12 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
   }
 
   Future<void> _showNativeAccountTransfers(Account account) async {
-    final history = widget.controller.fetchAccountTransfers(account.id);
+    Future<List<AccountTransfer>> history =
+        widget.controller.fetchAccountTransfers(account.id);
     await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
         title: Text('${account.name} · 转账记录'),
         content: SizedBox(
           width: 460,
@@ -4533,14 +4586,79 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
                           symbol: item.currency,
                           decimalDigits: item.currency == 'JPY' ? 0 : 2,
                         ).format(item.amountCents / 100);
-                  return ListTile(
+                      final editable = item.targetType == null &&
+                          item.fromAccountId != null &&
+                          item.toAccountId != null &&
+                          const ['账户转账', '信用卡还款'].contains(item.kind);
+                      return ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.swap_horiz_rounded),
                     title: Text(
                       item.note.trim().isEmpty ? item.kind : item.note,
                     ),
                     subtitle: Text('$from → $to · $dateLabel'),
-                    trailing: Text(amount),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(amount),
+                        if (editable)
+                          PopupMenuButton<String>(
+                            tooltip: '管理转账',
+                            onSelected: (action) async {
+                              if (action == 'edit') {
+                                final values = await showAccountTransferEditor(
+                                  context,
+                                  transfer: item,
+                                  accounts: widget.controller.accounts,
+                                );
+                                if (values == null) return;
+                                try {
+                                  await widget.controller.updateAccountTransfer(
+                                    item,
+                                    kind: values.kind,
+                                    fromAccountId: values.fromAccountId,
+                                    toAccountId: values.toAccountId,
+                                    amount: values.amount,
+                                    occurredAt: values.occurredAt,
+                                    originalTimezone: values.originalTimezone,
+                                    note: values.note,
+                                  );
+                                  setDialogState(() => history = widget.controller.fetchAccountTransfers(account.id));
+                                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('转账已更新，双方余额已同步')));
+                                } catch (error) {
+                                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('更新转账失败：$error')));
+                                }
+                              } else if (action == 'delete') {
+                                final agreed = await showDialog<bool>(
+                                  context: context,
+                                  builder: (confirmContext) => AlertDialog(
+                                    title: const Text('删除这笔转账？'),
+                                    content: const Text('删除后会同时冲正转出与转入账户余额，此操作不可撤销。'),
+                                    actions: [
+                                      TextButton(onPressed: () => Navigator.pop(confirmContext, false), child: const Text('取消')),
+                                      FilledButton(onPressed: () => Navigator.pop(confirmContext, true), child: const Text('删除转账')),
+                                    ],
+                                  ),
+                                );
+                                if (agreed != true) return;
+                                try {
+                                  await widget.controller.deleteAccountTransfer(item);
+                                  setDialogState(() => history = widget.controller.fetchAccountTransfers(account.id));
+                                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('转账已删除，双方余额已恢复')));
+                                } catch (error) {
+                                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('删除转账失败：$error')));
+                                }
+                              }
+                            },
+                            itemBuilder: (_) => const [
+                              PopupMenuItem(value: 'edit', child: Text('编辑')),
+                              PopupMenuItem(value: 'delete', child: Text('删除')),
+                            ],
+                          )
+                        else
+                          const Icon(Icons.lock_outline_rounded, size: 18),
+                      ],
+                    ),
                   );
                 },
               );
@@ -4553,6 +4671,7 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
             child: const Text('关闭'),
           ),
         ],
+        ),
       ),
     );
   }

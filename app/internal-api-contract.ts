@@ -157,8 +157,7 @@ const pendingTransactionSchema = z.object({
   action: z.enum(["confirm", "ignore"]),
 }).strict();
 
-const transferSchema = z
-  .object({
+const transferBaseSchema = z.object({
     ledgerId: positiveId,
     kind: z.enum(["账户转账", "信用卡还款"]),
     fromAccountId: positiveId,
@@ -172,12 +171,29 @@ const transferSchema = z
     occurredAt: optionalText(64),
     originalTimezone: optionalText(64),
     note: optionalText(120),
+  }).strict();
+const transferUuid = z.string().trim().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/iu, "Invalid UUID");
+const transferSchema = transferBaseSchema.refine((value) => value.fromAccountId !== value.toAccountId, {
+    message: "请选择不同的转出和转入账户",
+    path: ["toAccountId"],
+  });
+const transferUpdateSchema = transferBaseSchema
+  .omit({ idempotencyKey: true })
+  .extend({
+    uuid: transferUuid,
+    expectedUpdatedAt: z.string().trim().min(1, "转账版本已失效，请刷新后重试").max(64),
+    occurredAt: z.string().trim().min(1, "请选择转账时间").max(64),
+    originalTimezone: z.string().trim().min(1).max(64),
   })
-  .strict()
   .refine((value) => value.fromAccountId !== value.toAccountId, {
     message: "请选择不同的转出和转入账户",
     path: ["toAccountId"],
   });
+const transferDeleteSchema = z.object({
+  uuid: transferUuid,
+  ledgerId: positiveId,
+  expectedUpdatedAt: z.string().trim().min(1, "转账版本已失效，请刷新后重试").max(64),
+}).strict();
 
 const transactionIds = z
   .array(positiveId)
@@ -298,6 +314,21 @@ export const readPendingTransactionInput = (request: Request) => readInternalJso
 
 export async function readTransferInput(request: Request) {
   return readInternalJson(request, transferSchema);
+}
+
+export async function readTransferUpdateInput(request: Request) {
+  return readInternalJson(request, transferUpdateSchema);
+}
+
+export function readTransferDeleteInput(request: Request) {
+  const params = new URL(request.url).searchParams;
+  const value = transferDeleteSchema.safeParse({
+    uuid: params.get("uuid"),
+    ledgerId: params.get("ledger"),
+    expectedUpdatedAt: params.get("expectedUpdatedAt"),
+  });
+  if (!value.success) throw new Error(value.error.issues[0]?.message ?? "删除参数无效");
+  return value.data;
 }
 
 export async function readBulkTransactionInput(request: Request) {

@@ -224,6 +224,48 @@ class NeoLedgerApi {
         : const [];
   }
 
+  Future<void> updateAccountTransfer({
+    required String uuid,
+    required int ledgerId,
+    required String expectedUpdatedAt,
+    required String kind,
+    required int fromAccountId,
+    required int toAccountId,
+    required double amount,
+    required String occurredAt,
+    required String originalTimezone,
+    required String note,
+  }) async {
+    await putJson('/api/transfers', {
+      'uuid': uuid,
+      'ledgerId': ledgerId,
+      'expectedUpdatedAt': expectedUpdatedAt,
+      'kind': kind,
+      'fromAccountId': fromAccountId,
+      'toAccountId': toAccountId,
+      'amount': amount,
+      'occurredAt': occurredAt,
+      'originalTimezone': originalTimezone,
+      'note': note,
+    });
+  }
+
+  Future<void> deleteAccountTransfer({
+    required String uuid,
+    required int ledgerId,
+    required String expectedUpdatedAt,
+  }) async {
+    final path = Uri(
+      path: '/api/transfers',
+      queryParameters: {
+        'uuid': uuid,
+        'ledger': '$ledgerId',
+        'expectedUpdatedAt': expectedUpdatedAt,
+      },
+    ).toString();
+    await _send('DELETE', path);
+  }
+
   Future<List<Member>> fetchMembers(int ledgerId) async {
     final data = await getJson('/api/members?ledger=$ledgerId');
     return data is List

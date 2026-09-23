@@ -27,4 +27,8 @@ test("account transfer history is reachable from either account and privacy-safe
   assert.match(page, /!preferences\.response\.ok \|\| preferences\.data\?\.hideAmounts === true/u);
   assert.match(historyDialog, /row\.fromAccountName.*row\.toAccountName/u);
   assert.match(historyDialog, /hideAmounts \? "••••"/u);
+  assert.match(historyDialog, /保存修改/u);
+  assert.match(historyDialog, /onDelete\(row\)/u);
+  assert.match(page, /expectedUpdatedAt: row\.updatedAt/u);
+  assert.match(page, /双方账户余额已恢复/u);
 });

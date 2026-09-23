@@ -4,6 +4,7 @@ import 'package:neo_ledger/models.dart';
 void main() {
   test('transfer history preserves both linked accounts and currency', () {
     final transfer = AccountTransfer.fromJson({
+      'ledgerId': 3,
       'uuid': 'transfer-1',
       'kind': '账户转账',
       'fromAccountId': 7,
@@ -13,7 +14,9 @@ void main() {
       'amount': 12550,
       'currency': 'CNY',
       'occurredAt': '2026-09-23T10:00:00Z',
+      'originalTimezone': 'Asia/Shanghai',
       'note': '每月存款',
+      'updatedAt': '2026-09-23T10:00:00.000Z',
     });
 
     expect(transfer.fromAccountId, 7);
@@ -23,6 +26,8 @@ void main() {
     expect(transfer.amountCents, 12550);
     expect(transfer.currency, 'CNY');
     expect(transfer.note, '每月存款');
+    expect(transfer.ledgerId, 3);
+    expect(transfer.updatedAt, '2026-09-23T10:00:00.000Z');
   });
 
   group('TransactionItem', () {

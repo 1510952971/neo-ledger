@@ -88,7 +88,7 @@ check("账户恢复(含改名后的工资卡改)", acctNames.includes("工资卡
 const archivedAccount = (await q("SELECT is_active active,sort_order sortOrder FROM accounts WHERE name='归档账户'"))[0];
 check("备份恢复保留账户停用状态与排序", archivedAccount?.active === 0 && Number.isSafeInteger(archivedAccount?.sortOrder), JSON.stringify(archivedAccount));
 const bal = (await q("SELECT current_balance b FROM accounts WHERE name='工资卡改'"))[0]?.b;
-check("余额恢复精确一致", bal === 1200000 - 3550 + 888888 - 3050 - 30000 - 100, String(bal));
+check("余额恢复精确一致", bal === 1200000 - 3550 + 888888 - 3050 - 100, String(bal));
 r = await call(exportApi, "GET", "/api/data/export");
 check("恢复后再导出成功", r.status === 200 && r.json?.transactions?.length === 2, `tx=${r.json?.transactions?.length}`);
 r = await call(restore, "POST", "/api/data/restore", { body: { hello: "不是备份" } });
@@ -392,7 +392,7 @@ describe("账号头像");
 
   const schemaVersion = await q("SELECT value FROM app_meta WHERE key='schema_version'");
   const userColumns = await q("PRAGMA table_info(app_users)");
-  check("数据库迁移到 36", schemaVersion[0]?.value === "36", JSON.stringify(schemaVersion));
+  check("数据库迁移到 37", schemaVersion[0]?.value === "37", JSON.stringify(schemaVersion));
   const expectedIndexes = await q("SELECT name FROM sqlite_master WHERE type='index' AND name IN ('transactions_ledger_occurred_idx','accounts_ledger_id_idx','subscriptions_ledger_charge_idx','pending_transactions_ledger_status_idx')");
   check("核心账本查询索引已创建", expectedIndexes.length === 4, JSON.stringify(expectedIndexes));
   const planLedgerId = (await q("SELECT id FROM ledgers WHERE owner_id=? ORDER BY id LIMIT 1", "user:" + (await q("SELECT id FROM app_users WHERE username='pengtest'")).at(0)?.id))[0]?.id;
