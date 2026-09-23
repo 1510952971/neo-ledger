@@ -23,6 +23,37 @@ const _mobileIncome = MobileColors.income;
 const _mobileExpense = MobileColors.expense;
 const _supportedMobileCurrencies = ['CNY', 'USD', 'JPY', 'EUR'];
 
+Future<void> _confirmMobileLogout(
+  BuildContext context,
+  LedgerController controller,
+) async {
+  final pending = controller.totalPendingCount;
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('退出当前账号？'),
+      content: Text(
+        pending == 0
+            ? '已同步数据不会受到影响。退出后需要重新登录才能继续使用。'
+            : '当前还有 $pending 笔数据待同步或待确认。退出不会删除本地队列，但建议同步完成后再退出。',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(dialogContext, true),
+          child: const Text('仍要退出'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed == true && context.mounted) {
+    await controller.logout();
+  }
+}
+
 class MobileLedgerShell extends StatefulWidget {
   const MobileLedgerShell({
     super.key,
@@ -275,7 +306,8 @@ class _MobileAppLockPageState extends State<MobileAppLockPage> {
               ),
               const SizedBox(height: 8),
               TextButton(
-                onPressed: widget.controller.logout,
+                onPressed: () =>
+                    _confirmMobileLogout(context, widget.controller),
                 child: const Text('退出当前账号'),
               ),
             ],
@@ -2511,7 +2543,9 @@ class MobileProfilePage extends StatelessWidget {
           ),
           const SizedBox(height: 18),
           OutlinedButton.icon(
-            onPressed: controller.loading ? null : controller.logout,
+            onPressed: controller.loading
+                ? null
+                : () => _confirmMobileLogout(context, controller),
             icon: const Icon(Icons.logout_rounded),
             label: const Text('退出当前账号'),
             style: OutlinedButton.styleFrom(
