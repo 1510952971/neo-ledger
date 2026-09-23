@@ -1181,8 +1181,12 @@ class MobileProfilePage extends StatelessWidget {
           _SettingsRow(
             icon: '🧩',
             title: '高级功能',
-            subtitle: '桌面端和网页端继续提供完整管理能力',
-            onTap: () => _showComingSoon(context, '高级功能入口'),
+            subtitle: '预算、订阅、分期与储蓄目标',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => MobilePlanningPage(controller: controller),
+              ),
+            ),
           ),
           _SettingsRow(
             icon: '💳',
@@ -1277,7 +1281,16 @@ class MobileProfilePage extends StatelessWidget {
     }
     final file = await FilePicker.pickFile(type: FileType.image);
     if (!context.mounted || file == null) return;
-    final bytes = await file.readAsBytes();
+    late final List<int> bytes;
+    try {
+      bytes = await file.readAsBytes();
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('读取头像失败：$error')));
+      }
+      return;
+    }
     if (!context.mounted) return;
     if (bytes.isEmpty) {
       ScaffoldMessenger.of(context)
@@ -1300,6 +1313,530 @@ class MobileProfilePage extends StatelessWidget {
       }
     }
   }
+}
+
+class MobilePlanningPage extends StatefulWidget {
+  const MobilePlanningPage({super.key, required this.controller});
+
+  final LedgerController controller;
+
+  @override
+  State<MobilePlanningPage> createState() => _MobilePlanningPageState();
+}
+
+class _MobilePlanningPageState extends State<MobilePlanningPage> {
+  LedgerController get controller => widget.controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final recurringTotal = controller.subscriptions.fold<int>(
+      0,
+      (sum, item) => sum + item.amountCents,
+    );
+    final budgetTotal = controller.budgets.fold<int>(
+      0,
+      (sum, item) => sum + item.amountCents,
+    );
+    return Scaffold(
+      backgroundColor: _mobileBg,
+      appBar: AppBar(title: const Text('规划与目标')),
+      floatingActionButton: FloatingActionButton.extended(
+        backgroundColor: _mobileBrand,
+        foregroundColor: _mobileBg,
+        onPressed: _showAddActions,
+        icon: const Icon(Icons.add_rounded),
+        label: const Text('新增'),
+      ),
+      body: RefreshIndicator(
+        onRefresh: controller.refresh,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 110),
+          children: [
+            _PlanningSummaryCard(
+              budgetTotal: budgetTotal,
+              recurringTotal: recurringTotal,
+              goalCount: controller.savingsGoals.length,
+            ),
+            const SizedBox(height: 18),
+            _PlanningSection(
+              title: '分类预算',
+              icon: Icons.track_changes_outlined,
+              actionLabel: '新增预算',
+              onAction: () => _openBudget(),
+              child: controller.budgets.isEmpty
+                  ? const _CompactEmpty(message: '还没有分类预算')
+                  : Column(
+                      children: [
+                        _BudgetTotalCard(
+                          budgets: controller.budgets,
+                          spent: {
+                            for (final bucket
+                                in controller.analysis?.categoryData ??
+                                    const [])
+                              bucket.name: bucket.amountCents,
+                          },
+                        ),
+                        const SizedBox(height: 10),
+                        for (final budget in controller.budgets)
+                          _BudgetRow(
+                            budget: budget,
+                            spentCents: _categorySpent(budget.category),
+                            onTap: () => _openBudget(budget),
+                          ),
+                      ],
+                    ),
+            ),
+            const SizedBox(height: 18),
+            _PlanningSection(
+              title: '固定订阅',
+              icon: Icons.autorenew_rounded,
+              actionLabel: '新增订阅',
+              onAction: () => _openSubscription(),
+              child: controller.subscriptions.isEmpty
+                  ? const _CompactEmpty(message: '还没有固定订阅')
+                  : Column(
+                      children: [
+                        for (final item in controller.subscriptions)
+                          _PlanningItemCard(
+                            icon: Icons.autorenew_rounded,
+                            title: item.name,
+                            subtitle:
+                                '${item.cycle} · ${item.category ?? '未分类'}${item.nextChargeDate == null ? '' : ' · 下次 ${item.nextChargeDate}'}',
+                            value: _mobileMoney(item.amountCents),
+                            onEdit: () => _openSubscription(item),
+                            onDelete: () => _deleteSubscription(item),
+                          ),
+                      ],
+                    ),
+            ),
+            const SizedBox(height: 18),
+            _PlanningSection(
+              title: '分期计划',
+              icon: Icons.payments_outlined,
+              actionLabel: '新增分期',
+              onAction: () => _openInstallment(),
+              child: controller.installments.isEmpty
+                  ? const _CompactEmpty(message: '还没有分期计划')
+                  : Column(
+                      children: [
+                        for (final item in controller.installments)
+                          _PlanningItemCard(
+                            icon: Icons.payments_outlined,
+                            title: item.name,
+                            subtitle:
+                                '剩余 ${item.remainingPeriods}/${item.periods} 期 · 每月 ${_mobileMoney(item.periods == 0 ? 0 : (item.totalAmountCents + item.feeAmountCents) ~/ item.periods)}',
+                            value: _mobileMoney(item.totalAmountCents),
+                            onDelete: () => _deleteInstallment(item),
+                          ),
+                      ],
+                    ),
+            ),
+            const SizedBox(height: 18),
+            _PlanningSection(
+              title: '储蓄目标',
+              icon: Icons.savings_outlined,
+              actionLabel: '新增目标',
+              onAction: () => _openGoal(),
+              child: controller.savingsGoals.isEmpty
+                  ? const _CompactEmpty(message: '还没有储蓄目标')
+                  : Column(
+                      children: [
+                        for (final goal in controller.savingsGoals)
+                          _SavingsGoalCard(
+                            goal: goal,
+                            onTap: () => _openGoal(goal),
+                          ),
+                      ],
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  int _categorySpent(String category) =>
+      (controller.analysis?.categoryData ?? const [])
+          .where((bucket) => bucket.name == category)
+          .fold<int>(0, (sum, bucket) => sum + bucket.amountCents);
+
+  Future<void> _showAddActions() async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.track_changes_outlined),
+              title: const Text('新增分类预算'),
+              onTap: () => Navigator.pop(sheetContext, 'budget'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.autorenew_rounded),
+              title: const Text('新增固定订阅'),
+              onTap: () => Navigator.pop(sheetContext, 'subscription'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.payments_outlined),
+              title: const Text('新增分期计划'),
+              onTap: () => Navigator.pop(sheetContext, 'installment'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.savings_outlined),
+              title: const Text('新增储蓄目标'),
+              onTap: () => Navigator.pop(sheetContext, 'goal'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    switch (action) {
+      case 'budget':
+        await _openBudget();
+      case 'subscription':
+        await _openSubscription();
+      case 'installment':
+        await _openInstallment();
+      case 'goal':
+        await _openGoal();
+    }
+  }
+
+  Future<void> _openBudget([CategoryBudget? existing]) async {
+    await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (_) =>
+          _MobileBudgetEditor(controller: controller, existing: existing),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _openSubscription([Subscription? existing]) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (_) =>
+          SubscriptionSheet(controller: controller, existing: existing),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _openInstallment() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (_) => InstallmentSheet(controller: controller),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _openGoal([SavingsGoal? existing]) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (_) =>
+          SavingsGoalSheet(controller: controller, existing: existing),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _deleteSubscription(Subscription item) async {
+    final confirmed = await _confirm(
+      title: '删除固定订阅？',
+      message: '删除“${item.name}”后，不会再出现在规划提醒中。',
+    );
+    if (confirmed != true) return;
+    try {
+      await controller.deleteSubscription(item);
+      if (mounted) setState(() {});
+    } catch (error) {
+      _showError('删除订阅失败：$error');
+    }
+  }
+
+  Future<void> _deleteInstallment(Installment item) async {
+    final confirmed = await _confirm(
+      title: '删除分期计划？',
+      message: '“${item.name}”尚未处理的规划记录将被移除，已生成的流水不会回滚。',
+    );
+    if (confirmed != true) return;
+    try {
+      await controller.deleteInstallment(item);
+      if (mounted) setState(() {});
+    } catch (error) {
+      _showError('删除分期失败：$error');
+    }
+  }
+
+  Future<bool?> _confirm({required String title, required String message}) =>
+      showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('删除'),
+            ),
+          ],
+        ),
+      );
+
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+class _PlanningSummaryCard extends StatelessWidget {
+  const _PlanningSummaryCard({
+    required this.budgetTotal,
+    required this.recurringTotal,
+    required this.goalCount,
+  });
+
+  final int budgetTotal;
+  final int recurringTotal;
+  final int goalCount;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(18),
+    decoration: _mobileBoxDecoration(
+      gradient: const LinearGradient(
+        colors: [Color(0xff2d3c2b), Color(0xff202a2b)],
+      ),
+    ),
+    child: Row(
+      children: [
+        Expanded(
+          child: _SummaryValue(
+            label: '预算额度',
+            amount: budgetTotal,
+            color: _mobileBrand,
+          ),
+        ),
+        Expanded(
+          child: _SummaryValue(
+            label: '固定月度支出',
+            amount: recurringTotal,
+            color: _mobileExpense,
+          ),
+        ),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '储蓄目标',
+                style: TextStyle(color: _mobileMuted, fontSize: 12),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '$goalCount 个',
+                style: const TextStyle(
+                  color: _mobilePurple,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _PlanningSection extends StatelessWidget {
+  const _PlanningSection({
+    required this.title,
+    required this.icon,
+    required this.actionLabel,
+    required this.onAction,
+    required this.child,
+  });
+
+  final String title;
+  final IconData icon;
+  final String actionLabel;
+  final VoidCallback onAction;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Row(
+        children: [
+          Icon(icon, color: _mobileBrand, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              title,
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+            ),
+          ),
+          TextButton(onPressed: onAction, child: Text(actionLabel)),
+        ],
+      ),
+      const SizedBox(height: 8),
+      child,
+    ],
+  );
+}
+
+class _PlanningItemCard extends StatelessWidget {
+  const _PlanningItemCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    this.onEdit,
+    this.onDelete,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String value;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    margin: const EdgeInsets.only(bottom: 8),
+    padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+    decoration: _mobileBoxDecoration(),
+    child: Row(
+      children: [
+        Icon(icon, color: _mobilePurple),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: _mobileMuted, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
+        PopupMenuButton<String>(
+          onSelected: (action) {
+            if (action == 'edit') onEdit?.call();
+            if (action == 'delete') onDelete?.call();
+          },
+          itemBuilder: (context) => [
+            if (onEdit != null)
+              const PopupMenuItem(value: 'edit', child: Text('编辑')),
+            if (onDelete != null)
+              const PopupMenuItem(value: 'delete', child: Text('删除')),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+class _SavingsGoalCard extends StatelessWidget {
+  const _SavingsGoalCard({required this.goal, required this.onTap});
+
+  final SavingsGoal goal;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(18),
+    child: Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: _mobileBoxDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(goal.icon ?? '🎯', style: const TextStyle(fontSize: 22)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  goal.name,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+              Text(
+                '${_mobileMoney(goal.savedAmountCents)} / ${_mobileMoney(goal.targetAmountCents)}',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: LinearProgressIndicator(
+              minHeight: 8,
+              value: goal.progress,
+              backgroundColor: const Color(0x24ffffff),
+              valueColor: const AlwaysStoppedAnimation(_mobilePurple),
+            ),
+          ),
+          if (goal.deadline != null) ...[
+            const SizedBox(height: 7),
+            Text(
+              '目标日期：${goal.deadline}',
+              style: const TextStyle(color: _mobileMuted, fontSize: 12),
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
+}
+
+class _CompactEmpty extends StatelessWidget {
+  const _CompactEmpty({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(16),
+    decoration: _mobileBoxDecoration(),
+    child: Row(
+      children: [
+        const Icon(Icons.inbox_outlined, color: _mobileMuted),
+        const SizedBox(width: 10),
+        Text(message, style: const TextStyle(color: _mobileMuted)),
+      ],
+    ),
+  );
 }
 
 class MobileBudgetPage extends StatefulWidget {
@@ -1545,7 +2082,12 @@ class _MobileBudgetEditorState extends State<_MobileBudgetEditor> {
                   value: category.name,
                   child: Text(category.name),
                 ),
-              if (widget.controller.expenseCategories.isEmpty)
+              if (!widget.controller.expenseCategories.any(
+                (category) => category.name == _category,
+              ))
+                DropdownMenuItem(value: _category, child: Text(_category)),
+              if (widget.controller.expenseCategories.isEmpty &&
+                  _category != '餐饮')
                 const DropdownMenuItem(value: '餐饮', child: Text('餐饮')),
             ],
             onChanged: _saving
@@ -3909,9 +4451,4 @@ List<AnalysisBucket> _fallbackBuckets(List<TransactionItem> items) {
       .map((entry) => AnalysisBucket(name: entry.key, amountCents: entry.value))
       .toList()
     ..sort((a, b) => b.amountCents.compareTo(a.amountCents));
-}
-
-void _showComingSoon(BuildContext context, String title) {
-  ScaffoldMessenger.of(context)
-      .showSnackBar(SnackBar(content: Text('$title正在接入原生移动端，完整管理仍可在桌面端使用。')));
 }
