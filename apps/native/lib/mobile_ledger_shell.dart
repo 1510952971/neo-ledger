@@ -1392,6 +1392,40 @@ class MobileProfilePage extends StatelessWidget {
               builder: (_) => SecuritySheet(controller: controller),
             ),
           ),
+          _SettingsRow(
+            icon: '⚡️',
+            title: '自动记账与导入',
+            subtitle: 'Android 自动记账、自动化规则与账单导入',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => MobileAutomationPage(controller: controller),
+              ),
+            ),
+          ),
+          _SettingsRow(
+            icon: '🗂️',
+            title: '分类管理',
+            subtitle: '维护支出与收入分类，历史流水保持不变',
+            onTap: () => showModalBottomSheet<void>(
+              context: context,
+              isScrollControlled: true,
+              showDragHandle: true,
+              backgroundColor: _mobileSurface,
+              builder: (_) => CategoryManagerSheet(controller: controller),
+            ),
+          ),
+          _SettingsRow(
+            icon: '🛡️',
+            title: '数据与备份',
+            subtitle: '导出、恢复、预检和同步待处理流水',
+            onTap: () => showModalBottomSheet<void>(
+              context: context,
+              isScrollControlled: true,
+              showDragHandle: true,
+              backgroundColor: _mobileSurface,
+              builder: (_) => DataCenterSheet(controller: controller),
+            ),
+          ),
           const SizedBox(height: 18),
           OutlinedButton.icon(
             onPressed: controller.loading ? null : controller.logout,
@@ -1480,6 +1514,221 @@ class MobileProfilePage extends StatelessWidget {
             .showSnackBar(SnackBar(content: Text('上传头像失败：$error')));
       }
     }
+  }
+}
+
+class MobileAutomationPage extends StatefulWidget {
+  const MobileAutomationPage({super.key, required this.controller});
+
+  final LedgerController controller;
+
+  @override
+  State<MobileAutomationPage> createState() => _MobileAutomationPageState();
+}
+
+class _MobileAutomationPageState extends State<MobileAutomationPage> {
+  Map<String, dynamic> status = const {};
+  bool loading = false;
+  bool actionBusy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshStatus();
+  }
+
+  Future<void> _refreshStatus() async {
+    if (!widget.controller.isAndroid || loading) return;
+    setState(() => loading = true);
+    try {
+      final next = await widget.controller.androidCaptureStatus();
+      if (mounted) setState(() => status = next);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('读取自动记账状态失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> _systemAction(
+    String label,
+    Future<void> Function() action,
+  ) async {
+    if (actionBusy) return;
+    setState(() => actionBusy = true);
+    try {
+      await action();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$label失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => actionBusy = false);
+    }
+  }
+
+  void _openSheet(Widget child) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (_) => child,
+    );
+  }
+
+  Widget _statusLine(String label, bool enabled) {
+    return Row(
+      children: [
+        Icon(
+          enabled ? Icons.check_circle_rounded : Icons.radio_button_unchecked,
+          size: 18,
+          color: enabled ? _mobileIncome : _mobileMuted,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: enabled ? Colors.white : _mobileMuted,
+              fontSize: 13,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _card({required Widget child}) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: _mobileBoxDecoration(),
+      child: child,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final android = widget.controller.isAndroid;
+    final configured = status['configured'] == true;
+    final notificationEnabled = status['notificationEnabled'] == true;
+    final accessibilityEnabled = status['accessibilityEnabled'] == true;
+    final pending = (status['pending'] as num?)?.toInt() ?? 0;
+    final rulesCount = widget.controller.automationRules.length;
+
+    return _MobilePage(
+      controller: widget.controller,
+      title: '自动记账与导入',
+      trailing: IconButton(
+        tooltip: '刷新状态',
+        onPressed: loading ? null : _refreshStatus,
+        icon: const Icon(Icons.refresh_rounded, color: _mobileMuted),
+      ),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(18, 8, 18, 36),
+        children: [
+          _card(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '自动记账',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  android
+                      ? '只在你授权的通知和无障碍范围内识别支付结果，数据仍写入当前账本。'
+                      : 'Android 支付识别需要系统级权限；其他平台可使用统一的自动化规则和账单导入。',
+                  style: const TextStyle(color: _mobileMuted, height: 1.45),
+                ),
+                const SizedBox(height: 16),
+                if (android) ...[
+                  _statusLine('连接配置', configured),
+                  const SizedBox(height: 9),
+                  _statusLine('通知使用权', notificationEnabled),
+                  const SizedBox(height: 9),
+                  _statusLine('无障碍服务', accessibilityEnabled),
+                  const SizedBox(height: 9),
+                  _statusLine('待发送账单：$pending 条', pending == 0),
+                  const SizedBox(height: 14),
+                  FilledButton.icon(
+                    onPressed: actionBusy
+                        ? null
+                        : () => _openSheet(
+                            SettingsSheet(controller: widget.controller),
+                          ),
+                    icon: const Icon(Icons.tune_rounded),
+                    label: const Text('打开自动记账配置'),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: actionBusy
+                        ? null
+                        : () => _systemAction(
+                            '打开通知使用权设置',
+                            widget.controller.openAndroidNotificationSettings,
+                          ),
+                    icon: const Icon(Icons.notifications_outlined),
+                    label: const Text('通知使用权'),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: actionBusy
+                        ? null
+                        : () => _systemAction(
+                            '打开无障碍设置',
+                            widget.controller.openAndroidAccessibilitySettings,
+                          ),
+                    icon: const Icon(Icons.accessibility_new_rounded),
+                    label: const Text('无障碍服务'),
+                  ),
+                ] else
+                  const Text(
+                    '当前设备不提供 Android 系统支付识别权限。你仍可以使用下面的规则、导入和备份能力，数据与桌面端保持一致。',
+                    style: TextStyle(color: _mobileMuted, height: 1.45),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          _SettingsRow(
+            icon: '🧠',
+            title: '自动化规则',
+            subtitle: '$rulesCount 条规则 · 商户、金额和分类自动匹配',
+            onTap: () =>
+                _openSheet(AutomationRulesSheet(controller: widget.controller)),
+          ),
+          _SettingsRow(
+            icon: '📥',
+            title: '导入账单',
+            subtitle: '支持 JSON、CSV，先预览检查再写入',
+            onTap: () => _openSheet(ImportSheet(controller: widget.controller)),
+          ),
+          _SettingsRow(
+            icon: '🗄️',
+            title: '备份与恢复',
+            subtitle: '生成完整备份，并支持恢复预检',
+            onTap: () =>
+                _openSheet(DataCenterSheet(controller: widget.controller)),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            '隐私说明：自动记账只处理被授权的支付通知或无障碍事件；账单导入会先解析并展示预览，确认后才提交到当前账本。',
+            style: TextStyle(color: _mobileMuted, fontSize: 12, height: 1.5),
+          ),
+        ],
+      ),
+    );
   }
 }
 
