@@ -77,6 +77,8 @@ await restoreSnapshot.deleteRestoreStaging("local", stagingProbe.id);
 const executedRestorePlanChecksum = r.json?.summary?.planChecksum;
 const txN = (await q("SELECT COUNT(*) n FROM transactions"))[0].n;
 check("流水恢复2条", txN === 2, String(txN));
+const restoredNestedCategory = await q("SELECT child.name,child.parent_id parentId,parent.name parentName FROM expense_categories child JOIN expense_categories parent ON parent.id=child.parent_id WHERE child.name='猫粮'");
+check("分类恢复保留父子层级", restoredNestedCategory.some((item) => item.parentId != null && item.parentName === "宠物"), JSON.stringify(restoredNestedCategory));
 const restoredReconciliation = await q("SELECT r.status,r.note,t.title FROM transaction_reconciliation r JOIN transactions t ON t.id=r.transaction_id");
 const restoredRule = await q("SELECT id,owner_id AS ownerId,conditions_json AS conditionsJson,actions_json AS actionsJson FROM automation_rules WHERE id='backup-rule'");
 check("v23 恢复对账状态", restoredReconciliation.some((item) => item.status === "reconciled" && item.note === "备份回环核对"), JSON.stringify(restoredReconciliation));

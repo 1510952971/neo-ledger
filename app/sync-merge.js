@@ -149,6 +149,8 @@ export function mergeSyncSnapshots(local, remote) {
       remap(row, "transactionSyncId", "transactionId", "transactions");
       remap(row, "paidByMemberSyncId", "paidByMemberId", "members");
       remap(row, "splitWithMemberSyncId", "splitWithMemberId", "members");
+      if ((table === "expenseCategories" || table === "incomeCategories") && row.parentCategorySyncId)
+        row.parentId = idMaps.get(table)?.get(row.parentCategorySyncId) ?? row.parentId;
       if (table === "automationRules") {
         if (row.conditionAccountSyncId && row.conditions)
           row.conditions.accountId = idMaps.get("accounts")?.get(row.conditionAccountSyncId) ?? row.conditions.accountId;

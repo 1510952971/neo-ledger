@@ -108,6 +108,23 @@ function validateRestoreRows(data: Record<string, unknown>) {
   ]) {
     for (const row of ((data[key] as Row[]) ?? [])) requireLedger(row, key);
   }
+  for (const [key, label] of [
+    ["expenseCategories", "支出分类"],
+    ["incomeCategories", "收入分类"],
+  ] as const) {
+    const categories = (data[key] as Row[]) ?? [];
+    const byId = new Map(categories.map((row) => [Number(row.id), row]));
+    for (const row of categories) {
+      if (row.parentId == null) continue;
+      const parent = byId.get(Number(row.parentId));
+      if (!parent || Number(parent.ledgerId) !== Number(row.ledgerId))
+        throw new Error(`${label}父级引用无效`);
+      if (parent.parentId != null)
+        throw new Error(`${label}只支持一级和二级分类`);
+      if (Number(parent.id) === Number(row.id))
+        throw new Error(`${label}不能以自己作为父级`);
+    }
+  }
   for (const row of ((data.budgetSettings as Row[]) ?? [])) {
     if (!ledgerIds.has(Number(row.id))) throw new Error("备份预算设置归属了不存在的账本");
   }
@@ -208,6 +225,8 @@ async function remapLocalIds(db: ReturnType<typeof getDbBinding>, rows: Record<s
       mapValue(row, "splitWithMemberId", "members");
       mapValue(row, "transactionId", "transactions");
       mapValue(row, "installmentId", "installments");
+      if (key === "expenseCategories") mapValue(row, "parentId", "expenseCategories");
+      if (key === "incomeCategories") mapValue(row, "parentId", "incomeCategories");
       if (key === "accountTransfers" && row.targetType === "savings-goal")
         mapValue(row, "targetId", "savingsGoals");
       if (key === "accountTransfers" && row.targetType === "member")
@@ -467,7 +486,7 @@ export async function POST(request: Request) {
       q.push(
         db
           .prepare(
-            "INSERT INTO expense_categories(id,ledger_id,name,icon,color,builtin_key,is_system,is_active,sort_order,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO expense_categories(id,ledger_id,name,icon,color,builtin_key,is_system,is_active,sort_order,parent_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
           )
           .bind(
             x.id,
@@ -479,6 +498,7 @@ export async function POST(request: Request) {
             x.isSystem ? 1 : 0,
             x.isActive === false ? 0 : 1,
             x.sortOrder ?? 0,
+            x.parentId ?? null,
             x.createdAt,
           ),
       );
@@ -505,7 +525,7 @@ export async function POST(request: Request) {
       q.push(
         db
           .prepare(
-            "INSERT INTO income_categories(id,ledger_id,name,icon,color,builtin_key,is_system,is_active,sort_order,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO income_categories(id,ledger_id,name,icon,color,builtin_key,is_system,is_active,sort_order,parent_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
           )
           .bind(
             x.id,
@@ -517,6 +537,7 @@ export async function POST(request: Request) {
             x.isSystem ? 1 : 0,
             x.isActive === false ? 0 : 1,
             x.sortOrder ?? 0,
+            x.parentId ?? null,
             x.createdAt,
           ),
       );

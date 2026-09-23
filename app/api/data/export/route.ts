@@ -185,6 +185,13 @@ export async function GET(request: Request) {
   const accountSync = new Map(ownedAccounts.map((row) => [row.id, row.uuid]));
   const memberSync = new Map(keep(m).map((row) => [row.id, `${installationId}:members:${row.id}`]));
   const transactionSync = new Map(ownedTransactions.map((row) => [row.id, row.crdtId ?? `${installationId}:transactions:${row.id}`]));
+  const categorySync = new Map<string, string>();
+  for (const [table, rows] of [["expenseCategories", keep(ec)], ["incomeCategories", keep(ic)]] as const)
+    for (const row of rows) {
+      const ledgerSyncId = ledgerSync.get(row.ledgerId);
+      if (ledgerSyncId)
+        categorySync.set(`${table}:${row.id}`, `${ledgerSyncId}:${table}:${row.builtinKey ?? row.name}`);
+    }
   const naturalSyncId = (table: string, row: Record<string, unknown>) => {
     const ledgerId = Number(row.ledgerId ?? row.id);
     const ledgerIdForSync = ledgerSync.get(ledgerId);
@@ -214,6 +221,10 @@ export async function GET(request: Request) {
       paidByMemberSyncId: memberSync.get(Number(row.paidByMemberId)),
       splitWithMemberSyncId: memberSync.get(Number(row.splitWithMemberId)),
       transactionSyncId: transactionSync.get(Number(row.transactionId)),
+      parentCategorySyncId:
+        (table === "expenseCategories" || table === "incomeCategories") && row.parentId != null
+          ? categorySync.get(`${table}:${row.parentId}`)
+          : undefined,
     }));
   if (new URL(request.url).searchParams.get("format") === "csv") {
     const names = new Map(ownedAccounts.map((x) => [x.id, x.name]));

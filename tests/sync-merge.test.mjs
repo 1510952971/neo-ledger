@@ -91,6 +91,35 @@ test("natural-key tables do not duplicate after a backup moves to another instal
   assert.equal(merged.expenseCategories[0].ledgerId, 1);
 });
 
+test("category parent relationships follow remapped category IDs", () => {
+  const parentSyncId = "ledger-global-1:expenseCategories:餐饮";
+  const childSyncId = "ledger-global-1:expenseCategories:早餐";
+  const local = {
+    version: 23,
+    ledgers: [ledger("2026-08-16T09:00:00.000Z")],
+    accounts: [],
+    transactions: [],
+    expenseCategories: [
+      { id: 3, syncId: parentSyncId, ledgerSyncId: "ledger-global-1", ledgerId: 1, name: "餐饮", builtinKey: "餐饮", updatedAt: "2026-08-16T09:00:00.000Z" },
+    ],
+  };
+  const remote = {
+    version: 23,
+    ledgers: [ledger("2026-08-16T10:00:00.000Z")],
+    accounts: [],
+    transactions: [],
+    expenseCategories: [
+      { id: 90, syncId: parentSyncId, ledgerSyncId: "ledger-global-1", ledgerId: 90, name: "餐饮", builtinKey: "餐饮", updatedAt: "2026-08-16T09:00:00.000Z" },
+      { id: 91, syncId: childSyncId, ledgerSyncId: "ledger-global-1", ledgerId: 90, name: "早餐", builtinKey: "早餐", parentId: 90, parentCategorySyncId: parentSyncId, updatedAt: "2026-08-16T10:00:00.000Z" },
+    ],
+  };
+  const merged = mergeSyncSnapshots(local, remote);
+  const parent = merged.expenseCategories.find((row) => row.name === "餐饮");
+  const child = merged.expenseCategories.find((row) => row.name === "早餐");
+  assert.ok(parent && child);
+  assert.equal(child.parentId, parent.id);
+});
+
 test("v23 reconciliation and automation rules survive cross-device ID remapping", () => {
   const local = {
     version: 23,

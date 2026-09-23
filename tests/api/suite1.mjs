@@ -257,6 +257,7 @@ await B.prepare("INSERT INTO transaction_reconciliation(transaction_id,ledger_id
 await B.prepare("INSERT INTO automation_rules(id,owner_id,ledger_id,name,priority,enabled,conditions_json,actions_json) VALUES(?,?,?,?,?,?,?,?)").bind("backup-rule", "local", L, "备份咖啡规则", 10, 1, JSON.stringify({ merchantContains: "咖啡", accountId: acct1 }), JSON.stringify({ category: "餐饮", accountId: acct1 })).run();
 r = await call(exportApi, "GET", "/api/data/export");
 check("GET JSON导出", r.status === 200 && r.json?.version === 23 && r.json?.transactions?.length === 2, `v=${r.json?.version} tx=${r.json?.transactions?.length}`);
+check("v23 导出保留分类层级", r.json?.expenseCategories?.some?.((item) => item.name === "猫粮" && item.parentId != null && item.parentCategorySyncId), JSON.stringify(r.json?.expenseCategories));
 check("v23 导出对账状态和自动化规则", r.json?.transactionReconciliation?.some?.((item) => item.note === "备份回环核对") && r.json?.automationRules?.some?.((item) => item.id === "backup-rule" && item.conditions?.accountId === acct1), JSON.stringify({ reconciliation: r.json?.transactionReconciliation, rules: r.json?.automationRules }));
 globalThis.__EXPORT__ = r.json;
 r = await call(exportApi, "GET", "/api/data/export?format=csv");
