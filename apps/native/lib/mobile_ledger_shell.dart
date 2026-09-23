@@ -48,7 +48,11 @@ class _MobileLedgerShellState extends State<MobileLedgerShell> {
     }
 
     final pages = [
-      MobileHomePage(controller: controller, onAdd: _openAdd),
+      MobileHomePage(
+        controller: controller,
+        onAdd: _openAdd,
+        onTransfer: () => _openAdd(initialType: '转账'),
+      ),
       MobileBillsPage(controller: controller),
       MobileAnalysisPage(controller: controller),
       MobileProfilePage(
@@ -97,11 +101,14 @@ class _MobileLedgerShellState extends State<MobileLedgerShell> {
     );
   }
 
-  Future<void> _openAdd() async {
+  Future<void> _openAdd({String initialType = '支出'}) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
-        builder: (_) => MobileAddTransactionPage(controller: controller),
+        builder: (_) => MobileAddTransactionPage(
+          controller: controller,
+          initialType: initialType,
+        ),
       ),
     );
   }
@@ -251,10 +258,12 @@ class MobileHomePage extends StatelessWidget {
     super.key,
     required this.controller,
     required this.onAdd,
+    required this.onTransfer,
   });
 
   final LedgerController controller;
   final VoidCallback onAdd;
+  final VoidCallback onTransfer;
 
   @override
   Widget build(BuildContext context) {
@@ -303,7 +312,7 @@ class MobileHomePage extends StatelessWidget {
                     icon: Icons.swap_horiz_rounded,
                     label: '转账',
                     color: _mobilePurple,
-                    onTap: () => _showComingSoon(context, '转账功能'),
+                    onTap: onTransfer,
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -1042,6 +1051,17 @@ class MobileProfilePage extends StatelessWidget {
             onTap: () => _showComingSoon(context, '高级功能入口'),
           ),
           _SettingsRow(
+            icon: '💳',
+            title: '账户与资产',
+            subtitle:
+                '${controller.accounts.length} 个账户 · ${controller.assets.length} 项资产',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => MobileAccountsPage(controller: controller),
+              ),
+            ),
+          ),
+          _SettingsRow(
             icon: '✨',
             title: '记账体验',
             subtitle: '触觉反馈、连续记账与快捷输入',
@@ -1080,10 +1100,340 @@ class MobileProfilePage extends StatelessWidget {
   }
 }
 
-class MobileAddTransactionPage extends StatefulWidget {
-  const MobileAddTransactionPage({super.key, required this.controller});
+class MobileAccountsPage extends StatefulWidget {
+  const MobileAccountsPage({super.key, required this.controller});
 
   final LedgerController controller;
+
+  @override
+  State<MobileAccountsPage> createState() => _MobileAccountsPageState();
+}
+
+class _MobileAccountsPageState extends State<MobileAccountsPage> {
+  LedgerController get controller => widget.controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final assets = controller.accounts.where((item) => item.type == '资产');
+    final liabilities = controller.accounts.where((item) => item.type == '负债');
+    return Scaffold(
+      backgroundColor: _mobileBg,
+      appBar: AppBar(title: const Text('账户与资产')),
+      floatingActionButton: FloatingActionButton.extended(
+        backgroundColor: _mobileBrand,
+        foregroundColor: _mobileBg,
+        onPressed: () => _editAccount(),
+        icon: const Icon(Icons.add_rounded),
+        label: const Text('新增账户'),
+      ),
+      body: RefreshIndicator(
+        onRefresh: controller.refresh,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 110),
+          children: [
+            _AccountGroup(
+              title: '资产账户',
+              accounts: assets.toList(),
+              onEdit: _editAccount,
+              onDelete: _deleteAccount,
+            ),
+            const SizedBox(height: 18),
+            _AccountGroup(
+              title: '负债账户',
+              accounts: liabilities.toList(),
+              onEdit: _editAccount,
+              onDelete: _deleteAccount,
+            ),
+            if (controller.assets.isNotEmpty) ...[
+              const SizedBox(height: 18),
+              _SectionHeader(
+                title: '数字资产',
+                action: '${controller.assets.length} 项',
+              ),
+              const SizedBox(height: 8),
+              for (final asset in controller.assets)
+                _SettingsRow(
+                  icon: asset.assetType == '房产'
+                      ? '🏠'
+                      : asset.assetType == '车辆'
+                      ? '🚗'
+                      : asset.assetType == '贵金属'
+                      ? '💎'
+                      : '📦',
+                  title: asset.name,
+                  subtitle:
+                      '${asset.assetType} · ${_mobileMoney(asset.currentValueCents ?? asset.valueCents)}',
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _editAccount([Account? account]) async {
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (_) =>
+          _MobileAccountEditor(controller: controller, existing: account),
+    );
+    if (saved == true && mounted) setState(() {});
+  }
+
+  Future<void> _deleteAccount(Account account) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('删除“${account.name}”？'),
+        content: const Text('删除账户前请确认没有需要保留的关联流水；服务端会按规则拒绝产生孤立流水。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await controller.deleteAccount(account);
+      if (mounted) setState(() {});
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('删除失败：$error')));
+      }
+    }
+  }
+}
+
+class _AccountGroup extends StatelessWidget {
+  const _AccountGroup({
+    required this.title,
+    required this.accounts,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final String title;
+  final List<Account> accounts;
+  final Future<void> Function([Account?]) onEdit;
+  final Future<void> Function(Account) onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionHeader(title: title, action: '${accounts.length} 个'),
+        const SizedBox(height: 8),
+        if (accounts.isEmpty)
+          const _EmptyState(
+            icon: Icons.account_balance_wallet_outlined,
+            title: '暂无账户',
+            message: '新增一个账户后就可以开始记账。',
+          )
+        else
+          for (final account in accounts)
+            Dismissible(
+              key: ValueKey(account.id),
+              direction: DismissDirection.endToStart,
+              confirmDismiss: (_) async {
+                await onDelete(account);
+                return false;
+              },
+              background: Container(
+                alignment: Alignment.centerRight,
+                padding: const EdgeInsets.only(right: 20),
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: _mobileExpense.withAlpha(35),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: const Icon(Icons.delete_outline_rounded),
+              ),
+              child: _SettingsRow(
+                icon: account.icon,
+                title: account.name,
+                subtitle:
+                    '${account.type} · ${account.currency} · ${_mobileMoney(account.balanceCents)}',
+                onTap: () => onEdit(account),
+              ),
+            ),
+      ],
+    );
+  }
+}
+
+class _MobileAccountEditor extends StatefulWidget {
+  const _MobileAccountEditor({
+    required this.controller,
+    required this.existing,
+  });
+
+  final LedgerController controller;
+  final Account? existing;
+
+  @override
+  State<_MobileAccountEditor> createState() => _MobileAccountEditorState();
+}
+
+class _MobileAccountEditorState extends State<_MobileAccountEditor> {
+  late final TextEditingController _name;
+  late final TextEditingController _balance;
+  late String _type;
+  late String _currency;
+  late String _assetClass;
+  late bool _investment;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final account = widget.existing;
+    _name = TextEditingController(text: account?.name ?? '');
+    _balance = TextEditingController(
+      text: account == null
+          ? ''
+          : (account.balanceCents.abs() / 100).toStringAsFixed(2),
+    );
+    _type = account?.type ?? '资产';
+    _currency = account?.currency ?? 'CNY';
+    _assetClass = account?.assetClass ?? '现金流';
+    _investment = account?.isInvestment ?? false;
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _balance.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: Padding(
+      padding: EdgeInsets.fromLTRB(
+        18,
+        4,
+        18,
+        MediaQuery.viewInsetsOf(context).bottom + 22,
+      ),
+      child: ListView(
+        shrinkWrap: true,
+        children: [
+          Text(
+            widget.existing == null ? '新增账户' : '编辑账户',
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _name,
+            decoration: const InputDecoration(labelText: '账户名称'),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _balance,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(labelText: '当前余额'),
+          ),
+          const SizedBox(height: 10),
+          DropdownButtonFormField<String>(
+            initialValue: _type,
+            decoration: const InputDecoration(labelText: '账户类型'),
+            items: const [
+              DropdownMenuItem(value: '资产', child: Text('资产')),
+              DropdownMenuItem(value: '负债', child: Text('负债')),
+            ],
+            onChanged: _saving
+                ? null
+                : (value) => setState(() => _type = value ?? '资产'),
+          ),
+          const SizedBox(height: 10),
+          DropdownButtonFormField<String>(
+            initialValue: _currency,
+            decoration: const InputDecoration(labelText: '币种'),
+            items: const [
+              DropdownMenuItem(value: 'CNY', child: Text('CNY 人民币')),
+              DropdownMenuItem(value: 'USD', child: Text('USD 美元')),
+              DropdownMenuItem(value: 'JPY', child: Text('JPY 日元')),
+              DropdownMenuItem(value: 'EUR', child: Text('EUR 欧元')),
+            ],
+            onChanged: _saving
+                ? null
+                : (value) => setState(() => _currency = value ?? 'CNY'),
+          ),
+          const SizedBox(height: 10),
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('投资账户'),
+            value: _investment,
+            onChanged: _saving
+                ? null
+                : (value) => setState(() => _investment = value),
+          ),
+          const SizedBox(height: 14),
+          FilledButton(
+            onPressed: _saving ? null : _save,
+            child: _saving
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('保存账户'),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Future<void> _save() async {
+    final balance = double.tryParse(_balance.text.trim());
+    if (_name.text.trim().isEmpty || balance == null || balance < 0) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请输入账户名称和有效余额')));
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await widget.controller.saveAccount(
+        existing: widget.existing,
+        name: _name.text,
+        type: _type,
+        balance: balance,
+        isInvestment: _investment,
+        currency: _currency,
+        assetClass: _assetClass,
+      );
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('保存失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+}
+
+class MobileAddTransactionPage extends StatefulWidget {
+  const MobileAddTransactionPage({
+    super.key,
+    required this.controller,
+    this.initialType = '支出',
+  });
+
+  final LedgerController controller;
+  final String initialType;
 
   @override
   State<MobileAddTransactionPage> createState() =>
@@ -1162,7 +1512,7 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
   final _note = TextEditingController();
   final _categorySearch = TextEditingController();
   final _entryPreferences = const MobileEntryPreferences();
-  String _type = '支出';
+  late String _type;
   String _amount = '0';
   int? _accountId;
   int? _toAccountId;
@@ -1183,6 +1533,9 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
   @override
   void initState() {
     super.initState();
+    _type = const ['支出', '收入', '转账'].contains(widget.initialType)
+        ? widget.initialType
+        : '支出';
     _accountId = controller.accounts.isEmpty
         ? null
         : controller.accounts.first.id;
