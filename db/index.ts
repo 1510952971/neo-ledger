@@ -12,7 +12,7 @@ import {
   SCHEDULED_OCCURRENCES_TABLE_SQL,
 } from "./transfer-schema.js";
 
-export const DB_SCHEMA_VERSION = "34";
+export const DB_SCHEMA_VERSION = "35";
 const SCHEMA_VERSION = DB_SCHEMA_VERSION;
 let ensuredDbBinding: ReturnType<typeof getDbBinding> | null = null;
 
@@ -223,6 +223,16 @@ export async function ensureDb() {
     await ensureTransactionRevisions(binding);
     ensuredDbBinding = binding;
     return;
+  }
+  if (version?.value === "34") {
+    await runMigrationBatch(binding, [
+      binding.prepare("ALTER TABLE expense_categories ADD COLUMN parent_id INTEGER"),
+      binding.prepare("ALTER TABLE income_categories ADD COLUMN parent_id INTEGER"),
+      binding.prepare("CREATE INDEX IF NOT EXISTS expense_categories_parent_idx ON expense_categories(ledger_id,parent_id,sort_order,id)"),
+      binding.prepare("CREATE INDEX IF NOT EXISTS income_categories_parent_idx ON income_categories(ledger_id,parent_id,sort_order,id)"),
+      binding.prepare("UPDATE app_meta SET value='35' WHERE key='schema_version'"),
+    ]);
+    return ensureDb();
   }
   if (version?.value === "33") {
     await runMigrationBatch(binding, [
@@ -551,7 +561,7 @@ export async function ensureDb() {
   if (version?.value === "16") {
     await binding.batch([
       binding.prepare(
-        "CREATE TABLE income_categories(id INTEGER PRIMARY KEY AUTOINCREMENT,ledger_id INTEGER NOT NULL DEFAULT 1,name TEXT NOT NULL,icon TEXT NOT NULL DEFAULT '💰',color TEXT NOT NULL DEFAULT '#78a98c',builtin_key TEXT,is_system INTEGER NOT NULL DEFAULT 0,is_active INTEGER NOT NULL DEFAULT 1,sort_order INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE TABLE income_categories(id INTEGER PRIMARY KEY AUTOINCREMENT,ledger_id INTEGER NOT NULL DEFAULT 1,name TEXT NOT NULL,icon TEXT NOT NULL DEFAULT '💰',color TEXT NOT NULL DEFAULT '#78a98c',builtin_key TEXT,is_system INTEGER NOT NULL DEFAULT 0,is_active INTEGER NOT NULL DEFAULT 1,sort_order INTEGER NOT NULL DEFAULT 0,parent_id INTEGER,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
       ),
       binding.prepare(
         "CREATE UNIQUE INDEX income_categories_name_unique ON income_categories(ledger_id,name)",
@@ -589,7 +599,7 @@ export async function ensureDb() {
   if (version?.value === "15") {
     await binding.batch([
       binding.prepare(
-        "CREATE TABLE expense_categories(id INTEGER PRIMARY KEY AUTOINCREMENT,ledger_id INTEGER NOT NULL DEFAULT 1,name TEXT NOT NULL,icon TEXT NOT NULL DEFAULT '📦',color TEXT NOT NULL DEFAULT '#8f91b8',builtin_key TEXT,is_system INTEGER NOT NULL DEFAULT 0,is_active INTEGER NOT NULL DEFAULT 1,sort_order INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE TABLE expense_categories(id INTEGER PRIMARY KEY AUTOINCREMENT,ledger_id INTEGER NOT NULL DEFAULT 1,name TEXT NOT NULL,icon TEXT NOT NULL DEFAULT '📦',color TEXT NOT NULL DEFAULT '#8f91b8',builtin_key TEXT,is_system INTEGER NOT NULL DEFAULT 0,is_active INTEGER NOT NULL DEFAULT 1,sort_order INTEGER NOT NULL DEFAULT 0,parent_id INTEGER,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
       ),
       binding.prepare(
         "CREATE UNIQUE INDEX expense_categories_name_unique ON expense_categories(ledger_id,name)",

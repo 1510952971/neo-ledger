@@ -46,6 +46,7 @@ const categoryFields = (defaultIcon: string, defaultColor: string) => ({
   name: z.string().trim().min(1, "请输入分类名称").max(12, "分类名称最多 12 个字符"),
   icon: z.string().trim().min(1).max(8, "分类图标最多 8 个字符").optional().default(defaultIcon),
   color: z.string().regex(/^#[0-9a-f]{6}$/i, "分类颜色格式无效").optional().default(defaultColor),
+  parentId: positiveId.nullish(),
   isActive: z.boolean().optional().default(true),
 });
 const expenseCategoryCreateSchema = z.object(categoryFields("📦", "#8f91b8")).strict();

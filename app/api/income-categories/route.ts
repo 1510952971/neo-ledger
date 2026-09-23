@@ -26,7 +26,7 @@ export async function GET(request: Request) {
     const total = await db.prepare("SELECT COUNT(*) count FROM income_categories WHERE ledger_id=?").bind(ledgerId).first<{ count: number }>();
     const rows = await db
       .prepare(
-        "SELECT id,ledger_id ledgerId,name,icon,color,builtin_key builtinKey,is_system isSystem,is_active isActive,sort_order sortOrder,created_at createdAt FROM income_categories WHERE ledger_id=? ORDER BY is_active DESC,sort_order,id LIMIT ?",
+        "SELECT id,ledger_id ledgerId,name,icon,color,builtin_key builtinKey,is_system isSystem,is_active isActive,sort_order sortOrder,parent_id parentId,created_at createdAt FROM income_categories WHERE ledger_id=? ORDER BY is_active DESC,sort_order,id LIMIT ?",
       )
       .bind(ledgerId, MAX_CATEGORY_COUNT)
       .all();
@@ -43,9 +43,18 @@ export async function POST(request: Request) {
     await ensureDb();
     const body = await readIncomeCategoryCreateInput(request);
     const ledgerId = body.ledgerId,
-      { name, icon, color } = body,
+      { name, icon, color, parentId } = body,
       db = getDbBinding();
     await claimAndRequireLedger(request, ledgerId);
+    if (parentId != null) {
+      const parent = await db
+        .prepare(
+          "SELECT id FROM income_categories WHERE id=? AND ledger_id=? AND parent_id IS NULL",
+        )
+        .bind(parentId, ledgerId)
+        .first();
+      if (!parent) throw new Error("父级分类不存在");
+    }
     const count = await db.prepare("SELECT COUNT(*) count FROM income_categories WHERE ledger_id=?").bind(ledgerId).first<{ count: number }>();
     if (Number(count?.count ?? 0) >= MAX_CATEGORY_COUNT)
       throw new ApiAccessError("收入分类最多 " + MAX_CATEGORY_COUNT + " 个", 409);
@@ -56,9 +65,9 @@ export async function POST(request: Request) {
     if (exists) throw new Error("这个收入分类已经存在");
     const result = await db
       .prepare(
-        "INSERT INTO income_categories(ledger_id,name,icon,color,sort_order) VALUES(?,?,?,?,(SELECT COALESCE(MAX(sort_order),0)+10 FROM income_categories WHERE ledger_id=?))",
+        "INSERT INTO income_categories(ledger_id,name,icon,color,sort_order,parent_id) VALUES(?,?,?,?,(SELECT COALESCE(MAX(sort_order),0)+10 FROM income_categories WHERE ledger_id=?),?)",
       )
-      .bind(ledgerId, name, icon, color, ledgerId)
+      .bind(ledgerId, name, icon, color, ledgerId, parentId ?? null)
       .run();
     return privateJson(
       { id: Number(result.meta.last_row_id) },
@@ -75,13 +84,13 @@ export async function PUT(request: Request) {
     const body = await readIncomeCategoryUpdateInput(request);
     const id = body.id,
       ledgerId = body.ledgerId,
-      { name, icon, color } = body,
+      { name, icon, color, parentId } = body,
       db = getDbBinding();
     await claimAndRequireLedger(request, ledgerId);
     const current = await db
-      .prepare("SELECT name FROM income_categories WHERE id=? AND ledger_id=?")
+      .prepare("SELECT name,parent_id parentId FROM income_categories WHERE id=? AND ledger_id=?")
       .bind(id, ledgerId)
-      .first<{ name: string }>();
+      .first<{ name: string; parentId: number | null }>();
     if (!current) throw new Error("收入分类不存在");
     const duplicate = await db
       .prepare(
@@ -90,12 +99,22 @@ export async function PUT(request: Request) {
       .bind(ledgerId, name, id)
       .first();
     if (duplicate) throw new Error("这个收入分类已经存在");
+    if (parentId === id) throw new Error("分类不能以自己作为父级");
+    if (parentId != null) {
+      const parent = await db
+        .prepare(
+          "SELECT id FROM income_categories WHERE id=? AND ledger_id=? AND parent_id IS NULL",
+        )
+        .bind(parentId, ledgerId)
+        .first();
+      if (!parent) throw new Error("父级分类不存在");
+    }
     await db.batch([
       db
         .prepare(
-          "UPDATE income_categories SET name=?,icon=?,color=?,is_active=? WHERE id=? AND ledger_id=?",
+          "UPDATE income_categories SET name=?,icon=?,color=?,is_active=?,parent_id=? WHERE id=? AND ledger_id=?",
         )
-        .bind(name, icon, color, body.isActive === false ? 0 : 1, id, ledgerId),
+        .bind(name, icon, color, body.isActive === false ? 0 : 1, parentId ?? null, id, ledgerId),
       db
         .prepare(
           "UPDATE transactions SET income_category_dynamic=? WHERE ledger_id=? AND COALESCE(income_category_dynamic,income_category)=?",

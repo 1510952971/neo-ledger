@@ -222,6 +222,7 @@ export const expenseCategories = sqliteTable("expense_categories", {
   isSystem: integer("is_system", { mode: "boolean" }).notNull().default(false),
   isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
+  parentId: integer("parent_id"),
   createdAt: text("created_at")
     .notNull()
     .default(sql`CURRENT_TIMESTAMP`),
@@ -237,6 +238,7 @@ export const incomeCategoriesConfig = sqliteTable("income_categories", {
   isSystem: integer("is_system", { mode: "boolean" }).notNull().default(false),
   isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
+  parentId: integer("parent_id"),
   createdAt: text("created_at")
     .notNull()
     .default(sql`CURRENT_TIMESTAMP`),

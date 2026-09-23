@@ -104,6 +104,13 @@ check("GET 默认支出分类非空", r.status === 200 && r.json?.length > 0, r.
 check("支出分类列表具备容量与缓存边界", r.status === 200 && r.headers?.get("cache-control")?.includes("no-store") && Number(r.headers?.get("x-total-count")) >= r.json.length && ["0", "1"].includes(r.headers?.get("x-has-more") || ""), r.text?.slice(0,120));
 r = await call(categories, "POST", "/api/categories", { body: { ledgerId: L, name: "宠物", icon: "🐱", color: "#aabbcc" } });
 check("POST 新分类", r.status === 200 || r.status === 201, r.text);
+const parentCategoryId = r.json?.id;
+r = await call(categories, "POST", "/api/categories", { body: { ledgerId: L, name: "猫粮", icon: "🐾", color: "#aabbcc", parentId: parentCategoryId } });
+check("POST 二级分类", (r.status === 200 || r.status === 201) && r.json?.id, r.text);
+r = await call(categories, "GET", `/api/categories?ledger=${L}`);
+check("GET 分类包含父级关系", r.status === 200 && r.json?.some?.((item) => item.name === "猫粮" && item.parentId === parentCategoryId), r.text?.slice(0,160));
+r = await call(categories, "POST", "/api/categories", { body: { ledgerId: L, name: "猫砂", icon: "🧺", color: "#aabbcc", parentId: r.json?.find?.((item) => item.name === "猫粮")?.id } });
+check("分类层级限制为一级和二级", r.status === 400, `${r.status} ${r.text}`);
 const expenseCategoryCountBeforeRejects = (await q("SELECT COUNT(*) n FROM expense_categories WHERE ledger_id=?", L))[0].n;
 for (const [name, body] of [
   ["非法分类颜色不再静默使用默认值", { ledgerId: L, name: "坏颜色", icon: "X", color: "red" }],

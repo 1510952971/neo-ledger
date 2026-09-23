@@ -236,6 +236,7 @@ class NeoLedgerApi {
     required String icon,
     required String color,
     bool? isActive,
+    int? parentId,
   }) async {
     final path = income ? '/api/income-categories' : '/api/categories';
     final body = <String, dynamic>{
@@ -245,11 +246,13 @@ class NeoLedgerApi {
       'color': color.trim().isEmpty ? '#6B7280' : color.trim(),
     };
     if (id == null) {
+      if (parentId != null) body['parentId'] = parentId;
       await postJson(path, body);
       return;
     }
     body['id'] = id;
     if (isActive != null) body['isActive'] = isActive;
+    body['parentId'] = parentId;
     await putJson(path, body);
   }
 

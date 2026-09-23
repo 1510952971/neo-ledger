@@ -26,7 +26,7 @@ export async function GET(request: Request) {
     const total = await db.prepare("SELECT COUNT(*) count FROM expense_categories WHERE ledger_id=?").bind(ledgerId).first<{ count: number }>();
     const rows = await db
       .prepare(
-        "SELECT id,ledger_id ledgerId,name,icon,color,builtin_key builtinKey,is_system isSystem,is_active isActive,sort_order sortOrder,created_at createdAt FROM expense_categories WHERE ledger_id=? ORDER BY is_active DESC,sort_order,id LIMIT ?",
+        "SELECT id,ledger_id ledgerId,name,icon,color,builtin_key builtinKey,is_system isSystem,is_active isActive,sort_order sortOrder,parent_id parentId,created_at createdAt FROM expense_categories WHERE ledger_id=? ORDER BY is_active DESC,sort_order,id LIMIT ?",
       )
       .bind(ledgerId, MAX_CATEGORY_COUNT)
       .all();
@@ -44,8 +44,17 @@ export async function POST(request: Request) {
     const body = await readExpenseCategoryCreateInput(request);
     const ledgerId = body.ledgerId;
     await claimAndRequireLedger(request, ledgerId);
-    const { name, icon, color } = body;
+    const { name, icon, color, parentId } = body;
     const db = getDbBinding();
+    if (parentId != null) {
+      const parent = await db
+        .prepare(
+          "SELECT id FROM expense_categories WHERE id=? AND ledger_id=? AND parent_id IS NULL",
+        )
+        .bind(parentId, ledgerId)
+        .first();
+      if (!parent) throw new Error("父级分类不存在");
+    }
     const count = await db.prepare("SELECT COUNT(*) count FROM expense_categories WHERE ledger_id=?").bind(ledgerId).first<{ count: number }>();
     if (Number(count?.count ?? 0) >= MAX_CATEGORY_COUNT)
       throw new ApiAccessError("支出分类最多 " + MAX_CATEGORY_COUNT + " 个", 409);
@@ -62,9 +71,9 @@ export async function POST(request: Request) {
       .first<{ nextOrder: number }>();
     const result = await db
       .prepare(
-        "INSERT INTO expense_categories(ledger_id,name,icon,color,sort_order) VALUES(?,?,?,?,?)",
+        "INSERT INTO expense_categories(ledger_id,name,icon,color,sort_order,parent_id) VALUES(?,?,?,?,?,?)",
       )
-      .bind(ledgerId, name, icon, color, order?.nextOrder ?? 10)
+      .bind(ledgerId, name, icon, color, order?.nextOrder ?? 10, parentId ?? null)
       .run();
     await db
       .prepare(
@@ -88,14 +97,14 @@ export async function PUT(request: Request) {
     const id = body.id;
     const ledgerId = body.ledgerId;
     await claimAndRequireLedger(request, ledgerId);
-    const { name, icon, color } = body;
+    const { name, icon, color, parentId } = body;
     const db = getDbBinding();
     const current = await db
       .prepare(
-        "SELECT name FROM expense_categories WHERE id=? AND ledger_id=?",
+        "SELECT name,parent_id parentId FROM expense_categories WHERE id=? AND ledger_id=?",
       )
       .bind(id, ledgerId)
-      .first<{ name: string }>();
+      .first<{ name: string; parentId: number | null }>();
     if (!current) throw new Error("分类不存在");
     const duplicate = await db
       .prepare(
@@ -104,12 +113,22 @@ export async function PUT(request: Request) {
       .bind(ledgerId, name, id)
       .first();
     if (duplicate) throw new Error("这个分类名称已经存在");
+    if (parentId === id) throw new Error("分类不能以自己作为父级");
+    if (parentId != null) {
+      const parent = await db
+        .prepare(
+          "SELECT id FROM expense_categories WHERE id=? AND ledger_id=? AND parent_id IS NULL",
+        )
+        .bind(parentId, ledgerId)
+        .first();
+      if (!parent) throw new Error("父级分类不存在");
+    }
     await db.batch([
       db
         .prepare(
-          "UPDATE expense_categories SET name=?,icon=?,color=?,is_active=? WHERE id=? AND ledger_id=?",
+          "UPDATE expense_categories SET name=?,icon=?,color=?,is_active=?,parent_id=? WHERE id=? AND ledger_id=?",
         )
-        .bind(name, icon, color, body.isActive === false ? 0 : 1, id, ledgerId),
+        .bind(name, icon, color, body.isActive === false ? 0 : 1, parentId ?? null, id, ledgerId),
       db
         .prepare(
           "UPDATE transactions SET category_dynamic=? WHERE ledger_id=? AND COALESCE(category_dynamic,category)=?",

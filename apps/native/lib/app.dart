@@ -936,6 +936,7 @@ class LedgerController extends ChangeNotifier {
     required String icon,
     required String color,
     required bool isActive,
+    int? parentId,
   }) async {
     final ledger = selectedLedger;
     final normalizedName = name.trim();
@@ -967,6 +968,7 @@ class LedgerController extends ChangeNotifier {
                 icon: normalizedIcon,
                 color: normalizedColor,
                 isActive: isActive,
+                parentId: parentId,
               );
       final result = [
         for (final item in source) item.id == updated.id ? updated : item,
@@ -988,6 +990,7 @@ class LedgerController extends ChangeNotifier {
       icon: normalizedIcon,
       color: normalizedColor,
       isActive: existing == null ? null : isActive,
+      parentId: parentId,
     );
     await _refreshAdvanced(ledger.id);
     notifyListeners();
@@ -8974,6 +8977,7 @@ class _CategoryEditorSheetState extends State<CategoryEditorSheet> {
   late final TextEditingController icon;
   late final TextEditingController color;
   late bool isActive;
+  late int? parentId;
   bool saving = false;
 
   @override
@@ -8983,6 +8987,7 @@ class _CategoryEditorSheetState extends State<CategoryEditorSheet> {
     icon = TextEditingController(text: widget.existing?.icon ?? '🧾');
     color = TextEditingController(text: widget.existing?.color ?? '#6B7280');
     isActive = widget.existing?.isActive ?? true;
+    parentId = widget.existing?.parentId;
   }
 
   @override
@@ -9003,6 +9008,7 @@ class _CategoryEditorSheetState extends State<CategoryEditorSheet> {
         icon: icon.text,
         color: color.text,
         isActive: isActive,
+        parentId: parentId,
       );
       if (mounted) Navigator.pop(context, true);
     } catch (error) {
@@ -9063,6 +9069,34 @@ class _CategoryEditorSheetState extends State<CategoryEditorSheet> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<int?>(
+              initialValue: parentId,
+              decoration: const InputDecoration(
+                labelText: '父级分类（可选）',
+                border: OutlineInputBorder(),
+              ),
+              items: [
+                const DropdownMenuItem<int?>(value: null, child: Text('无父级分类')),
+                for (final item
+                    in (widget.income
+                            ? widget.controller.incomeCategories
+                            : widget.controller.expenseCategories)
+                        .where(
+                          (item) =>
+                              item.isActive &&
+                              item.parentId == null &&
+                              item.id != widget.existing?.id,
+                        ))
+                  DropdownMenuItem<int?>(
+                    value: item.id,
+                    child: Text('${item.icon} ${item.name}'),
+                  ),
+              ],
+              onChanged: saving
+                  ? null
+                  : (value) => setState(() => parentId = value),
             ),
             if (widget.existing != null) ...[
               const SizedBox(height: 4),

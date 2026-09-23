@@ -166,4 +166,17 @@ void main() {
     expect(preferences.homeModules, ['recent', 'summary']);
     expect(preferences.copyWith(hideAmounts: false).hideAmounts, isFalse);
   });
+
+  test('category round-trips a parent relationship', () {
+    final category = Category.fromJson({
+      'id': 2,
+      'ledgerId': 1,
+      'name': '猫粮',
+      'parentId': 1,
+      'isActive': true,
+    });
+
+    expect(category.parentId, 1);
+    expect(category.toJson()['parentId'], 1);
+  });
 }

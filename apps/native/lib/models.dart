@@ -189,6 +189,7 @@ class Category {
     this.isSystem = false,
     this.isActive = true,
     this.sortOrder = 0,
+    this.parentId,
     this.createdAt,
   });
 
@@ -201,6 +202,7 @@ class Category {
   final bool isSystem;
   final bool isActive;
   final int sortOrder;
+  final int? parentId;
   final String? createdAt;
 
   factory Category.fromJson(Map<String, dynamic> json) => Category(
@@ -215,6 +217,9 @@ class Category {
         ? true
         : _asBool(json['isActive'] ?? json['is_active']),
     sortOrder: _asInt(json['sortOrder'] ?? json['sort_order']),
+    parentId: json['parentId'] == null && json['parent_id'] == null
+        ? null
+        : _asInt(json['parentId'] ?? json['parent_id']),
     createdAt: json['createdAt'] as String? ?? json['created_at'] as String?,
   );
 
@@ -224,6 +229,7 @@ class Category {
     String? color,
     bool? isActive,
     int? sortOrder,
+    int? parentId,
   }) => Category(
     id: id,
     ledgerId: ledgerId,
@@ -234,6 +240,7 @@ class Category {
     isSystem: isSystem,
     isActive: isActive ?? this.isActive,
     sortOrder: sortOrder ?? this.sortOrder,
+    parentId: parentId ?? this.parentId,
     createdAt: createdAt,
   );
 
@@ -247,6 +254,7 @@ class Category {
     'isSystem': isSystem,
     'isActive': isActive,
     'sortOrder': sortOrder,
+    if (parentId != null) 'parentId': parentId,
     if (createdAt != null) 'createdAt': createdAt,
   };
 }
