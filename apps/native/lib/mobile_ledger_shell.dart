@@ -2544,7 +2544,23 @@ class MobileProfilePage extends StatelessWidget {
       }
       return;
     }
-    final file = await FilePicker.pickFile(type: FileType.image);
+    PlatformFile? file;
+    try {
+      // Use an explicit allow-list instead of FileType.image. On some desktop
+      // and Android picker implementations the broad type filter returns an
+      // unsupported provider result and the native picker can terminate the
+      // process before Flutter receives a normal error.
+      file = await FilePicker.pickFile(
+        type: FileType.custom,
+        allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp'],
+      );
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('打开图片选择器失败：$error')));
+      }
+      return;
+    }
     if (!context.mounted || file == null) return;
     late final List<int> bytes;
     try {
@@ -2567,8 +2583,18 @@ class MobileProfilePage extends StatelessWidget {
           .showSnackBar(const SnackBar(content: Text('头像图片不能超过 512 KB')));
       return;
     }
-    final extension = (file.extension ?? 'jpeg').toLowerCase();
-    final mime = extension == 'png' ? 'image/png' : 'image/jpeg';
+    final extension = (file.extension ?? '').toLowerCase();
+    final mime = switch (extension) {
+      'png' => 'image/png',
+      'webp' => 'image/webp',
+      'jpg' || 'jpeg' || '' => 'image/jpeg',
+      _ => null,
+    };
+    if (mime == null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请选择 JPG、PNG 或 WebP 图片')));
+      return;
+    }
     try {
       await controller.updateAvatar('data:$mime;base64,${base64Encode(bytes)}');
     } catch (error) {
