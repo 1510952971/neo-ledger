@@ -26,60 +26,51 @@ class _FakeClient extends http.BaseClient {
 }
 
 void main() {
-  test('selects the highest stable native release and bypasses caches', () async {
-    final client = _FakeClient([
-      {
-        'tag_name': 'v9.9.9',
-        'draft': false,
-        'prerelease': false,
-      },
-      {
-        'tag_name': 'native-v1.4.0',
-        'draft': true,
-        'prerelease': false,
-      },
-      {
-        'tag_name': 'native-v1.3.0-beta.1',
-        'draft': false,
-        'prerelease': true,
-      },
-      {
-        'tag_name': 'native-v9.9.9-beta',
-        'draft': false,
-        'prerelease': false,
-      },
-      {
-        'tag_name': 'native-v1.2.0',
-        'draft': false,
-        'prerelease': false,
-        'html_url': 'https://example.com/native-v1.2.0',
-        'assets': [
-          {
-            'name': 'neo-ledger-android-1.2.0.apk',
-            'browser_download_url': 'https://example.com/app.apk',
-          },
-        ],
-      },
-      {
-        'tag_name': 'native-not-a-version',
-        'draft': false,
-        'prerelease': false,
-      },
-    ]);
+  test(
+    'selects the highest stable native release and bypasses caches',
+    () async {
+      final client = _FakeClient([
+        {'tag_name': 'v9.9.9', 'draft': false, 'prerelease': false},
+        {'tag_name': 'native-v1.4.0', 'draft': true, 'prerelease': false},
+        {
+          'tag_name': 'native-v1.3.0-beta.1',
+          'draft': false,
+          'prerelease': true,
+        },
+        {'tag_name': 'native-v9.9.9-beta', 'draft': false, 'prerelease': false},
+        {
+          'tag_name': 'native-v1.2.0',
+          'draft': false,
+          'prerelease': false,
+          'html_url': 'https://example.com/native-v1.2.0',
+          'assets': [
+            {
+              'name': 'neo-ledger-android-1.2.0.apk',
+              'browser_download_url': 'https://example.com/app.apk',
+            },
+          ],
+        },
+        {
+          'tag_name': 'native-not-a-version',
+          'draft': false,
+          'prerelease': false,
+        },
+      ]);
 
-    final service = NeoLedgerUpdateService(client: client);
-    addTearDown(service.close);
+      final service = NeoLedgerUpdateService(client: client);
+      addTearDown(service.close);
 
-    final update = await service.checkLatest();
+      final update = await service.checkLatest();
 
-    expect(update?.version, '1.2.0');
-    expect(client.requestedUri?.queryParameters['ts'], isNotEmpty);
-    expect(client.requestedUri?.queryParameters['per_page'], '100');
-    expect(client.requestedHeaders?['cache-control'], 'no-cache, no-store');
-    expect(client.requestedHeaders?['pragma'], 'no-cache');
-    expect(client.requestedHeaders?['x-github-api-version'], '2022-11-28');
-    expect(client.requestedHeaders?['user-agent'], 'Neo-Ledger-Native');
-  });
+      expect(update?.version, '1.2.0');
+      expect(client.requestedUri?.queryParameters['ts'], isNotEmpty);
+      expect(client.requestedUri?.queryParameters['per_page'], '100');
+      expect(client.requestedHeaders?['cache-control'], 'no-cache, no-store');
+      expect(client.requestedHeaders?['pragma'], 'no-cache');
+      expect(client.requestedHeaders?['x-github-api-version'], '2022-11-28');
+      expect(client.requestedHeaders?['user-agent'], 'Neo-Ledger-Native');
+    },
+  );
 
   test('returns null when no stable native release exists', () async {
     final service = NeoLedgerUpdateService(
@@ -102,8 +93,7 @@ void main() {
             'tag_name': 'windows-preview-v1.2.8',
             'draft': false,
             'prerelease': true,
-            'html_url':
-                'https://github.com/1510952971/neo-ledger/releases/tag/windows-preview-v1.2.8',
+            'html_url': 'https://github.com/1510952971/neo-ledger/releases/tag/windows-preview-v1.2.8',
           },
           {
             'tag_name': 'windows-preview-v1.2.7',

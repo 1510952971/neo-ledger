@@ -8,6 +8,7 @@ type InstallmentAccount = {
   icon: string;
   name: string;
   currency: string;
+  isActive: boolean;
 };
 
 export type InstallmentDialogProps = {
@@ -44,8 +45,8 @@ export function InstallmentDialog({
           <label className="title-field"><span>每月扣款日</span><input name="chargeDay" type="number" min="1" max="31" defaultValue="1" required /></label>
         </div>
         <label className="title-field"><span>开始月份</span><input name="startMonth" type="month" required /></label>
-        <label className="title-field"><span>分期负债账户</span><select name="accountId">{accountList.filter((item) => item.type === "负债").map((item) => <option value={item.id} key={item.id}>{item.icon} {item.name} · {item.currency}</option>)}</select></label>
-        <label className="title-field"><span>每月还款账户</span><select name="paymentAccountId">{accountList.filter((item) => item.type === "资产").map((item) => <option value={item.id} key={item.id}>{item.icon} {item.name} · {item.currency}</option>)}</select></label>
+        <label className="title-field"><span>分期负债账户</span><select name="accountId">{accountList.filter((item) => item.isActive && item.type === "负债").map((item) => <option value={item.id} key={item.id}>{item.icon} {item.name} · {item.currency}</option>)}</select></label>
+        <label className="title-field"><span>每月还款账户</span><select name="paymentAccountId">{accountList.filter((item) => item.isActive && item.type === "资产").map((item) => <option value={item.id} key={item.id}>{item.icon} {item.name} · {item.currency}</option>)}</select></label>
         <button className="submit-button" disabled={pending}>启动自动摊销</button>
       </form>
     </dialog>

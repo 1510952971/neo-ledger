@@ -205,6 +205,8 @@ class LedgerController extends ChangeNotifier {
   String? _transactionRevisionMarker;
 
   bool get authenticated => user != null;
+  List<Account> get activeAccounts =>
+      accounts.where((item) => item.isActive).toList(growable: false);
   Ledger? get selectedLedger => ledgers.isEmpty
       ? null
       : ledgers[selectedLedgerIndex.clamp(0, ledgers.length - 1)];
@@ -619,6 +621,7 @@ class LedgerController extends ChangeNotifier {
     required bool isInvestment,
     required String currency,
     required String assetClass,
+    bool? isActive,
   }) async {
     final ledger = selectedLedger;
     final normalizedName = name.trim();
@@ -640,6 +643,8 @@ class LedgerController extends ChangeNotifier {
         updatedAt: DateTime.now().toIso8601String(),
         isInvestment: isInvestment,
         assetClass: assetClass,
+        isActive: isActive ?? existing?.isActive ?? true,
+        sortOrder: existing?.sortOrder ?? accounts.length * 10,
         billDay: billDay,
         repaymentDay: repaymentDay,
       );
@@ -668,6 +673,7 @@ class LedgerController extends ChangeNotifier {
       isInvestment: isInvestment,
       currency: currency,
       assetClass: assetClass,
+      isActive: isActive,
       expectedUpdatedAt: existing?.updatedAt,
     );
     await refresh();
@@ -684,6 +690,32 @@ class LedgerController extends ChangeNotifier {
       throw const ApiException('账户缺少版本信息，请刷新后再删除');
     }
     await api.deleteAccount(id: item.id, expectedUpdatedAt: updatedAt);
+    await refresh();
+  }
+
+  Future<void> reorderAccounts(List<int> accountIds) async {
+    final ledger = selectedLedger;
+    if (ledger == null) throw const ApiException('没有可用的账本');
+    final currentIds = accounts.map((item) => item.id).toSet();
+    if (accountIds.length != accounts.length ||
+        accountIds.toSet().length != accounts.length ||
+        !accountIds.toSet().containsAll(currentIds)) {
+      throw const ApiException('账户排序已变化，请刷新后重试');
+    }
+    if (demoMode) {
+      final byId = {for (final item in accounts) item.id: item};
+      accounts = accountIds
+          .asMap()
+          .entries
+          .map(
+            (entry) =>
+                byId[entry.value]!.copyWith(sortOrder: (entry.key + 1) * 10),
+          )
+          .toList();
+      notifyListeners();
+      return;
+    }
+    await api.reorderAccounts(ledgerId: ledger.id, accountIds: accountIds);
     await refresh();
   }
 
@@ -1344,7 +1376,7 @@ class LedgerController extends ChangeNotifier {
     required String direction,
   }) async {
     final ledger = selectedLedger;
-    final account = accounts.isEmpty ? null : accounts.first;
+    final account = activeAccounts.isEmpty ? null : activeAccounts.first;
     if (ledger == null || account == null) {
       throw const ApiException('没有可用的账本账户');
     }
@@ -4432,6 +4464,29 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _moveNativeAccount(int index, int delta) async {
+    final ordered = widget.controller.accounts.toList();
+    final target = index + delta;
+    if (target < 0 ||
+        target >= ordered.length ||
+        ordered[index].isActive != ordered[target].isActive) {
+      return;
+    }
+    final current = ordered[index];
+    ordered[index] = ordered[target];
+    ordered[target] = current;
+    try {
+      await widget.controller.reorderAccounts(
+        ordered.map((item) => item.id).toList(),
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('账户排序失败：$error')));
+      }
+    }
+  }
+
   Widget _assets() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -4444,37 +4499,69 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
         const SizedBox(height: 12),
         if (widget.controller.accounts.isEmpty)
           const _EmptyState(message: '暂无账户，点击右上角新增账户'),
-        ...widget.controller.accounts.map(
-          (account) => Card(
+        ...widget.controller.accounts.asMap().entries.map((entry) {
+          final account = entry.value;
+          return Card(
             margin: const EdgeInsets.only(bottom: 10),
             child: ListTile(
               onTap: () => _openAccount(account),
               leading: Text(account.icon, style: const TextStyle(fontSize: 28)),
               title: Text(account.name),
               subtitle: Text(
-                '${account.type} · ${account.assetClass} · ${account.currency}\n余额 ${_money(account.balanceCents)}',
+                '${account.type} · ${account.assetClass} · ${account.currency}\n${account.isActive ? '' : '已停用 · '}余额 ${_money(account.balanceCents)}',
               ),
               isThreeLine: true,
-              trailing: PopupMenuButton<String>(
-                tooltip: '账户操作',
-                onSelected: (value) {
-                  if (value == 'edit') {
-                    _openAccount(account);
-                  } else if (value == 'delete') {
-                    _deleteAccount(account);
-                  } else if (value == 'transfer') {
-                    _openTransfer(initialFrom: account);
-                  }
-                },
-                itemBuilder: (context) => const [
-                  PopupMenuItem(value: 'edit', child: Text('编辑账户')),
-                  PopupMenuItem(value: 'transfer', child: Text('转账/还款')),
-                  PopupMenuItem(value: 'delete', child: Text('删除账户')),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: '上移账户',
+                    onPressed:
+                        entry.key == 0 ||
+                            widget
+                                    .controller
+                                    .accounts[entry.key - 1]
+                                    .isActive !=
+                                account.isActive
+                        ? null
+                        : () => _moveNativeAccount(entry.key, -1),
+                    icon: const Icon(Icons.keyboard_arrow_up_rounded),
+                  ),
+                  IconButton(
+                    tooltip: '下移账户',
+                    onPressed:
+                        entry.key == widget.controller.accounts.length - 1 ||
+                            widget
+                                    .controller
+                                    .accounts[entry.key + 1]
+                                    .isActive !=
+                                account.isActive
+                        ? null
+                        : () => _moveNativeAccount(entry.key, 1),
+                    icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                  ),
+                  PopupMenuButton<String>(
+                    tooltip: '账户操作',
+                    onSelected: (value) {
+                      if (value == 'edit') {
+                        _openAccount(account);
+                      } else if (value == 'delete') {
+                        _deleteAccount(account);
+                      } else if (value == 'transfer') {
+                        _openTransfer(initialFrom: account);
+                      }
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(value: 'edit', child: Text('编辑账户')),
+                      PopupMenuItem(value: 'transfer', child: Text('转账/还款')),
+                      PopupMenuItem(value: 'delete', child: Text('删除账户')),
+                    ],
+                  ),
                 ],
               ),
             ),
-          ),
-        ),
+          );
+        }),
         const SizedBox(height: 18),
         _sectionTitle(
           '数字资产',
@@ -5969,6 +6056,7 @@ class _AccountSheetState extends State<AccountSheet> {
   late String currency;
   late String assetClass;
   late bool isInvestment;
+  late bool isActive;
   bool saving = false;
 
   @override
@@ -5993,6 +6081,7 @@ class _AccountSheetState extends State<AccountSheet> {
         ? existing!.assetClass
         : (existing?.isInvestment == true ? '投资' : '现金流');
     isInvestment = existing?.isInvestment ?? false;
+    isActive = existing?.isActive ?? true;
   }
 
   @override
@@ -6039,6 +6128,7 @@ class _AccountSheetState extends State<AccountSheet> {
         isInvestment: type == '资产' && isInvestment,
         currency: currency,
         assetClass: type == '资产' ? assetClass : '信用',
+        isActive: isActive,
       );
       if (mounted) Navigator.pop(context);
     } catch (error) {
@@ -6069,6 +6159,16 @@ class _AccountSheetState extends State<AccountSheet> {
               '账户余额以当前账本币种记录；修改余额会生成一笔余额调账记录，便于追溯。',
               style: TextStyle(color: Colors.grey.shade500, height: 1.4),
             ),
+            if (widget.existing != null)
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('启用账户'),
+                subtitle: const Text('停用后保留历史记录，但不能用于新流水和转账'),
+                value: isActive,
+                onChanged: saving
+                    ? null
+                    : (value) => setState(() => isActive = value),
+              ),
             const SizedBox(height: 18),
             TextField(
               controller: name,
@@ -10776,12 +10876,13 @@ class _TransferSheetState extends State<TransferSheet> {
   bool saving = false;
 
   List<Account> get sourceAccounts => widget.controller.accounts
-      .where((item) => item.type == '资产')
+      .where((item) => item.isActive && item.type == '资产')
       .toList(growable: false);
 
   List<Account> get destinationAccounts => widget.controller.accounts
       .where(
         (item) =>
+            item.isActive &&
             item.type == (kind == '信用卡还款' ? '负债' : '资产') &&
             item.id != fromAccountId,
       )
@@ -10992,7 +11093,10 @@ class _AssetLiquidationSheetState extends State<AssetLiquidationSheet> {
 
   List<Account> get eligibleAccounts => widget.controller.accounts
       .where(
-        (item) => item.type == '资产' && item.currency == widget.asset.currency,
+        (item) =>
+            item.isActive &&
+            item.type == '资产' &&
+            item.currency == widget.asset.currency,
       )
       .toList(growable: false);
 
@@ -11128,7 +11232,7 @@ class _SubscriptionSheetState extends State<SubscriptionSheet> {
   bool saving = false;
 
   List<Account> get accounts => widget.controller.accounts
-      .where((item) => item.type == '资产')
+      .where((item) => item.isActive && item.type == '资产')
       .toList(growable: false);
 
   @override
@@ -11351,11 +11455,11 @@ class _InstallmentSheetState extends State<InstallmentSheet> {
   bool saving = false;
 
   List<Account> get liabilities => widget.controller.accounts
-      .where((item) => item.type == '负债')
+      .where((item) => item.isActive && item.type == '负债')
       .toList(growable: false);
 
   List<Account> get payments => widget.controller.accounts
-      .where((item) => item.type == '资产')
+      .where((item) => item.isActive && item.type == '资产')
       .toList(growable: false);
 
   @override
@@ -11606,7 +11710,7 @@ class _SavingsGoalSheetState extends State<SavingsGoalSheet> {
   bool saving = false;
 
   List<Account> get accounts => widget.controller.accounts
-      .where((item) => item.type == '资产')
+      .where((item) => item.isActive && item.type == '资产')
       .toList(growable: false);
 
   @override

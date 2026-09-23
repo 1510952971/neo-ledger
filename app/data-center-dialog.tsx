@@ -31,7 +31,7 @@ type ImportBatch = {
   completedAt: string | null;
   undoneAt: string | null;
 };
-type AccountOption = { id: number; name: string; type: "资产" | "负债"; currency: Currency; icon: string };
+type AccountOption = { id: number; name: string; type: "资产" | "负债"; currency: Currency; icon: string; isActive: boolean };
 
 type RestoreModel = {
   summary: RestoreSummary | null;

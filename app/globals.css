@@ -447,6 +447,13 @@ fieldset { padding: 0; border: 0; }
 .budget-mini-card small { color: #897467; font-size:12px; }
 .accounts-section { margin-top: 38px; }
 .account-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.account-card-order { position: relative; min-width: 0; }
+.account-card-order .account-card { width: 100%; height: 100%; padding-right: 48px; }
+.account-card-order.inactive { opacity: .72; }
+.account-order-actions { position: absolute; top: 5px; right: 5px; display: grid; gap: 2px; }
+.account-order-actions button { width: 28px; height: 25px; padding: 0; border: 0; border-radius: 8px; color: var(--muted); background: transparent; cursor: pointer; }
+.account-order-actions button:hover:not(:disabled) { color: var(--theme-accent); background: var(--theme-soft); }
+.account-order-actions button:disabled { opacity: .28; cursor: default; }
 .account-card { position: relative; min-width: 0; padding: 17px 14px; border: 1px solid var(--line); border-radius: 19px; background: #fffefa; text-align: left; cursor: pointer; transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease; }
 .account-card:hover { transform: translateY(-3px); border-color: rgba(218, 128, 96, .28); box-shadow: 0 13px 28px rgba(71, 57, 41, .09); }
 .account-card.debt { background: #fff7f3; border-color: rgba(211, 107, 80, .16); }

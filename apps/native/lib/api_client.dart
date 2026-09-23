@@ -553,6 +553,7 @@ class NeoLedgerApi {
     required bool isInvestment,
     required String currency,
     required String assetClass,
+    bool? isActive,
     String? expectedUpdatedAt,
   }) async {
     final body = <String, dynamic>{
@@ -571,8 +572,19 @@ class NeoLedgerApi {
       return;
     }
     body['id'] = id;
+    if (isActive != null) body['isActive'] = isActive;
     body['expectedUpdatedAt'] = expectedUpdatedAt;
     await putJson('/api/accounts', body);
+  }
+
+  Future<void> reorderAccounts({
+    required int ledgerId,
+    required List<int> accountIds,
+  }) async {
+    await postJson('/api/accounts/reorder', {
+      'ledgerId': ledgerId,
+      'accountIds': accountIds,
+    });
   }
 
   Future<void> deleteAccount({

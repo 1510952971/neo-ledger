@@ -13,14 +13,14 @@ function database() {
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys=ON");
   db.exec("CREATE TABLE app_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)");
-  db.exec("CREATE TABLE accounts(id INTEGER PRIMARY KEY,ledger_id INTEGER NOT NULL,type TEXT NOT NULL,current_balance INTEGER NOT NULL,currency TEXT NOT NULL)");
+  db.exec("CREATE TABLE accounts(id INTEGER PRIMARY KEY,ledger_id INTEGER NOT NULL,type TEXT NOT NULL,current_balance INTEGER NOT NULL,currency TEXT NOT NULL,is_active INTEGER NOT NULL DEFAULT 1,sort_order INTEGER NOT NULL DEFAULT 0)");
   db.exec("CREATE TABLE savings_goals(id INTEGER PRIMARY KEY,ledger_id INTEGER NOT NULL,target_amount INTEGER NOT NULL,saved_amount INTEGER NOT NULL DEFAULT 0)");
   db.exec(ACCOUNT_TRANSFERS_TABLE_SQL);
   db.exec(ACCOUNT_TRANSFERS_OCCURRENCE_INDEX_SQL);
   db.exec(ACCOUNT_TRANSFERS_VALIDATE_TRIGGER_SQL);
   db.exec(ACCOUNT_TRANSFERS_APPLY_TRIGGER_SQL);
   db.exec(SCHEDULED_OCCURRENCES_TABLE_SQL);
-  db.exec("INSERT INTO accounts VALUES(1,1,'资产',10000,'CNY'),(2,1,'负债',-5000,'CNY'),(3,1,'资产',10000,'USD'),(4,2,'资产',10000,'CNY')");
+  db.exec("INSERT INTO accounts(id,ledger_id,type,current_balance,currency) VALUES(1,1,'资产',10000,'CNY'),(2,1,'负债',-5000,'CNY'),(3,1,'资产',10000,'USD'),(4,2,'资产',10000,'CNY')");
   db.exec("INSERT INTO savings_goals VALUES(1,1,3000,0)");
   return db;
 }
@@ -81,6 +81,20 @@ test("currency and ledger boundaries are enforced by the database", () => {
     () => transfer(db, { uuid: "ledger", from: 1, to: 4, amount: 100 }),
     /账户或币种不匹配/,
   );
+});
+
+test("inactive accounts cannot be used for new transfers", () => {
+  const db = database();
+  db.prepare("INSERT INTO accounts(id,ledger_id,type,current_balance,currency,is_active) VALUES(5,1,'资产',1000,'CNY',0)").run();
+  assert.throws(
+    () => transfer(db, { uuid: "inactive-source", from: 5, to: 2, amount: 100 }),
+    /已停用/u,
+  );
+  assert.throws(
+    () => transfer(db, { uuid: "inactive-target", from: 1, to: 5, amount: 100 }),
+    /已停用/u,
+  );
+  assert.equal(db.prepare("SELECT current_balance value FROM accounts WHERE id=5").get().value, 1000);
 });
 
 test("savings transfer preserves combined account and goal value", () => {

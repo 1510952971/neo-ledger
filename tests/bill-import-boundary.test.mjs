@@ -33,7 +33,7 @@ test("账单导入的账户和分类查询遵守集合容量上限", () => {
   const source = fs.readFileSync(new URL("../app/api/bill-import/route.ts", import.meta.url), "utf8");
   assert.match(source, /import \{ MAX_ACCOUNT_COUNT \} from "\.\.\/\.\.\/account-limits"/u);
   assert.match(source, /import \{ MAX_CATEGORY_COUNT \} from "\.\.\/\.\.\/category-limits"/u);
-  assert.match(source, /FROM accounts WHERE ledger_id=\? ORDER BY id LIMIT \?/u);
+  assert.match(source, /FROM accounts WHERE ledger_id=\? AND is_active=1 ORDER BY id LIMIT \?/u);
   assert.match(source, /FROM expense_categories WHERE ledger_id=\? AND is_active=1 ORDER BY sort_order,id LIMIT \?/u);
   assert.match(source, /FROM income_categories WHERE ledger_id=\? AND is_active=1 ORDER BY sort_order,id LIMIT \?/u);
 });

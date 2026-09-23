@@ -28,7 +28,17 @@ const accountUpdateSchema = z
   .object({
     id: positiveId,
     ...accountFields,
+    isActive: z.boolean().optional(),
     expectedUpdatedAt: z.string().trim().min(1, "账户版本已失效，请刷新后重试").max(64),
+  })
+  .strict();
+const accountReorderSchema = z
+  .object({
+    ledgerId: positiveId,
+    accountIds: z.array(positiveId).min(1).max(200).refine(
+      (ids) => new Set(ids).size === ids.length,
+      "账户排序包含重复 ID",
+    ),
   })
   .strict();
 export type AccountInput = z.output<typeof accountCreateSchema>;
@@ -219,6 +229,10 @@ export async function readAccountCreateInput(request: Request) {
 
 export async function readAccountUpdateInput(request: Request) {
   return readInternalJson(request, accountUpdateSchema);
+}
+
+export async function readAccountReorderInput(request: Request) {
+  return readInternalJson(request, accountReorderSchema);
 }
 
 export async function readCategoryBudgetInput(request: Request) {

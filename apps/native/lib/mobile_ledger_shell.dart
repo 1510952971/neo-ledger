@@ -3810,6 +3810,7 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
                 accounts: const [],
                 onEdit: _editAccount,
                 onDelete: _deleteAccount,
+                onMove: _moveAccount,
                 recentByAccount: recentByAccount,
                 pendingByAccount: pendingByAccount,
                 hideAmounts: hideAmounts,
@@ -3821,6 +3822,7 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
                   accounts: group.value,
                   onEdit: _editAccount,
                   onDelete: _deleteAccount,
+                  onMove: _moveAccount,
                   recentByAccount: recentByAccount,
                   pendingByAccount: pendingByAccount,
                   hideAmounts: hideAmounts,
@@ -3832,6 +3834,7 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
               accounts: liabilities,
               onEdit: _editAccount,
               onDelete: _deleteAccount,
+              onMove: _moveAccount,
               recentByAccount: recentByAccount,
               pendingByAccount: pendingByAccount,
               hideAmounts: hideAmounts,
@@ -3895,6 +3898,50 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('删除失败：$error')));
+      }
+    }
+  }
+
+  Future<void> _moveAccount(
+    List<Account> groupAccounts,
+    Account account,
+    int delta,
+  ) async {
+    final peers = groupAccounts
+        .where((item) => item.isActive == account.isActive)
+        .toList();
+    final index = peers.indexWhere((item) => item.id == account.id);
+    final nextIndex = index + delta;
+    if (index < 0 || nextIndex < 0 || nextIndex >= peers.length) return;
+    final reorderedPeers = [...peers];
+    final moved = reorderedPeers.removeAt(index);
+    reorderedPeers.insert(nextIndex, moved);
+    final peerIds = reorderedPeers.map((item) => item.id).toSet();
+    final groupIds = groupAccounts.map((item) => item.id).toSet();
+    final reorderedGroup = <Account>[];
+    var peerIndex = 0;
+    for (final item in groupAccounts) {
+      if (peerIds.contains(item.id)) {
+        reorderedGroup.add(reorderedPeers[peerIndex++]);
+      } else {
+        reorderedGroup.add(item);
+      }
+    }
+    final all = controller.accounts.toList();
+    final positions = <int>[];
+    for (var i = 0; i < all.length; i++) {
+      if (groupIds.contains(all[i].id)) positions.add(i);
+    }
+    for (var i = 0; i < positions.length; i++) {
+      all[positions[i]] = reorderedGroup[i];
+    }
+    try {
+      await controller.reorderAccounts(all.map((item) => item.id).toList());
+      if (mounted) setState(() {});
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('账户排序失败：$error')));
       }
     }
   }
@@ -3987,6 +4034,7 @@ class _AccountGroup extends StatelessWidget {
     required this.accounts,
     required this.onEdit,
     required this.onDelete,
+    required this.onMove,
     required this.recentByAccount,
     required this.pendingByAccount,
     required this.hideAmounts,
@@ -3996,6 +4044,7 @@ class _AccountGroup extends StatelessWidget {
   final List<Account> accounts;
   final Future<void> Function([Account?]) onEdit;
   final Future<void> Function(Account) onDelete;
+  final Future<void> Function(List<Account>, Account, int) onMove;
   final Map<int, TransactionItem> recentByAccount;
   final Map<int, int> pendingByAccount;
   final bool hideAmounts;
@@ -4014,12 +4063,12 @@ class _AccountGroup extends StatelessWidget {
             message: '新增一个账户后就可以开始记账。',
           )
         else
-          for (final account in accounts)
+          for (final entry in accounts.asMap().entries)
             Dismissible(
-              key: ValueKey(account.id),
+              key: ValueKey(entry.value.id),
               direction: DismissDirection.endToStart,
               confirmDismiss: (_) async {
-                await onDelete(account);
+                await onDelete(entry.value);
                 return false;
               },
               background: Container(
@@ -4032,17 +4081,51 @@ class _AccountGroup extends StatelessWidget {
                 ),
                 child: const Icon(Icons.delete_outline_rounded),
               ),
-              child: _SettingsRow(
-                icon: account.icon,
-                title: account.name,
-                subtitle: [
-                  '${account.type} · ${account.currency} · ${hideAmounts ? '••••' : _mobileMoney(account.balanceCents)}',
-                  if (recentByAccount[account.id] case final recent?)
-                    '最近：${recent.title}',
-                  if ((pendingByAccount[account.id] ?? 0) > 0)
-                    '待同步/确认：${pendingByAccount[account.id]} 条',
-                ].join(' · '),
-                onTap: () => onEdit(account),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _SettingsRow(
+                      icon: entry.value.icon,
+                      title: entry.value.name,
+                      subtitle: [
+                        '${entry.value.type} · ${entry.value.currency} · ${hideAmounts ? '••••' : _mobileMoney(entry.value.balanceCents)}',
+                        if (!entry.value.isActive) '已停用 · 历史流水保留',
+                        if (recentByAccount[entry.value.id] case final recent?)
+                          '最近：${recent.title}',
+                        if ((pendingByAccount[entry.value.id] ?? 0) > 0)
+                          '待同步/确认：${pendingByAccount[entry.value.id]} 条',
+                      ].join(' · '),
+                      onTap: () => onEdit(entry.value),
+                    ),
+                  ),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: '上移账户',
+                        visualDensity: VisualDensity.compact,
+                        onPressed:
+                            entry.key == 0 ||
+                                accounts[entry.key - 1].isActive !=
+                                    entry.value.isActive
+                            ? null
+                            : () => onMove(accounts, entry.value, -1),
+                        icon: const Icon(Icons.keyboard_arrow_up_rounded),
+                      ),
+                      IconButton(
+                        tooltip: '下移账户',
+                        visualDensity: VisualDensity.compact,
+                        onPressed:
+                            entry.key == accounts.length - 1 ||
+                                accounts[entry.key + 1].isActive !=
+                                    entry.value.isActive
+                            ? null
+                            : () => onMove(accounts, entry.value, 1),
+                        icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
       ],
@@ -4070,6 +4153,7 @@ class _MobileAccountEditorState extends State<_MobileAccountEditor> {
   late String _currency;
   late String _assetClass;
   late bool _investment;
+  late bool _isActive;
   bool _saving = false;
 
   @override
@@ -4086,6 +4170,7 @@ class _MobileAccountEditorState extends State<_MobileAccountEditor> {
     _currency = account?.currency ?? 'CNY';
     _assetClass = account?.assetClass ?? '现金流';
     _investment = account?.isInvestment ?? false;
+    _isActive = account?.isActive ?? true;
   }
 
   @override
@@ -4157,6 +4242,16 @@ class _MobileAccountEditorState extends State<_MobileAccountEditor> {
                 ? null
                 : (value) => setState(() => _investment = value),
           ),
+          if (widget.existing != null)
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('启用账户'),
+              subtitle: const Text('停用后保留历史记录，但不能用于新流水和转账'),
+              value: _isActive,
+              onChanged: _saving
+                  ? null
+                  : (value) => setState(() => _isActive = value),
+            ),
           const SizedBox(height: 14),
           FilledButton(
             onPressed: _saving ? null : _save,
@@ -4190,6 +4285,7 @@ class _MobileAccountEditorState extends State<_MobileAccountEditor> {
         isInvestment: _investment,
         currency: _currency,
         assetClass: _assetClass,
+        isActive: _isActive,
       );
       if (mounted) Navigator.pop(context, true);
     } catch (error) {
@@ -4490,12 +4586,12 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
     _type = const ['支出', '收入', '转账'].contains(widget.initialType)
         ? widget.initialType
         : '支出';
-    _accountId = controller.accounts.isEmpty
+    _accountId = controller.activeAccounts.isEmpty
         ? null
-        : controller.accounts.first.id;
-    _toAccountId = controller.accounts.length < 2
+        : controller.activeAccounts.first.id;
+    _toAccountId = controller.activeAccounts.length < 2
         ? null
-        : controller.accounts[1].id;
+        : controller.activeAccounts[1].id;
     _originalCurrency = _accountCurrency;
     _exchangeRateMicros = _rateFor(_originalCurrency, _accountCurrency);
     _exchangeRate.text = _rateText;
@@ -4918,21 +5014,21 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
   }
 
   String get _accountName {
-    for (final account in controller.accounts) {
+    for (final account in controller.activeAccounts) {
       if (account.id == _accountId) return '${account.icon}  ${account.name}';
     }
-    return controller.accounts.isEmpty
+    return controller.activeAccounts.isEmpty
         ? '暂无账户'
-        : '${controller.accounts.first.icon}  ${controller.accounts.first.name}';
+        : '${controller.activeAccounts.first.icon}  ${controller.activeAccounts.first.name}';
   }
 
   String get _accountCurrency {
-    for (final account in controller.accounts) {
+    for (final account in controller.activeAccounts) {
       if (account.id == _accountId) return account.currency;
     }
-    return controller.accounts.isEmpty
+    return controller.activeAccounts.isEmpty
         ? 'CNY'
-        : controller.accounts.first.currency;
+        : controller.activeAccounts.first.currency;
   }
 
   String get _rateText => (_exchangeRateMicros / 1000000)
@@ -4950,7 +5046,7 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
   }
 
   String get _destinationAccountName {
-    for (final account in controller.accounts) {
+    for (final account in controller.activeAccounts) {
       if (account.id == _toAccountId) {
         return '${account.icon}  ${account.name}';
       }
@@ -4997,7 +5093,7 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
   }
 
   Future<void> _pickAccount({required bool isDestination}) async {
-    if (controller.accounts.isEmpty) return;
+    if (controller.activeAccounts.isEmpty) return;
     final id = await showModalBottomSheet<int>(
       context: context,
       backgroundColor: _mobileSurface,
@@ -5005,7 +5101,7 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
       builder: (context) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          children: controller.accounts
+          children: controller.activeAccounts
               .map(
                 (account) => ListTile(
                   leading: Text(
@@ -5035,7 +5131,7 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
         } else {
           _accountId = id;
           _accountManuallySelected = true;
-          _originalCurrency = controller.accounts
+          _originalCurrency = controller.activeAccounts
               .firstWhere((account) => account.id == id)
               .currency;
           _exchangeRateMicros = _rateFor(_originalCurrency, _accountCurrency);
@@ -5239,11 +5335,13 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
         _category = _choices.isEmpty ? null : _choices.first.name;
       }
       if (accountId != null &&
-          controller.accounts.any((account) => account.id == accountId)) {
+          controller.activeAccounts.any((account) => account.id == accountId)) {
         _accountId = accountId;
       }
       if (toAccountId != null &&
-          controller.accounts.any((account) => account.id == toAccountId)) {
+          controller.activeAccounts.any(
+            (account) => account.id == toAccountId,
+          )) {
         _toAccountId = toAccountId;
       }
       if (splitMemberId != null &&
@@ -5287,7 +5385,7 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
     if (_accountManuallySelected) return;
     final accountId = await _entryPreferences.accountForCategory(category);
     if (!mounted || accountId == null) return;
-    if (controller.accounts.any((account) => account.id == accountId)) {
+    if (controller.activeAccounts.any((account) => account.id == accountId)) {
       setState(() => _accountId = accountId);
     }
   }

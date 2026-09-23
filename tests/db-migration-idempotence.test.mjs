@@ -31,7 +31,7 @@ function runMigrationProcess(databasePath, source) {
   );
 }
 
-test("schema 18-35 migrations are safe to resume after partial DDL", () => {
+test("schema 18-36 migrations are safe to resume after partial DDL", () => {
   const directory = mkdtempSync(path.join(tmpdir(), "neo-ledger-migration-"));
   const databasePath = path.join(directory, "migration.sqlite");
   try {
@@ -42,11 +42,32 @@ test("schema 18-35 migrations are safe to resume after partial DDL", () => {
     runMigrationProcess(databasePath, `
       const db = await import(${JSON.stringify(dbModule)});
       const binding = db.getDbBinding();
+      await binding.batch([
+        binding.prepare("DROP TRIGGER IF EXISTS transactions_active_account_insert"),
+        binding.prepare("DROP TRIGGER IF EXISTS transactions_active_account_update"),
+        binding.prepare("DROP TRIGGER IF EXISTS account_transfers_validate"),
+        binding.prepare("DROP INDEX IF EXISTS accounts_ledger_active_order_idx"),
+        binding.prepare("ALTER TABLE accounts DROP COLUMN is_active"),
+        binding.prepare("ALTER TABLE accounts DROP COLUMN sort_order"),
+        binding.prepare("UPDATE app_meta SET value='35' WHERE key='schema_version'")
+      ]);
+      await db.ensureDb();
+      const version = await binding.prepare("SELECT value FROM app_meta WHERE key='schema_version'").first();
+      const columns = await binding.prepare("PRAGMA table_info(accounts)").all();
+      const triggers = await binding.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name IN ('transactions_active_account_insert','transactions_active_account_update','account_transfers_validate')").all();
+      const index = await binding.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='accounts_ledger_active_order_idx'").first();
+      const active = columns.results.find((item) => item.name === 'is_active');
+      const order = columns.results.find((item) => item.name === 'sort_order');
+      if (version?.value !== '36' || active?.dflt_value !== '1' || !order || triggers.results.length !== 3 || !index) process.exit(1);
+    `);
+    runMigrationProcess(databasePath, `
+      const db = await import(${JSON.stringify(dbModule)});
+      const binding = db.getDbBinding();
       await binding.prepare("UPDATE app_meta SET value='28' WHERE key='schema_version'").run();
       await db.ensureDb();
       const version = await binding.prepare("SELECT value FROM app_meta WHERE key='schema_version'").first();
       const tables = await binding.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('user_passkeys','webauthn_challenges')").all();
-      if (version?.value !== '35' || tables.results.length !== 2) process.exit(1);
+      if (version?.value !== '36' || tables.results.length !== 2) process.exit(1);
     `);
     runMigrationProcess(databasePath, `
       const db = await import(${JSON.stringify(dbModule)});
@@ -54,7 +75,7 @@ test("schema 18-35 migrations are safe to resume after partial DDL", () => {
       await binding.prepare("UPDATE app_meta SET value='30' WHERE key='schema_version'").run();
       await db.ensureDb();
       const version = await binding.prepare("SELECT value FROM app_meta WHERE key='schema_version'").first();
-      if (version?.value !== '35') process.exit(1);
+      if (version?.value !== '36') process.exit(1);
     `);
     runMigrationProcess(databasePath, `
       const db = await import(${JSON.stringify(dbModule)});
@@ -62,7 +83,7 @@ test("schema 18-35 migrations are safe to resume after partial DDL", () => {
       await binding.prepare("UPDATE app_meta SET value='22' WHERE key='schema_version'").run();
       await db.ensureDb();
       const version = await binding.prepare("SELECT value FROM app_meta WHERE key='schema_version'").first();
-      if (version?.value !== '35') process.exit(1);
+      if (version?.value !== '36') process.exit(1);
     `);
     runMigrationProcess(databasePath, `
       const db = await import(${JSON.stringify(dbModule)});
@@ -70,7 +91,7 @@ test("schema 18-35 migrations are safe to resume after partial DDL", () => {
       await binding.prepare("UPDATE app_meta SET value='18' WHERE key='schema_version'").run();
       await db.ensureDb();
       const version = await binding.prepare("SELECT value FROM app_meta WHERE key='schema_version'").first();
-      if (version?.value !== '35') process.exit(1);
+      if (version?.value !== '36') process.exit(1);
     `);
     runMigrationProcess(databasePath, `
       const db = await import(${JSON.stringify(dbModule)});
@@ -82,7 +103,7 @@ test("schema 18-35 migrations are safe to resume after partial DDL", () => {
       const version = await binding.prepare("SELECT value FROM app_meta WHERE key='schema_version'").first();
       const oldTable = await binding.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='subscriptions_v17'").first();
       const copied = await binding.prepare("SELECT id FROM subscriptions WHERE id=999").first();
-      if (version?.value !== '35' || oldTable || !copied) process.exit(1);
+      if (version?.value !== '36' || oldTable || !copied) process.exit(1);
     `);
   } finally {
     rmSync(directory, { recursive: true, force: true });

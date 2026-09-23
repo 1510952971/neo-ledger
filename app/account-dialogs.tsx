@@ -11,6 +11,7 @@ type AccountDialogAccount = {
   icon: string;
   assetClass: "现金流" | "固收防守" | "风险进攻";
   isInvestment: boolean;
+  isActive: boolean;
   updatedAt: string;
   billDay: number | null;
   repaymentDay: number | null;
@@ -76,7 +77,7 @@ export function AccountDialogs({
             <label className="title-field">
               <span>转出资产账户</span>
               <select name="fromAccountId" required>
-                {accountList.filter((item) => item.type === "资产").map((item) => (
+                {accountList.filter((item) => item.isActive && item.type === "资产").map((item) => (
                   <option value={item.id} key={item.id}>
                     {item.icon} {item.name} · {formatCurrency(item.currentBalance / 100, item.currency)}
                   </option>
@@ -86,7 +87,7 @@ export function AccountDialogs({
             <label className="title-field">
               <span>转入账户</span>
               <select name="toAccountId" required>
-                {accountList.map((item) => (
+                {accountList.filter((item) => item.isActive).map((item) => (
                   <option value={item.id} key={item.id}>
                     {item.icon} {item.name} · {item.type} · {item.currency}
                   </option>
@@ -181,6 +182,12 @@ export function AccountDialogs({
               <label className="investment-check">
                 <input name="isInvestment" type="checkbox" defaultChecked={editingAccount?.isInvestment ?? false} />
                 <span>这是投资理财账户，需要追踪收益率</span>
+              </label>
+            )}
+            {editingAccount && (
+              <label className="investment-check">
+                <input name="isActive" type="checkbox" defaultChecked={editingAccount.isActive} />
+                <span>启用账户（停用后保留历史记录，但不能用于新流水和转账）</span>
               </label>
             )}
             {accountError && <p className="account-error">{accountError}</p>}

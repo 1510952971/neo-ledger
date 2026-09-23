@@ -438,7 +438,7 @@ export async function POST(request: Request) {
       q.push(
         db
           .prepare(
-            "INSERT INTO accounts(id,ledger_id,name,type,current_balance,bill_day,repayment_day,icon,is_investment,initial_balance,cumulative_income,currency,asset_class,uuid,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO accounts(id,ledger_id,name,type,current_balance,bill_day,repayment_day,icon,is_investment,initial_balance,cumulative_income,currency,asset_class,is_active,sort_order,uuid,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
           )
           .bind(
             x.id,
@@ -454,6 +454,10 @@ export async function POST(request: Request) {
             x.cumulativeIncome,
             x.currency ?? "CNY",
             x.assetClass ?? "现金流",
+            x.isActive === false ? 0 : 1,
+            typeof x.sortOrder === "number" && Number.isSafeInteger(x.sortOrder)
+              ? x.sortOrder
+              : Number(x.id) * 10,
             x.uuid ?? x.syncId,
             x.updatedAt ?? x.createdAt,
             x.createdAt,

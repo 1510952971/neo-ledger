@@ -66,6 +66,7 @@ export function useLedgerAccountActions<Account extends AccountLike>({
   closeAccount,
   closeTransfer,
   notifySuccess,
+  notifyWarning,
 }: {
   ledgerId: number;
   accountList: Account[];
@@ -78,6 +79,7 @@ export function useLedgerAccountActions<Account extends AccountLike>({
   closeAccount: () => void;
   closeTransfer: () => void;
   notifySuccess: (message: string) => void;
+  notifyWarning: (message: string) => void;
 }) {
   const submitAccount = useCallback(
     (formData: FormData) => {
@@ -181,5 +183,27 @@ export function useLedgerAccountActions<Account extends AccountLike>({
     });
   }, [closeAccount, editingAccount, reloadAccounts, setAccountError, startTransition]);
 
-  return { submitAccount, submitTransfer, removeAccount };
+  const reorderAccounts = useCallback((accountIds: number[]) => {
+    startTransition(async () => {
+      try {
+        const { response, data } = await fetchClientJson<{ error?: string }>(
+          "/api/accounts/reorder",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ledgerId, accountIds }),
+          },
+        );
+        if (!response.ok) {
+          notifyWarning(data?.error ?? "账户排序失败，请刷新后重试");
+          return;
+        }
+        await reloadAccounts();
+      } catch (error) {
+        notifyWarning(errorMessage(error, "账户排序失败，请稍后重试"));
+      }
+    });
+  }, [ledgerId, notifyWarning, reloadAccounts, startTransition]);
+
+  return { submitAccount, submitTransfer, removeAccount, reorderAccounts };
 }

@@ -7,6 +7,7 @@ const q = async (sql, ...p) => (await B.prepare(sql).bind(...p).all()).results;
 
 const ledgers = await import("../../app/api/ledgers/route.ts");
 const accounts = await import("../../app/api/accounts/route.ts");
+const accountReorder = await import("../../app/api/accounts/reorder/route.ts");
 const categories = await import("../../app/api/categories/route.ts");
 const incomeCats = await import("../../app/api/income-categories/route.ts");
 const offline = await import("../../app/api/offline-sync/route.ts");
@@ -70,6 +71,12 @@ const acctRows = r.json || [];
 check("GET 账户列表含新建2个", [acct1, acct2].every(id => acctRows.some(x => x.id === id)), JSON.stringify(acctRows.map(x=>x.name)));
 check("账户列表具备容量与缓存边界", r.status === 200 && r.headers?.get?.("cache-control") === "no-store, private, max-age=0" && r.headers?.get?.("x-total-count") === String(acctRows.length) && r.headers?.get?.("x-has-more") === "0", `${r.status} ${r.headers?.get?.("x-total-count")} ${acctRows.length}`);
 check("负债余额为负(分)", acctRows.find(x => x.id === acct2)?.currentBalance === -500000, JSON.stringify(acctRows.map(x=>x.currentBalance)));
+const requestedAccountOrder = acctRows.map(item => item.id).reverse();
+r = await call(accountReorder, "POST", "/api/accounts/reorder", { body: { ledgerId: L, accountIds: requestedAccountOrder } });
+const reorderedAccounts = await call(accounts, "GET", `/api/accounts?ledger=${L}`);
+check("账户排序跨端共享并落库", r.status === 200 && JSON.stringify(reorderedAccounts.json.map(item => item.id)) === JSON.stringify(requestedAccountOrder), `${r.status} ${JSON.stringify(reorderedAccounts.json?.map(item => item.id))}`);
+r = await call(accountReorder, "POST", "/api/accounts/reorder", { body: { ledgerId: L, accountIds: [acct1, acct1] } });
+check("重复账户 ID 的排序请求被拒", r.status === 400, `${r.status} ${r.text}`);
 if (MAX_ACCOUNT_COUNT > 0)
   await B.batch(Array.from({ length: MAX_ACCOUNT_COUNT }, (_, index) =>
     B.prepare("INSERT INTO accounts(ledger_id,name,type,current_balance,icon,is_investment,initial_balance,currency,asset_class,uuid,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
@@ -189,6 +196,21 @@ for (const [name, options] of [
 const transferCountAfterInvalid = (await q("SELECT COUNT(*) n FROM account_transfers WHERE ledger_id=?", L))[0].n;
 check("非法转账请求不产生资金记录", transferCountAfterInvalid === transferCountBeforeInvalid, `${transferCountBeforeInvalid} -> ${transferCountAfterInvalid}`);
 
+const accountBeforeDeactivation = (await q("SELECT current_balance balance,updated_at updatedAt FROM accounts WHERE id=?", acct1))[0];
+r = await call(accounts, "PUT", "/api/accounts", { body: { id: acct1, ledgerId: L, name: "工资卡改", type: "资产", balance: accountBeforeDeactivation.balance / 100, currency: "CNY", isActive: false, expectedUpdatedAt: accountBeforeDeactivation.updatedAt } });
+check("有历史账单与转账的账户可安全停用", r.status === 200 && (await q("SELECT is_active active FROM accounts WHERE id=?", acct1))[0]?.active === 0, `${r.status} ${r.text}`);
+const transactionsBeforeInactiveWrite = Number((await q("SELECT COUNT(*) n FROM transactions WHERE ledger_id=?", L))[0].n);
+r = await call(offline, "POST", "/api/offline-sync", { body: { items: [{ offlineId: "disabled-account-entry", ledgerId: L, accountId: acct1, amount: 1, type: "支出", title: "停用账户写入", category: "餐饮", occurredAt: "2026-07-21T12:00", originalTimezone: "Asia/Shanghai" }] } });
+check("停用账户不能新增离线账单", r.status === 409 && r.json?.error?.includes("停用账户") && Number((await q("SELECT COUNT(*) n FROM transactions WHERE ledger_id=?", L))[0].n) === transactionsBeforeInactiveWrite, `${r.status} ${r.text}`);
+r = await call(transfers, "POST", "/api/transfers", { body: { ledgerId: L, kind: "账户转账", fromAccountId: acct1, toAccountId: acct2, amount: 1, occurredAt: "2026-07-21T12:00", originalTimezone: "Asia/Shanghai" } });
+check("停用账户不能发起转账", r.status === 409, `${r.status} ${r.text}`);
+const historicalTransaction = (await q("SELECT id,amount,updated_at updatedAt FROM transactions WHERE ledger_id=? AND account_id=? ORDER BY id LIMIT 1", L, acct1))[0];
+r = await call(transactions, "PUT", "/api/transactions", { body: { id: historicalTransaction.id, ledgerId: L, accountId: acct1, amount: historicalTransaction.amount / 100, type: "支出", title: "改名账单", mood: "刚需", category: "餐饮", occurredAt: "2026-07-20T12:00", expectedUpdatedAt: historicalTransaction.updatedAt } });
+check("停用账户仍可编辑原账户历史流水", r.status === 200, `${r.status} ${r.text}`);
+const inactiveAccountVersion = (await q("SELECT updated_at updatedAt FROM accounts WHERE id=?", acct1))[0].updatedAt;
+r = await call(accounts, "PUT", "/api/accounts", { body: { id: acct1, ledgerId: L, name: "工资卡改", type: "资产", balance: accountBeforeDeactivation.balance / 100, currency: "CNY", isActive: true, expectedUpdatedAt: inactiveAccountVersion } });
+check("账户可重新启用", r.status === 200 && (await q("SELECT is_active active FROM accounts WHERE id=?", acct1))[0]?.active === 1, `${r.status} ${r.text}`);
+
 describe("预算/设置");
 r = await call(budgets, "PUT", "/api/category-budgets", { body: { ledgerId: L, category: "餐饮", amount: 1500 } });
 check("PUT 分类预算", r.status === 200, r.text);
@@ -255,6 +277,11 @@ check("GET 通知", r.status === 200, r.text?.slice(0,120));
 check("通知响应禁止缓存并声明 nosniff", r.status === 200 && r.headers?.get("cache-control")?.includes("no-store") && r.headers?.get("x-content-type-options") === "nosniff", r.text?.slice(0,120));
 
 describe("导出");
+const archivedAccountResponse = await call(accounts, "POST", "/api/accounts", { body: { ledgerId: L, name: "归档账户", type: "资产", balance: 123.45, currency: "CNY" } });
+const archivedAccountId = archivedAccountResponse.json?.id;
+const archivedAccountVersion = (await q("SELECT updated_at updatedAt FROM accounts WHERE id=?", archivedAccountId))[0]?.updatedAt;
+r = await call(accounts, "PUT", "/api/accounts", { body: { id: archivedAccountId, ledgerId: L, name: "归档账户", type: "资产", balance: 123.45, currency: "CNY", isActive: false, expectedUpdatedAt: archivedAccountVersion } });
+check("备份测试创建停用账户", r.status === 200 && (await q("SELECT is_active active FROM accounts WHERE id=?", archivedAccountId))[0]?.active === 0, `${r.status} ${r.text}`);
 const backupTransactionId = (await q("SELECT id FROM transactions WHERE ledger_id=? ORDER BY id LIMIT 1", L))[0]?.id;
 await B.prepare("INSERT INTO transaction_reconciliation(transaction_id,ledger_id,status,note,reconciled_by,reconciled_at) VALUES(?,?,?,?,?,?)").bind(backupTransactionId, L, "reconciled", "备份回环核对", "local", "2026-07-20T14:00:00.000Z").run();
 await B.prepare("INSERT INTO automation_rules(id,owner_id,ledger_id,name,priority,enabled,conditions_json,actions_json) VALUES(?,?,?,?,?,?,?,?)").bind("backup-rule", "local", L, "备份咖啡规则", 10, 1, JSON.stringify({ merchantContains: "咖啡", accountId: acct1 }), JSON.stringify({ category: "餐饮", accountId: acct1 })).run();

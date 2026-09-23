@@ -85,6 +85,8 @@ check("v23 恢复对账状态", restoredReconciliation.some((item) => item.statu
 check("v23 恢复规则并重映射账户", restoredRule.length === 1 && JSON.parse(restoredRule[0].conditionsJson).accountId === JSON.parse(restoredRule[0].actionsJson).accountId, JSON.stringify(restoredRule));
 const acctNames = (await q("SELECT name FROM accounts ORDER BY id")).map(x => x.name);
 check("账户恢复(含改名后的工资卡改)", acctNames.includes("工资卡改") && acctNames.includes("信用卡"), JSON.stringify(acctNames));
+const archivedAccount = (await q("SELECT is_active active,sort_order sortOrder FROM accounts WHERE name='归档账户'"))[0];
+check("备份恢复保留账户停用状态与排序", archivedAccount?.active === 0 && Number.isSafeInteger(archivedAccount?.sortOrder), JSON.stringify(archivedAccount));
 const bal = (await q("SELECT current_balance b FROM accounts WHERE name='工资卡改'"))[0]?.b;
 check("余额恢复精确一致", bal === 1200000 - 3550 + 888888 - 3050 - 30000 - 100, String(bal));
 r = await call(exportApi, "GET", "/api/data/export");
@@ -390,7 +392,7 @@ describe("账号头像");
 
   const schemaVersion = await q("SELECT value FROM app_meta WHERE key='schema_version'");
   const userColumns = await q("PRAGMA table_info(app_users)");
-  check("数据库迁移到 35", schemaVersion[0]?.value === "35", JSON.stringify(schemaVersion));
+  check("数据库迁移到 36", schemaVersion[0]?.value === "36", JSON.stringify(schemaVersion));
   const expectedIndexes = await q("SELECT name FROM sqlite_master WHERE type='index' AND name IN ('transactions_ledger_occurred_idx','accounts_ledger_id_idx','subscriptions_ledger_charge_idx','pending_transactions_ledger_status_idx')");
   check("核心账本查询索引已创建", expectedIndexes.length === 4, JSON.stringify(expectedIndexes));
   const planLedgerId = (await q("SELECT id FROM ledgers WHERE owner_id=? ORDER BY id LIMIT 1", "user:" + (await q("SELECT id FROM app_users WHERE username='pengtest'")).at(0)?.id))[0]?.id;
@@ -791,7 +793,7 @@ if (workLedger && workTransactions.length) {
   check("自动化规则列表具备容量与缓存边界", r.status === 200 && r.headers?.get("cache-control")?.includes("no-store") && r.headers?.get("x-content-type-options") === "nosniff" && Number(r.headers?.get("x-total-count")) >= r.json.length && ["0", "1"].includes(r.headers?.get("x-has-more") || ""), `${r.status} ${r.text?.slice(0,160)}`);
   r = await call(rulesApi, "PATCH", "/api/automation/rules", { cookie: cookie2, headers: { origin: "https://evil.example" }, body: { ledgerId: workLedger, id: ruleId, enabled: false } });
   check("自动化规则写入拒绝跨源请求", r.status === 403, `${r.status} ${r.text?.slice(0,160)}`);
-  const automationAccount = (await q("SELECT id,currency FROM accounts WHERE ledger_id=? ORDER BY id LIMIT 1", workLedger))[0];
+  const automationAccount = (await q("SELECT id,currency FROM accounts WHERE ledger_id=? AND is_active=1 ORDER BY id LIMIT 1", workLedger))[0];
   if (automationAccount) {
     const inserted = await B.prepare("INSERT INTO pending_transactions(ledger_id,raw_text,title,amount,type,account_id,currency,occurred_at) VALUES(?,?,?,?,?,?,?,?)").bind(workLedger, "微信支付 测试咖啡", "测试咖啡", 1880, "支出", automationAccount.id, automationAccount.currency, "2026-08-11T12:00:00.000Z").run();
     await B.prepare("UPDATE accounts SET current_balance=current_balance-1880 WHERE id=?").bind(automationAccount.id).run();

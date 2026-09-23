@@ -22,7 +22,7 @@ type ImportBatch = {
   completedAt: string | null;
   undoneAt: string | null;
 };
-type AccountOption = { id: number; name: string; type: "资产" | "负债"; currency: Currency; icon: string };
+type AccountOption = { id: number; name: string; type: "资产" | "负债"; currency: Currency; icon: string; isActive: boolean };
 
 const acceptedFiles = ".xls,.xlsx,.xlsm,.xlsb,.ods,.et,.ett,.csv,.pdf,.jpg,.jpeg,.png,.webp,.bmp,.gif,.html,.htm,.txt,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.oasis.opendocument.spreadsheet,application/pdf,image/jpeg,image/png,image/webp,image/bmp,image/gif,text/html,text/csv,text/plain";
 
@@ -109,7 +109,7 @@ export function BillImportSection({
                 <button disabled={Boolean(accountActionKey)} onClick={() => onUseManualAccount(accountKey)}>自主选择账户</button>
               </div></div>;
             }
-            return <label key={accountKey}><span>{current.paymentMethod} · {current.currency}</span><select value={current.accountId ?? 0} onChange={(event) => onAssignAccount(accountKey, Number(event.target.value))}><option value={0}>请选择账户</option>{accounts.filter((account) => account.currency === current.currency).map((account) => <option value={account.id} key={account.id}>{account.name} · {account.type}</option>)}</select></label>;
+            return <label key={accountKey}><span>{current.paymentMethod} · {current.currency}</span><select value={current.accountId ?? 0} onChange={(event) => onAssignAccount(accountKey, Number(event.target.value))}><option value={0}>请选择账户</option>{accounts.filter((account) => account.isActive && account.currency === current.currency).map((account) => <option value={account.id} key={account.id}>{account.name} · {account.type}</option>)}</select></label>;
           })}
         </div>
         {summary?.possibleDuplicates ? <p className="import-warning">有 {summary.possibleDuplicates} 笔与现有流水的金额和时间接近，已标记供你复核。</p> : null}

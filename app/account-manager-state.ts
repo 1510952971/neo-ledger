@@ -82,5 +82,6 @@ export function accountPayloadFromForm(input: {
     isInvestment: accountType === "资产" && formData.get("isInvestment") === "on",
     currency: String(formData.get("currency") || "CNY"),
     assetClass: String(formData.get("assetClass") || "现金流"),
+    ...(input.id ? { isActive: formData.get("isActive") === "on" } : {}),
   };
 }

@@ -226,11 +226,15 @@ export async function getOwnerPreferences(ownerId: string) {
 }
 
 export function accessErrorResponse(error: unknown, fallback: string, request?: Request) {
+  const inactiveAccountFailure =
+    error instanceof Error &&
+    /账户已停用，不能(?:新增流水|转入流水)/u.test(error.message);
   const structuralStatus =
     error && typeof error === "object" && "status" in error
       ? Number((error as { status?: unknown }).status)
       : 0;
   const isDatabaseFailure =
+    !inactiveAccountFailure &&
     !(error instanceof ApiAccessError) &&
     structuralStatus !== 429 &&
     error instanceof Error &&
@@ -248,6 +252,8 @@ export function accessErrorResponse(error: unknown, fallback: string, request?: 
   const status =
     error instanceof ApiAccessError
       ? error.status
+      : inactiveAccountFailure
+        ? 409
       : structuralStatus === 429 || structuralStatus === 403
         ? structuralStatus
         : isDatabaseFailure || isRuntimeFailure
@@ -270,7 +276,9 @@ export function accessErrorResponse(error: unknown, fallback: string, request?: 
   }
   return Response.json(
     {
-      error: isDatabaseFailure || isRuntimeFailure
+      error: inactiveAccountFailure
+        ? "停用账户不能用于新流水，请启用账户或选择其他账户"
+        : isDatabaseFailure || isRuntimeFailure
         ? fallback
         : error instanceof Error
           ? error.message

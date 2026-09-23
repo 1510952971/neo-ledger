@@ -155,7 +155,7 @@ async function loadAccounts(ledgerId: number): Promise<AccountRow[]> {
   return (
     await getDbBinding()
       .prepare(
-        "SELECT id,name,type,currency FROM accounts WHERE ledger_id=? ORDER BY id LIMIT ?",
+        "SELECT id,name,type,currency FROM accounts WHERE ledger_id=? AND is_active=1 ORDER BY id LIMIT ?",
       )
       .bind(ledgerId, MAX_ACCOUNT_COUNT)
       .all<AccountRow>()

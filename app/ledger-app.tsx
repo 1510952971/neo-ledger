@@ -241,6 +241,8 @@ type Account = {
   cumulativeIncome: number;
   currency: Currency;
   assetClass: "现金流" | "固收防守" | "风险进攻";
+  isActive: boolean;
+  sortOrder: number;
   updatedAt: string;
   createdAt: string;
 };
@@ -981,11 +983,13 @@ export function LedgerApp({
     closeAccount: () => closeDialog(accountRef, setAccountOpen),
     closeTransfer: () => closeDialog(transferRef, setTransferOpen),
     notifySuccess: (message) => setToast({ kind: "success", message }),
+    notifyWarning: (message) => setToast({ kind: "warning", message }),
   });
   const {
     submitAccount,
     submitTransfer,
     removeAccount: removeAccountRequest,
+    reorderAccounts,
   } = ledgerAccountActions;
   async function confirmRemoveAccount() {
     if (!editingAccount) return;
@@ -3553,6 +3557,7 @@ export function LedgerApp({
               }}
               onAddAccount={() => showAccountDialog(null)}
               onEditAccount={showAccountDialog}
+              onReorderAccounts={reorderAccounts}
             />
 
             <DigitalAssetSection
@@ -4139,12 +4144,12 @@ export function LedgerApp({
                 name="accountId"
                 defaultValue={
                   editingSubscription?.accountId ??
-                  accountList.find((item) => item.type === "资产")?.id
+                  accountList.find((item) => item.isActive && item.type === "资产")?.id
                 }
                 required
               >
                 {accountList
-                  .filter((item) => item.type === "资产")
+                  .filter((item) => item.isActive && item.type === "资产")
                   .map((item) => (
                     <option value={item.id} key={item.id}>
                       {item.name}
@@ -4155,13 +4160,13 @@ export function LedgerApp({
             {subscriptionError && (
               <p className="account-error">{subscriptionError}</p>
             )}
-            {!accountList.some((item) => item.type === "资产") && (
+            {!accountList.some((item) => item.isActive && item.type === "资产") && (
               <p className="account-error">请先创建一个资产账户。</p>
             )}
             <button
               className="submit-button"
               disabled={
-                pending || !accountList.some((item) => item.type === "资产")
+                pending || !accountList.some((item) => item.isActive && item.type === "资产")
               }
             >
               {editingSubscription ? "保存修改" : "保存自动扣款"}

@@ -12,7 +12,7 @@ import {
   SCHEDULED_OCCURRENCES_TABLE_SQL,
 } from "./transfer-schema.js";
 
-export const DB_SCHEMA_VERSION = "35";
+export const DB_SCHEMA_VERSION = "36";
 const SCHEMA_VERSION = DB_SCHEMA_VERSION;
 let ensuredDbBinding: ReturnType<typeof getDbBinding> | null = null;
 
@@ -223,6 +223,20 @@ export async function ensureDb() {
     await ensureTransactionRevisions(binding);
     ensuredDbBinding = binding;
     return;
+  }
+  if (version?.value === "35") {
+    await runMigrationBatch(binding, [
+      binding.prepare("ALTER TABLE accounts ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1"),
+      binding.prepare("ALTER TABLE accounts ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"),
+      binding.prepare("UPDATE accounts SET sort_order=(SELECT (COUNT(*)-1)*10 FROM accounts prior WHERE prior.ledger_id=accounts.ledger_id AND prior.id<=accounts.id)"),
+      binding.prepare("CREATE INDEX IF NOT EXISTS accounts_ledger_active_order_idx ON accounts(ledger_id,is_active,sort_order,id)"),
+      binding.prepare("DROP TRIGGER IF EXISTS account_transfers_validate"),
+      binding.prepare(ACCOUNT_TRANSFERS_VALIDATE_TRIGGER_SQL),
+      binding.prepare("CREATE TRIGGER IF NOT EXISTS transactions_active_account_insert BEFORE INSERT ON transactions WHEN COALESCE((SELECT value FROM app_meta WHERE key='restore_mode'),'0')!='1' AND COALESCE((SELECT is_active FROM accounts WHERE id=NEW.account_id AND ledger_id=NEW.ledger_id),0)!=1 BEGIN SELECT RAISE(ABORT,'账户已停用，不能新增流水'); END"),
+      binding.prepare("CREATE TRIGGER IF NOT EXISTS transactions_active_account_update BEFORE UPDATE OF account_id ON transactions WHEN COALESCE((SELECT value FROM app_meta WHERE key='restore_mode'),'0')!='1' AND NEW.account_id!=OLD.account_id AND COALESCE((SELECT is_active FROM accounts WHERE id=NEW.account_id AND ledger_id=NEW.ledger_id),0)!=1 BEGIN SELECT RAISE(ABORT,'账户已停用，不能转入流水'); END"),
+      binding.prepare("UPDATE app_meta SET value='36' WHERE key='schema_version'"),
+    ]);
+    return ensureDb();
   }
   if (version?.value === "34") {
     await runMigrationBatch(binding, [

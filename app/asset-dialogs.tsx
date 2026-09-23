@@ -21,7 +21,7 @@ type AssetDialogAsset = {
   changePercent: number;
   updatedAt: string;
 };
-type AssetDialogAccount = { id: number; name: string; type: "资产" | "负债"; currency: Currency; icon: string };
+type AssetDialogAccount = { id: number; name: string; type: "资产" | "负债"; currency: Currency; icon: string; isActive: boolean };
 
 type AssetDialogsProps = {
   assetOpen: boolean;
@@ -117,10 +117,10 @@ export function AssetDialogs({
             <label className="title-field"><span>实际变现价格（{liquidatingAsset.currency}）</span><input name="salePrice" type="number" min="0.01" step="0.01" defaultValue={(liquidatingAsset.currentValue / 100).toFixed(2)} /></label>
             <label className="title-field">
               <span>收入存入同币种账户</span>
-              <select name="accountId" defaultValue={accountList.find((item) => item.type === "资产" && item.currency === liquidatingAsset.currency)?.id}>
-                {accountList.filter((item) => item.type === "资产" && item.currency === liquidatingAsset.currency).map((account) => <option value={account.id} key={account.id}>{account.icon} {account.name}</option>)}
+                <select name="accountId" defaultValue={accountList.find((item) => item.isActive && item.type === "资产" && item.currency === liquidatingAsset.currency)?.id}>
+                {accountList.filter((item) => item.isActive && item.type === "资产" && item.currency === liquidatingAsset.currency).map((account) => <option value={account.id} key={account.id}>{account.icon} {account.name}</option>)}
               </select>
-              {!accountList.some((item) => item.type === "资产" && item.currency === liquidatingAsset.currency) && <small>暂无 {liquidatingAsset.currency} 资产账户，请先新建同币种账户，或直接报废注销。</small>}
+              {!accountList.some((item) => item.isActive && item.type === "资产" && item.currency === liquidatingAsset.currency) && <small>暂无 {liquidatingAsset.currency} 资产账户，请先新建同币种账户，或直接报废注销。</small>}
             </label>
             {assetError && <p className="account-error">{assetError}</p>}
             <div className="liquidation-actions"><button name="mode" value="discard" className="discard-button" disabled={pending}>直接报废 · 不入账</button><button name="mode" value="sell" className="submit-button" disabled={pending}>确认变现并入账</button></div>

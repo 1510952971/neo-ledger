@@ -63,7 +63,7 @@ async function validateActions(ledgerId: number, actions: RuleActions) {
     throw new Error("规则消费分类不存在");
   if (actions.incomeCategory && !(await db.prepare("SELECT id FROM income_categories WHERE ledger_id=? AND name=? AND is_active=1").bind(ledgerId, actions.incomeCategory).first()))
     throw new Error("规则收入分类不存在");
-  if (actions.accountId && !(await db.prepare("SELECT id FROM accounts WHERE ledger_id=? AND id=?").bind(ledgerId, actions.accountId).first()))
+  if (actions.accountId && !(await db.prepare("SELECT id FROM accounts WHERE ledger_id=? AND id=? AND is_active=1").bind(ledgerId, actions.accountId).first()))
     throw new Error("规则账户不存在");
 }
 

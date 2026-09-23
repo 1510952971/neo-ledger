@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { ensureDb, getDb, getDbBinding } from "../../../db";
 import { accounts } from "../../../db/schema";
@@ -55,7 +55,7 @@ export async function GET(request: Request) {
       .select()
       .from(accounts)
       .where(eq(accounts.ledgerId, ledgerId))
-      .orderBy(accounts.id)
+      .orderBy(desc(accounts.isActive), asc(accounts.sortOrder), asc(accounts.id))
       .limit(MAX_ACCOUNT_COUNT);
     const response = privateJson(rows);
     const totalCount = Number(total?.count ?? 0);
@@ -80,6 +80,10 @@ export async function POST(request: Request) {
     if (Number(count?.count ?? 0) >= MAX_ACCOUNT_COUNT)
       throw new ApiAccessError("账户最多 " + MAX_ACCOUNT_COUNT + " 个", 409);
     const value = validate(body);
+    const sortOrder = await getDbBinding()
+      .prepare("SELECT COALESCE(MAX(sort_order),0)+10 sortOrder FROM accounts WHERE ledger_id=?")
+      .bind(ledgerId)
+      .first<{ sortOrder: number }>();
     const icon = value.isInvestment
       ? "📈"
       : value.type === "负债"
@@ -88,8 +92,8 @@ export async function POST(request: Request) {
     const result = await getDbBinding()
       .prepare(
         `
-      INSERT INTO accounts (ledger_id,name,type,current_balance,bill_day,repayment_day,icon,is_investment,initial_balance,currency,asset_class,uuid,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,lower(hex(randomblob(16))),strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      INSERT INTO accounts (ledger_id,name,type,current_balance,bill_day,repayment_day,icon,is_investment,initial_balance,currency,asset_class,sort_order,is_active,uuid,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,lower(hex(randomblob(16))),strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     `,
       )
       .bind(
@@ -104,6 +108,7 @@ export async function POST(request: Request) {
         value.currentBalance,
         value.currency,
         value.assetClass,
+        Number(sortOrder?.sortOrder ?? 10),
       )
       .run();
     return privateJson({ id: result.meta.last_row_id }, { status: 201 });
@@ -122,12 +127,24 @@ export async function PUT(request: Request) {
     await claimAndRequireLedger(request, ledgerId);
     const db = getDbBinding();
     const current = await db
-      .prepare("SELECT id,ledger_id AS ledgerId,type,current_balance AS currentBalance,currency,uuid,updated_at AS updatedAt FROM accounts WHERE id=? AND ledger_id=?")
+      .prepare("SELECT id,ledger_id AS ledgerId,type,current_balance AS currentBalance,currency,is_active AS isActive,uuid,updated_at AS updatedAt FROM accounts WHERE id=? AND ledger_id=?")
       .bind(id, ledgerId)
-      .first<{ id: number; ledgerId: number; type: string; currentBalance: number; currency: string; uuid: string; updatedAt: string }>();
+      .first<{ id: number; ledgerId: number; type: string; currentBalance: number; currency: string; isActive: number; uuid: string; updatedAt: string }>();
     if (!current) throw new Error("账户不存在");
     if (current.updatedAt !== body.expectedUpdatedAt)
       throw new ApiAccessError("账户已被其他操作更新，请刷新后重试", 409);
+    const nextActive = body.isActive ?? Boolean(current.isActive);
+    const balanceDelta = value.currentBalance - current.currentBalance;
+    if (!nextActive && balanceDelta !== 0)
+      throw new ApiAccessError("停用账户前请先单独完成余额调账；停用后不能再产生调账流水", 409);
+    if (current.isActive && !nextActive) {
+      const activeCount = await db.prepare("SELECT COUNT(*) count FROM accounts WHERE ledger_id=? AND is_active=1").bind(ledgerId).first<{ count: number }>();
+      if (Number(activeCount?.count ?? 0) <= 1)
+        throw new ApiAccessError("至少保留一个启用账户", 409);
+      const pendingPlan = await db.prepare("SELECT (SELECT COUNT(*) FROM subscriptions WHERE account_id=?)+(SELECT COUNT(*) FROM installments WHERE (account_id=? OR payment_account_id=?) AND paid_periods<periods)+(SELECT COUNT(*) FROM pending_transactions WHERE account_id=? AND status='待确认') count").bind(id, id, id, id).first<{ count: number }>();
+      if (Number(pendingPlan?.count ?? 0) > 0)
+        throw new ApiAccessError("该账户仍有订阅、未完成分期或待确认流水，请先处理后再停用", 409);
+    }
     if (current.type !== value.type || current.currency !== value.currency) {
       const activity = await db
         .prepare("SELECT (SELECT COUNT(*) FROM transactions WHERE account_id=?)+(SELECT COUNT(*) FROM account_transfers WHERE from_account_id=? OR to_account_id=?)+(SELECT COUNT(*) FROM installments WHERE account_id=? OR payment_account_id=?) count")
@@ -143,10 +160,9 @@ export async function PUT(request: Request) {
         : "💰";
     const nextUpdatedAt = new Date().toISOString();
     const statements = [
-      db.prepare("UPDATE accounts SET name=?,type=?,bill_day=?,repayment_day=?,is_investment=?,icon=?,currency=?,asset_class=?,updated_at=? WHERE id=? AND ledger_id=? AND updated_at=?")
-        .bind(value.name, value.type, value.billDay, value.repaymentDay, value.isInvestment ? 1 : 0, icon, value.currency, value.assetClass, nextUpdatedAt, id, ledgerId, body.expectedUpdatedAt),
+      db.prepare("UPDATE accounts SET name=?,type=?,bill_day=?,repayment_day=?,is_investment=?,icon=?,currency=?,asset_class=?,is_active=?,updated_at=? WHERE id=? AND ledger_id=? AND updated_at=?")
+        .bind(value.name, value.type, value.billDay, value.repaymentDay, value.isInvestment ? 1 : 0, icon, value.currency, value.assetClass, nextActive ? 1 : 0, nextUpdatedAt, id, ledgerId, body.expectedUpdatedAt),
     ];
-    const balanceDelta = value.currentBalance - current.currentBalance;
     if (balanceDelta !== 0)
       statements.push(
         db.prepare("INSERT INTO account_transfers(uuid,ledger_id,kind,from_account_id,to_account_id,amount,currency,target_type,target_id,occurrence_key,occurred_at,original_timezone,note) SELECT lower(hex(randomblob(16))),?,'余额调账',?,?,?,?,'account',?,NULL,strftime('%Y-%m-%dT%H:%M:%fZ','now'),'Asia/Shanghai','手动校准账户余额' FROM accounts WHERE id=? AND ledger_id=? AND updated_at=?")

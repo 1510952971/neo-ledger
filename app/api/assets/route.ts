@@ -169,7 +169,7 @@ export async function PATCH(request: Request) {
     if (salePrice > 0) {
       const account = await db
         .prepare(
-          "SELECT id,currency FROM accounts WHERE id=? AND ledger_id=? AND type='资产' AND currency=?",
+          "SELECT id,currency FROM accounts WHERE id=? AND ledger_id=? AND type='资产' AND is_active=1 AND currency=?",
         )
         .bind(accountId, ledgerId, asset.currency)
         .first<{ id: number; currency: string }>();
@@ -177,7 +177,7 @@ export async function PATCH(request: Request) {
       try {
         const results = await db.batch([
           db.prepare("UPDATE digital_assets SET updated_at=? WHERE id=? AND ledger_id=? AND updated_at=?").bind(nextUpdatedAt, id, ledgerId, asset.updatedAt),
-          db.prepare("UPDATE accounts SET current_balance=current_balance+? WHERE id=? AND ledger_id=? AND type='资产' AND currency=? AND EXISTS (SELECT 1 FROM digital_assets WHERE id=? AND ledger_id=? AND updated_at=? AND changes()>0)").bind(salePrice, account.id, ledgerId, account.currency, id, ledgerId, nextUpdatedAt),
+          db.prepare("UPDATE accounts SET current_balance=current_balance+? WHERE id=? AND ledger_id=? AND type='资产' AND is_active=1 AND currency=? AND EXISTS (SELECT 1 FROM digital_assets WHERE id=? AND ledger_id=? AND updated_at=? AND changes()>0)").bind(salePrice, account.id, ledgerId, account.currency, id, ledgerId, nextUpdatedAt),
           db.prepare("INSERT INTO transactions(ledger_id,title,amount,type,income_category,income_category_dynamic,account_id,currency,original_amount,original_currency,exchange_rate_micros,original_timezone,occurrence_key,occurred_at) SELECT ?,? ,?,'收入','其它收入','其它收入',?,?,?,?,1000000,'Asia/Shanghai',?,strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE EXISTS (SELECT 1 FROM digital_assets WHERE id=? AND ledger_id=? AND updated_at=? AND changes()>0)").bind(ledgerId, `二手变现 · ${asset.name}`, salePrice, account.id, account.currency, salePrice, account.currency, occurrenceKey, id, ledgerId, nextUpdatedAt),
           db.prepare("DELETE FROM digital_assets WHERE id=? AND ledger_id=? AND updated_at=? AND changes()>0").bind(id, ledgerId, nextUpdatedAt),
         ]);

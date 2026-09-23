@@ -135,18 +135,21 @@ export async function POST(request: Request) {
       throw new ApiAccessError("分期最多 " + MAX_INSTALLMENT_COUNT + " 个", 409);
     const account = await db
         .prepare(
-          "SELECT currency,type FROM accounts WHERE id=? AND ledger_id=?",
+          "SELECT currency,type,is_active isActive FROM accounts WHERE id=? AND ledger_id=?",
         )
         .bind(accountId, ledgerId)
-        .first<{ currency: string; type: string }>();
+        .first<{ currency: string; type: string; isActive: number }>();
     if (!account) throw new Error("绑定账户不存在");
+    if (!account.isActive) throw new ApiAccessError("停用账户不能用于新分期", 409);
     if (account.type !== "负债") throw new Error("分期必须绑定负债账户");
     const paymentAccount = await db
-      .prepare("SELECT id,currency,type FROM accounts WHERE id=? AND ledger_id=?")
+      .prepare("SELECT id,currency,type,is_active isActive FROM accounts WHERE id=? AND ledger_id=?")
       .bind(paymentAccountId, ledgerId)
-      .first<{ id: number; currency: string; type: string }>();
+      .first<{ id: number; currency: string; type: string; isActive: number }>();
     if (!paymentAccount || paymentAccount.type !== "资产")
       throw new Error("请选择用于每月还款的资产账户");
+    if (!paymentAccount.isActive)
+      throw new ApiAccessError("停用账户不能用于新分期还款", 409);
     if (paymentAccount.currency !== account.currency)
       throw new Error("负债账户与还款账户币种必须一致");
     const installmentUuid = crypto.randomUUID();

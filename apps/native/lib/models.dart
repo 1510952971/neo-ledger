@@ -62,6 +62,8 @@ class Account {
     this.updatedAt,
     this.isInvestment = false,
     this.assetClass = '现金流',
+    this.isActive = true,
+    this.sortOrder = 0,
     this.billDay,
     this.repaymentDay,
   });
@@ -76,6 +78,8 @@ class Account {
   final String? updatedAt;
   final bool isInvestment;
   final String assetClass;
+  final bool isActive;
+  final int sortOrder;
   final int? billDay;
   final int? repaymentDay;
 
@@ -92,6 +96,10 @@ class Account {
     updatedAt: json['updatedAt'] as String? ?? json['updated_at'] as String?,
     isInvestment: json['isInvestment'] == true || json['is_investment'] == 1,
     assetClass: '${json['assetClass'] ?? json['asset_class'] ?? '现金流'}',
+    isActive: json['isActive'] == null && json['is_active'] == null
+        ? true
+        : _asBool(json['isActive'] ?? json['is_active']),
+    sortOrder: _asInt(json['sortOrder'] ?? json['sort_order']),
     billDay: json['billDay'] == null && json['bill_day'] == null
         ? null
         : _asInt(json['billDay'] ?? json['bill_day']),
@@ -109,6 +117,8 @@ class Account {
     String? updatedAt,
     bool? isInvestment,
     String? assetClass,
+    bool? isActive,
+    int? sortOrder,
     int? billDay,
     int? repaymentDay,
   }) => Account(
@@ -122,6 +132,8 @@ class Account {
     updatedAt: updatedAt ?? this.updatedAt,
     isInvestment: isInvestment ?? this.isInvestment,
     assetClass: assetClass ?? this.assetClass,
+    isActive: isActive ?? this.isActive,
+    sortOrder: sortOrder ?? this.sortOrder,
     billDay: billDay ?? this.billDay,
     repaymentDay: repaymentDay ?? this.repaymentDay,
   );
@@ -137,6 +149,8 @@ class Account {
     if (updatedAt != null) 'updatedAt': updatedAt,
     'isInvestment': isInvestment,
     'assetClass': assetClass,
+    'isActive': isActive,
+    'sortOrder': sortOrder,
     if (billDay != null) 'billDay': billDay,
     if (repaymentDay != null) 'repaymentDay': repaymentDay,
   };

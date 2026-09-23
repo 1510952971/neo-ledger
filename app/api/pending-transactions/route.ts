@@ -116,8 +116,8 @@ export async function PATCH(request: Request) {
     try {
       const suggestion = matchAutomationRule({ rawText: String((row as { raw_text?: string }).raw_text ?? ""), title: row.title, amount: row.amount, accountId: row.account_id }, await enabledRules(ownerId, row.ledger_id));
     const suggestedAccountId = Number(suggestion?.actions.accountId ?? row.account_id);
-    const targetAccount = await db.prepare("SELECT id,currency FROM accounts WHERE id=? AND ledger_id=?").bind(suggestedAccountId, row.ledger_id).first<{ id: number; currency: string }>();
-    if (!targetAccount || targetAccount.currency !== row.currency) throw new Error("规则建议账户不存在或币种不一致");
+    const targetAccount = await db.prepare("SELECT id,currency FROM accounts WHERE id=? AND ledger_id=? AND is_active=1").bind(suggestedAccountId, row.ledger_id).first<{ id: number; currency: string }>();
+    if (!targetAccount || targetAccount.currency !== row.currency) throw new Error("规则建议账户不存在、已停用或币种不一致");
     const requestedCategory = String(body.category || suggestion?.actions.category || "");
     const configuredCategory = row.type === "支出"
       ? await db.prepare("SELECT name,builtin_key builtinKey FROM expense_categories WHERE ledger_id=? AND name=? AND is_active=1").bind(row.ledger_id, requestedCategory).first<{ name: string; builtinKey: string | null }>()

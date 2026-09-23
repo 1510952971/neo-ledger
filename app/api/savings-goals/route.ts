@@ -164,7 +164,7 @@ export async function PATCH(request: Request) {
 
     const account = await db
       .prepare(
-        "SELECT current_balance AS balance,currency FROM accounts WHERE id=? AND ledger_id=? AND type='资产'",
+        "SELECT current_balance AS balance,currency FROM accounts WHERE id=? AND ledger_id=? AND type='资产' AND is_active=1",
       )
       .bind(accountId, goal.ledgerId)
       .first<{ balance: number; currency: string }>();
@@ -250,7 +250,7 @@ export async function DELETE(request: Request) {
         throw new Error("请选择退款账户");
       const account = await db
         .prepare(
-          "SELECT id,currency FROM accounts WHERE id=? AND ledger_id=? AND type='资产'",
+          "SELECT id,currency FROM accounts WHERE id=? AND ledger_id=? AND type='资产' AND is_active=1",
         )
         .bind(accountId, goal.ledgerId)
         .first<{ id: number; currency: string }>();

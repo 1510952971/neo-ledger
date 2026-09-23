@@ -73,14 +73,16 @@ export async function POST(request: Request) {
         return duplicateTransferResponse(existing, body);
     }
     const accounts: {
-      results: Array<{ id: number; type: string; currency: string }>;
+      results: Array<{ id: number; type: string; currency: string; isActive: number }>;
     } = await db
-      .prepare("SELECT id,type,currency FROM accounts WHERE ledger_id=? AND id IN (?,?)")
+      .prepare("SELECT id,type,currency,is_active isActive FROM accounts WHERE ledger_id=? AND id IN (?,?)")
       .bind(ledgerId, fromAccountId, toAccountId)
-      .all<{ id: number; type: string; currency: string }>();
+      .all<{ id: number; type: string; currency: string; isActive: number }>();
     const from = accounts.results.find((row) => row.id === fromAccountId);
     const to = accounts.results.find((row) => row.id === toAccountId);
     if (!from || !to) throw new Error("转账账户不存在");
+    if (!from.isActive || !to.isActive)
+      throw new ApiAccessError("停用账户不能用于新转账", 409);
     if (from.currency !== to.currency) throw new Error("跨币种账户请先换汇，不能直接转账");
     if (kind === "信用卡还款" && (from.type !== "资产" || to.type !== "负债"))
       throw new Error("信用卡还款应从资产账户转入负债账户");

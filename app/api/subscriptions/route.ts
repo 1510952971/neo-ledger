@@ -22,7 +22,7 @@ async function validateReferences(
   const [account, configuredCategory] = await Promise.all([
     db
       .prepare(
-        "SELECT id FROM accounts WHERE id=? AND ledger_id=? AND type='资产'",
+        "SELECT id FROM accounts WHERE id=? AND ledger_id=? AND type='资产' AND is_active=1",
       )
       .bind(accountId, ledgerId)
       .first(),

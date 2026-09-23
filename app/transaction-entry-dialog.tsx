@@ -6,7 +6,7 @@ type EntryType = "支出" | "收入";
 type Mood = "悦己" | "刚需" | "冲动";
 type SplitMode = "全额由我支付" | "全额由对方支付" | "按比例平摊" | null;
 type Currency = "CNY" | "USD" | "JPY" | "EUR";
-type EntryAccount = { id: number; name: string; icon: string; currency: Currency };
+type EntryAccount = { id: number; name: string; icon: string; currency: Currency; isActive: boolean };
 type EntryMember = { id: number; name: string; icon: string; isMe: boolean };
 type EntryMeta = Record<string, { emoji: string; color?: string }>;
 type EntryParsedPreview = {
@@ -202,7 +202,7 @@ export function TransactionEntryDialog({
         <fieldset>
           <legend>{entryType === "支出" ? "扣款账户" : "入账账户"}</legend>
           <div className="account-select-grid">
-            {accountList.map((item) => (
+            {accountList.filter((item) => item.isActive).map((item) => (
               <button
                 type="button"
                 className={accountId === item.id ? "selected" : ""}

@@ -49,6 +49,8 @@ export const accounts = sqliteTable("accounts", {
   assetClass: text("asset_class", { enum: ["现金流", "固收防守", "风险进攻"] })
     .notNull()
     .default("现金流"),
+  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
   uuid: text("uuid").notNull(),
   updatedAt: text("updated_at").notNull(),
   createdAt: text("created_at")
