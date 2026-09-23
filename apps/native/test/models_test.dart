@@ -147,4 +147,23 @@ void main() {
     expect(page.nextCursor, 'next-page-token');
     expect(page.toJson()['nextCursor'], 'next-page-token');
   });
+
+  test('preferences round-trip synced mobile experience settings', () {
+    final preferences = Preferences.fromJson({
+      'theme': 'obsidian',
+      'lockEnabled': true,
+      'hideAmounts': true,
+      'hapticsEnabled': false,
+      'continuousEntry': true,
+      'homeModules': ['recent', 'summary'],
+    });
+
+    expect(preferences.theme, 'obsidian');
+    expect(preferences.lockEnabled, isTrue);
+    expect(preferences.hideAmounts, isTrue);
+    expect(preferences.hapticsEnabled, isFalse);
+    expect(preferences.continuousEntry, isTrue);
+    expect(preferences.homeModules, ['recent', 'summary']);
+    expect(preferences.copyWith(hideAmounts: false).hideAmounts, isFalse);
+  });
 }

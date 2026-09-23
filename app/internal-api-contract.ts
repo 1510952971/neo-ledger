@@ -117,7 +117,17 @@ const settlementSchema = z.object({ ledgerId: positiveId, memberId: positiveId, 
 const fireSettingsSchema = z.object({ ledgerId: positiveId, monthlyExpense: z.coerce.number().finite().min(100).max(1_000_000_000), annualReturn: z.coerce.number().finite().min(0).max(30) }).strict();
 const economicSettingsSchema = z.object({ ledgerId: positiveId, inflationRate: z.coerce.number().finite().min(0).max(50) }).strict();
 
-const preferencesPatchSchema = z.object({ theme: z.enum(["cream", "obsidian", "glacier", "peach"]).optional(), enabled: z.boolean().optional(), pin: z.string().regex(/^\d{4}$/, "请输入4位数字PIN").optional() }).strict().refine((v) => v.theme !== undefined || v.enabled !== undefined, "至少修改一项设置").refine((v) => v.enabled !== true || v.pin !== undefined, "请输入4位数字PIN");
+const homeModule = z.enum(["summary", "weeklyTrend", "budget", "pending", "recent"]);
+const preferencesPatchSchema = z.object({
+  theme: z.enum(["cream", "obsidian", "glacier", "peach"]).optional(),
+  enabled: z.boolean().optional(),
+  pin: z.string().regex(/^\d{4}$/, "请输入4位数字PIN").optional(),
+  hideAmounts: z.boolean().optional(),
+  hapticsEnabled: z.boolean().optional(),
+  continuousEntry: z.boolean().optional(),
+  expandedCategories: z.boolean().optional(),
+  homeModules: z.array(homeModule).max(5).optional(),
+}).strict().refine((v) => Object.keys(v).length > 0, "至少修改一项设置").refine((v) => v.enabled !== true || v.pin !== undefined, "请输入4位数字PIN");
 const pinSchema = z.object({ pin: z.string().regex(/^\d{4}$/, "请输入4位数字PIN") }).strict();
 const ruleConditionsSchema = z.object({ merchantContains: z.string().trim().min(1).max(80).optional(), source: z.string().trim().min(1).max(40).optional(), minAmount: moneyYuan.optional(), maxAmount: moneyYuan.optional(), accountId: positiveId.optional() }).strict().refine((v) => Object.keys(v).length > 0, "至少设置一个匹配条件").refine((v) => v.minAmount == null || v.maxAmount == null || v.minAmount <= v.maxAmount, "金额范围无效");
 const ruleActionsSchema = z.object({ category: z.string().trim().min(1).max(40).optional(), incomeCategory: z.string().trim().min(1).max(40).optional(), mood: z.enum(["悦己", "刚需", "冲动"]).optional(), accountId: positiveId.optional() }).strict().refine((v) => Object.keys(v).length > 0, "至少设置一个自动处理动作");

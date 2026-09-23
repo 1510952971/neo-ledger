@@ -442,24 +442,21 @@ class MobileHomePage extends StatefulWidget {
 }
 
 class _MobileHomePageState extends State<MobileHomePage> {
-  final _preferences = const MobileEntryPreferences();
-  bool _hideAmounts = false;
+  bool get _hideAmounts => widget.controller.preferences.hideAmounts;
 
-  @override
-  void initState() {
-    super.initState();
-    _loadPreferences();
-  }
-
-  Future<void> _loadPreferences() async {
-    final hidden = await _preferences.hideAmounts();
-    if (mounted) setState(() => _hideAmounts = hidden);
-  }
+  bool _moduleEnabled(String key) =>
+      widget.controller.preferences.homeModules.contains(key);
 
   Future<void> _toggleAmounts() async {
     final next = !_hideAmounts;
-    setState(() => _hideAmounts = next);
-    await _preferences.setHideAmounts(next);
+    try {
+      await widget.controller.saveMobileSettings(hideAmounts: next);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('隐藏金额设置失败：$error')));
+      }
+    }
   }
 
   Future<void> _openNotifications() async {
@@ -567,22 +564,24 @@ class _MobileHomePageState extends State<MobileHomePage> {
               hideAmounts: _hideAmounts,
             ),
             const SizedBox(height: 12),
-            _MonthlyCard(page: page, hideAmounts: _hideAmounts),
-            if (controller.budgets.isNotEmpty) ...[
+            if (_moduleEnabled('summary'))
+              _MonthlyCard(page: page, hideAmounts: _hideAmounts),
+            if (_moduleEnabled('budget') && controller.budgets.isNotEmpty) ...[
               const SizedBox(height: 14),
               _HomeBudgetCard(
                 controller: controller,
                 hideAmounts: _hideAmounts,
               ),
             ],
-            if (controller.pendingTransactions.items.isNotEmpty) ...[
+            if (_moduleEnabled('pending') &&
+                controller.pendingTransactions.items.isNotEmpty) ...[
               const SizedBox(height: 14),
               _HomePendingCard(
                 controller: controller,
                 hideAmounts: _hideAmounts,
               ),
             ],
-            if (page.items.isNotEmpty) ...[
+            if (_moduleEnabled('weeklyTrend') && page.items.isNotEmpty) ...[
               const SizedBox(height: 14),
               _HomeWeeklyTrendCard(page: page, hideAmounts: _hideAmounts),
             ],
@@ -624,30 +623,32 @@ class _MobileHomePageState extends State<MobileHomePage> {
                 ),
               ],
             ),
-            const SizedBox(height: 26),
-            _SectionHeader(
-              title: '最近账单',
-              action: page.items.isEmpty ? null : '共 ${page.total} 笔',
-            ),
-            const SizedBox(height: 10),
-            if (page.items.isEmpty)
-              const _EmptyState(
-                icon: Icons.auto_graph_rounded,
-                title: '还没有账单',
-                message: '点击下方绿色 +，记录第一笔今天的生活。',
-              )
-            else
-              ...page.items
-                  .take(8)
-                  .map(
-                    (item) => Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: _TransactionTile(
-                        item: item,
-                        hideAmount: _hideAmounts,
+            if (_moduleEnabled('recent')) ...[
+              const SizedBox(height: 26),
+              _SectionHeader(
+                title: '最近账单',
+                action: page.items.isEmpty ? null : '共 ${page.total} 笔',
+              ),
+              const SizedBox(height: 10),
+              if (page.items.isEmpty)
+                const _EmptyState(
+                  icon: Icons.auto_graph_rounded,
+                  title: '还没有账单',
+                  message: '点击下方绿色 +，记录第一笔今天的生活。',
+                )
+              else
+                ...page.items
+                    .take(8)
+                    .map(
+                      (item) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: _TransactionTile(
+                          item: item,
+                          hideAmount: _hideAmounts,
+                        ),
                       ),
                     ),
-                  ),
+            ],
           ],
         ),
       ),
@@ -2146,7 +2147,19 @@ class MobileProfilePage extends StatelessWidget {
               context: context,
               showDragHandle: true,
               backgroundColor: _mobileSurface,
-              builder: (_) => const _MobileExperienceSettings(),
+              builder: (_) => _MobileExperienceSettings(controller: controller),
+            ),
+          ),
+          _SettingsRow(
+            icon: '🧭',
+            title: '首页模块',
+            subtitle: '开启、关闭和排序首页卡片，设置会跨设备同步',
+            onTap: () => showModalBottomSheet<void>(
+              context: context,
+              isScrollControlled: true,
+              showDragHandle: true,
+              backgroundColor: _mobileSurface,
+              builder: (_) => _MobileHomeModuleSettings(controller: controller),
             ),
           ),
           _SettingsRow(
@@ -3745,8 +3758,139 @@ class MobileAddTransactionPage extends StatefulWidget {
       _MobileAddTransactionPageState();
 }
 
+class _MobileHomeModuleSettings extends StatefulWidget {
+  const _MobileHomeModuleSettings({required this.controller});
+
+  final LedgerController controller;
+
+  @override
+  State<_MobileHomeModuleSettings> createState() =>
+      _MobileHomeModuleSettingsState();
+}
+
+class _MobileHomeModuleSettingsState extends State<_MobileHomeModuleSettings> {
+  static const _defaults = [
+    'summary',
+    'weeklyTrend',
+    'budget',
+    'pending',
+    'recent',
+  ];
+  static const _labels = {
+    'summary': ('本月收支', '收入、支出和结余概览'),
+    'weeklyTrend': ('近 7 日支出', '查看最近一周的消费趋势'),
+    'budget': ('预算进度', '显示分类预算使用情况'),
+    'pending': ('待确认账单', '显示自动识别后等待确认的流水'),
+    'recent': ('最近账单', '显示最近发生的流水'),
+  };
+
+  late List<String> _modules;
+  late Set<String> _enabled;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final stored = widget.controller.preferences.homeModules;
+    _modules = [
+      ...stored.where(_defaults.contains),
+      ..._defaults.where((item) => !stored.contains(item)),
+    ];
+    _enabled = stored.isEmpty ? _defaults.toSet() : stored.toSet();
+  }
+
+  Future<void> _save() async {
+    if (_enabled.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('至少保留一个首页模块')));
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await widget.controller.saveMobileSettings(
+        homeModules: _modules.where(_enabled.contains).toList(),
+      );
+      if (mounted) Navigator.pop(context);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('首页模块设置失败：$error')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(18, 4, 18, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            '首页模块',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            '拖动调整顺序，关闭后不会再占用首页空间；设置会同步到其他设备。',
+            style: TextStyle(color: _mobileMuted, height: 1.4),
+          ),
+          const SizedBox(height: 10),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 360),
+            child: ReorderableListView.builder(
+              shrinkWrap: true,
+              itemCount: _modules.length,
+              onReorderItem: (oldIndex, newIndex) {
+                setState(() {
+                  final item = _modules.removeAt(oldIndex);
+                  _modules.insert(newIndex, item);
+                });
+              },
+              itemBuilder: (context, index) {
+                final key = _modules[index];
+                final definition = _labels[key]!;
+                return CheckboxListTile(
+                  key: ValueKey(key),
+                  value: _enabled.contains(key),
+                  onChanged: _saving
+                      ? null
+                      : (value) => setState(() {
+                          if (value == true) {
+                            _enabled.add(key);
+                          } else {
+                            _enabled.remove(key);
+                          }
+                        }),
+                  title: Text(definition.$1),
+                  subtitle: Text(
+                    definition.$2,
+                    style: const TextStyle(color: _mobileMuted, fontSize: 12),
+                  ),
+                  secondary: const Icon(Icons.drag_handle_rounded),
+                  activeColor: _mobileBrand,
+                  contentPadding: EdgeInsets.zero,
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: _saving ? null : _save,
+            child: Text(_saving ? '保存中…' : '保存首页布局'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 class _MobileExperienceSettings extends StatefulWidget {
-  const _MobileExperienceSettings();
+  const _MobileExperienceSettings({required this.controller});
+
+  final LedgerController controller;
 
   @override
   State<_MobileExperienceSettings> createState() =>
@@ -3754,8 +3898,8 @@ class _MobileExperienceSettings extends StatefulWidget {
 }
 
 class _MobileExperienceSettingsState extends State<_MobileExperienceSettings> {
-  final _preferences = const MobileEntryPreferences();
   bool _haptics = true;
+  bool _continuous = false;
   bool _loading = true;
 
   @override
@@ -3765,10 +3909,10 @@ class _MobileExperienceSettingsState extends State<_MobileExperienceSettings> {
   }
 
   Future<void> _load() async {
-    final enabled = await _preferences.hapticsEnabled();
     if (mounted) {
       setState(() {
-        _haptics = enabled;
+        _haptics = widget.controller.preferences.hapticsEnabled;
+        _continuous = widget.controller.preferences.continuousEntry;
         _loading = false;
       });
     }
@@ -3799,12 +3943,49 @@ class _MobileExperienceSettingsState extends State<_MobileExperienceSettings> {
                 ? null
                 : (value) async {
                     setState(() => _haptics = value);
-                    await _preferences.setHapticsEnabled(value);
+                    try {
+                      await widget.controller.saveMobileSettings(
+                        hapticsEnabled: value,
+                      );
+                    } catch (error) {
+                      if (context.mounted) {
+                        setState(() => _haptics = !value);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('触觉设置失败：$error')),
+                        );
+                      }
+                    }
                     if (value) HapticFeedback.selectionClick();
                   },
           ),
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('默认连续记账'),
+            subtitle: const Text(
+              '新打开记账页时默认保留账户和日期，保存后继续下一笔',
+              style: TextStyle(color: _mobileMuted),
+            ),
+            value: _continuous,
+            onChanged: _loading
+                ? null
+                : (value) async {
+                    setState(() => _continuous = value);
+                    try {
+                      await widget.controller.saveMobileSettings(
+                        continuousEntry: value,
+                      );
+                    } catch (error) {
+                      if (context.mounted) {
+                        setState(() => _continuous = !value);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('连续记账设置失败：$error')),
+                        );
+                      }
+                    }
+                  },
+          ),
           const Text(
-            '连续记账可在每次记账时单独开启；金额动画会自动遵循系统“减少动态效果”设置。',
+            '记账页仍可针对当前操作单独调整；金额动画会自动遵循系统“减少动态效果”设置。',
             style: TextStyle(color: _mobileMuted, height: 1.5),
           ),
         ],
@@ -4482,11 +4663,11 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
 
   Future<void> _loadEntryPreferences() async {
     final recent = await _entryPreferences.recentCategories();
-    final haptics = await _entryPreferences.hapticsEnabled();
     if (mounted) {
       setState(() {
         _recentCategories = recent;
-        _hapticsEnabled = haptics;
+        _hapticsEnabled = controller.preferences.hapticsEnabled;
+        _continuous = controller.preferences.continuousEntry;
       });
       await _restoreEntryDraftIfPresent();
     }

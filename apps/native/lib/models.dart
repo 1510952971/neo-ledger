@@ -252,17 +252,83 @@ class Category {
 }
 
 class Preferences {
-  const Preferences({this.theme = 'cream', this.lockEnabled = false});
+  const Preferences({
+    this.theme = 'cream',
+    this.lockEnabled = false,
+    this.hideAmounts = false,
+    this.hapticsEnabled = true,
+    this.continuousEntry = false,
+    this.expandedCategories = true,
+    this.homeModules = const [
+      'summary',
+      'weeklyTrend',
+      'budget',
+      'pending',
+      'recent',
+    ],
+  });
 
   final String theme;
   final bool lockEnabled;
+  final bool hideAmounts;
+  final bool hapticsEnabled;
+  final bool continuousEntry;
+  final bool expandedCategories;
+  final List<String> homeModules;
 
-  factory Preferences.fromJson(Map<String, dynamic> json) => Preferences(
-    theme: '${json['theme'] ?? 'cream'}',
-    lockEnabled: _asBool(json['lockEnabled'] ?? json['enabled']),
+  Preferences copyWith({
+    String? theme,
+    bool? lockEnabled,
+    bool? hideAmounts,
+    bool? hapticsEnabled,
+    bool? continuousEntry,
+    bool? expandedCategories,
+    List<String>? homeModules,
+  }) => Preferences(
+    theme: theme ?? this.theme,
+    lockEnabled: lockEnabled ?? this.lockEnabled,
+    hideAmounts: hideAmounts ?? this.hideAmounts,
+    hapticsEnabled: hapticsEnabled ?? this.hapticsEnabled,
+    continuousEntry: continuousEntry ?? this.continuousEntry,
+    expandedCategories: expandedCategories ?? this.expandedCategories,
+    homeModules: homeModules ?? this.homeModules,
   );
 
-  Map<String, dynamic> toJson() => {'theme': theme, 'lockEnabled': lockEnabled};
+  factory Preferences.fromJson(Map<String, dynamic> json) {
+    final modules = (json['homeModules'] as List<dynamic>? ?? const [])
+        .whereType<String>()
+        .where(
+          (item) => const {
+            'summary',
+            'weeklyTrend',
+            'budget',
+            'pending',
+            'recent',
+          }.contains(item),
+        )
+        .toList();
+    return Preferences(
+      theme: '${json['theme'] ?? 'cream'}',
+      lockEnabled: _asBool(json['lockEnabled'] ?? json['enabled']),
+      hideAmounts: _asBool(json['hideAmounts']),
+      hapticsEnabled: json['hapticsEnabled'] == false ? false : true,
+      continuousEntry: _asBool(json['continuousEntry']),
+      expandedCategories: json['expandedCategories'] == false ? false : true,
+      homeModules: modules.isEmpty
+          ? const ['summary', 'weeklyTrend', 'budget', 'pending', 'recent']
+          : modules,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'theme': theme,
+    'lockEnabled': lockEnabled,
+    'hideAmounts': hideAmounts,
+    'hapticsEnabled': hapticsEnabled,
+    'continuousEntry': continuousEntry,
+    'expandedCategories': expandedCategories,
+    'homeModules': homeModules,
+  };
 }
 
 class AiReply {

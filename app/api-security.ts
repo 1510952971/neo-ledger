@@ -212,7 +212,7 @@ export async function getOwnerPreferences(ownerId: string) {
     .run();
   return db
     .prepare(
-      "SELECT theme,lock_enabled AS lockEnabled,pin_hash AS pinHash,pin_salt AS pinSalt,pin_iterations AS pinIterations FROM user_preferences WHERE owner_id=?",
+      "SELECT theme,lock_enabled AS lockEnabled,pin_hash AS pinHash,pin_salt AS pinSalt,pin_iterations AS pinIterations,settings_json AS settingsJson FROM user_preferences WHERE owner_id=?",
     )
     .bind(ownerId)
     .first<{
@@ -221,6 +221,7 @@ export async function getOwnerPreferences(ownerId: string) {
       pinHash: string | null;
       pinSalt: string | null;
       pinIterations: number;
+      settingsJson: string;
     }>();
 }
 

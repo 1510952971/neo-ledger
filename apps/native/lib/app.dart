@@ -1046,6 +1046,33 @@ class LedgerController extends ChangeNotifier {
     return api.verifyPreferencesPin(normalizedPin);
   }
 
+  Future<void> saveMobileSettings({
+    bool? hideAmounts,
+    bool? hapticsEnabled,
+    bool? continuousEntry,
+    bool? expandedCategories,
+    List<String>? homeModules,
+  }) async {
+    preferences = preferences.copyWith(
+      hideAmounts: hideAmounts,
+      hapticsEnabled: hapticsEnabled,
+      continuousEntry: continuousEntry,
+      expandedCategories: expandedCategories,
+      homeModules: homeModules,
+    );
+    notifyListeners();
+    if (demoMode) return;
+    await api.updatePreferences(
+      hideAmounts: hideAmounts,
+      hapticsEnabled: hapticsEnabled,
+      continuousEntry: continuousEntry,
+      expandedCategories: expandedCategories,
+      homeModules: homeModules,
+    );
+    preferences = await api.fetchPreferences();
+    notifyListeners();
+  }
+
   Future<AiReply> askAi(String message, {bool consentExternal = false}) async {
     final ledger = selectedLedger;
     final normalizedMessage = message.trim();

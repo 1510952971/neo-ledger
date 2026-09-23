@@ -12,7 +12,7 @@ import {
   SCHEDULED_OCCURRENCES_TABLE_SQL,
 } from "./transfer-schema.js";
 
-export const DB_SCHEMA_VERSION = "33";
+export const DB_SCHEMA_VERSION = "34";
 const SCHEMA_VERSION = DB_SCHEMA_VERSION;
 let ensuredDbBinding: ReturnType<typeof getDbBinding> | null = null;
 
@@ -223,6 +223,15 @@ export async function ensureDb() {
     await ensureTransactionRevisions(binding);
     ensuredDbBinding = binding;
     return;
+  }
+  if (version?.value === "33") {
+    await runMigrationBatch(binding, [
+      binding.prepare(
+        "ALTER TABLE user_preferences ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}'",
+      ),
+      binding.prepare("UPDATE app_meta SET value='34' WHERE key='schema_version'"),
+    ]);
+    return ensureDb();
   }
   if (version?.value === "31") {
     await runIdempotentAlter(binding, "ALTER TABLE import_batches ADD COLUMN undo_started_at TEXT");
@@ -503,7 +512,7 @@ export async function ensureDb() {
       binding.prepare(SCHEDULED_OCCURRENCES_TABLE_SQL),
       binding.prepare("CREATE TABLE sync_tombstones(entity_type TEXT NOT NULL,entity_uuid TEXT NOT NULL,ledger_id INTEGER NOT NULL,deleted_at TEXT NOT NULL,PRIMARY KEY(entity_type,entity_uuid))"),
       binding.prepare("CREATE TABLE api_rate_limits(owner_id TEXT NOT NULL,scope TEXT NOT NULL,window_start INTEGER NOT NULL,count INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(owner_id,scope,window_start))"),
-      binding.prepare("CREATE TABLE user_preferences(owner_id TEXT PRIMARY KEY,theme TEXT NOT NULL DEFAULT 'cream',lock_enabled INTEGER NOT NULL DEFAULT 0,pin_hash TEXT,pin_salt TEXT,pin_iterations INTEGER NOT NULL DEFAULT 120000,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+      binding.prepare("CREATE TABLE user_preferences(owner_id TEXT PRIMARY KEY,theme TEXT NOT NULL DEFAULT 'cream',lock_enabled INTEGER NOT NULL DEFAULT 0,pin_hash TEXT,pin_salt TEXT,pin_iterations INTEGER NOT NULL DEFAULT 120000,settings_json TEXT NOT NULL DEFAULT '{}',updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
       binding.prepare("CREATE TRIGGER ledgers_touch_updated AFTER UPDATE ON ledgers WHEN NEW.updated_at=OLD.updated_at BEGIN UPDATE ledgers SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=NEW.id; END"),
       binding.prepare("CREATE TRIGGER accounts_touch_updated AFTER UPDATE ON accounts WHEN NEW.updated_at=OLD.updated_at BEGIN UPDATE accounts SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=NEW.id; END"),
       binding.prepare("CREATE TRIGGER installments_touch_updated AFTER UPDATE ON installments WHEN NEW.updated_at=OLD.updated_at BEGIN UPDATE installments SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=NEW.id; END"),

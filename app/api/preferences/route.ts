@@ -27,6 +27,19 @@ function hexToBytes(hex: string) {
   return new Uint8Array(hex.match(/.{2}/g)?.map((value) => Number.parseInt(value, 16)) ?? []);
 }
 
+const defaultHomeModules = ["summary", "weeklyTrend", "budget", "pending", "recent"];
+
+function readSettings(value: string | null | undefined) {
+  try {
+    const parsed = JSON.parse(value || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 async function derivePin(
   pin: string,
   salt: Uint8Array<ArrayBuffer>,
@@ -83,9 +96,18 @@ async function enforcePinAttempts(ownerId: string) {
 export async function GET(request: Request) {
   try {
     const row = await getOwnerPreferences(await requestOwnerId(request));
+    const settings = readSettings(row?.settingsJson);
+    const homeModules = Array.isArray(settings.homeModules)
+      ? settings.homeModules.filter((item): item is string => typeof item === "string")
+      : defaultHomeModules;
     return privateJson({
       theme: row?.theme ?? "cream",
       lockEnabled: Boolean(row?.lockEnabled),
+      hideAmounts: settings.hideAmounts === true,
+      hapticsEnabled: settings.hapticsEnabled !== false,
+      continuousEntry: settings.continuousEntry === true,
+      expandedCategories: settings.expandedCategories !== false,
+      homeModules: homeModules.length > 0 ? homeModules : defaultHomeModules,
     });
   } catch (error) {
     return accessErrorResponse(error, "读取设置失败", request);
@@ -98,6 +120,7 @@ export async function PATCH(request: Request) {
     await getOwnerPreferences(ownerId);
     const body = await readPreferencesPatchInput(request);
     const db = getDbBinding();
+    const current = await getOwnerPreferences(ownerId);
     if (body.theme) {
       await db
         .prepare(
@@ -122,6 +145,25 @@ export async function PATCH(request: Request) {
           PIN_ITERATIONS,
           ownerId,
         )
+        .run();
+    }
+    const settingUpdates = {
+      hideAmounts: body.hideAmounts,
+      hapticsEnabled: body.hapticsEnabled,
+      continuousEntry: body.continuousEntry,
+      expandedCategories: body.expandedCategories,
+      homeModules: body.homeModules,
+    };
+    if (Object.values(settingUpdates).some((value) => value !== undefined)) {
+      const settings = readSettings(current?.settingsJson);
+      for (const [key, value] of Object.entries(settingUpdates)) {
+        if (value !== undefined) settings[key] = value;
+      }
+      await db
+        .prepare(
+          "UPDATE user_preferences SET settings_json=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE owner_id=?",
+        )
+        .bind(JSON.stringify(settings), ownerId)
         .run();
     }
     return privateJson({ ok: true });

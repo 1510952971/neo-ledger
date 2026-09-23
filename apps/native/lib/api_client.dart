@@ -278,11 +278,23 @@ class NeoLedgerApi {
     String? theme,
     bool? enabled,
     String? pin,
+    bool? hideAmounts,
+    bool? hapticsEnabled,
+    bool? continuousEntry,
+    bool? expandedCategories,
+    List<String>? homeModules,
   }) async {
     final body = <String, dynamic>{};
     if (theme != null) body['theme'] = theme;
     if (enabled != null) body['enabled'] = enabled;
     if (pin != null && pin.trim().isNotEmpty) body['pin'] = pin.trim();
+    if (hideAmounts != null) body['hideAmounts'] = hideAmounts;
+    if (hapticsEnabled != null) body['hapticsEnabled'] = hapticsEnabled;
+    if (continuousEntry != null) body['continuousEntry'] = continuousEntry;
+    if (expandedCategories != null) {
+      body['expandedCategories'] = expandedCategories;
+    }
+    if (homeModules != null) body['homeModules'] = homeModules;
     await patchJson('/api/preferences', body);
   }
 
