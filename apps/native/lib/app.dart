@@ -15,6 +15,7 @@ import 'import_file_loader.dart';
 import 'import_parser.dart';
 import 'features/accounts/account_transfer_editor.dart';
 import 'models.dart';
+import 'mobile/data/mobile_core_snapshot_store.dart';
 import 'mobile/data/mobile_offline_queue_store.dart';
 import 'mobile/domain/offline_projection.dart';
 import 'shortcut_entry.dart';
@@ -29,7 +30,6 @@ const _surface = Color(0xff101116);
 const _surfaceAlt = Color(0xff1b1b23);
 const _muted = Color(0xffa4a8a1);
 const _nativeVersion = '1.4.0';
-const _coreSnapshotKey = 'neo_ledger_core_snapshot_v1';
 const _shortcutChannel = MethodChannel('online.eyeme.neo_ledger/shortcuts');
 const _assetTypes = [
   '房产',
@@ -201,6 +201,7 @@ class LedgerController extends ChangeNotifier {
   String? error;
   String? cachedAt;
   SharedPreferences? _preferences;
+  MobileCoreSnapshotStore? _coreSnapshotStore;
   MobileOfflineQueueStore? _offlineQueueStore;
   Future<void>? _refreshOperation;
   Future<void>? _syncOperation;
@@ -220,6 +221,7 @@ class LedgerController extends ChangeNotifier {
 
   Future<void> initialize() async {
     _preferences = await SharedPreferences.getInstance();
+    _coreSnapshotStore = MobileCoreSnapshotStore(_preferences!);
     _offlineQueueStore = MobileOfflineQueueStore(_preferences!);
     await _loadQueue();
     await api.load();
@@ -1639,7 +1641,7 @@ class LedgerController extends ChangeNotifier {
 
   Future<void> logout() async {
     await api.logout();
-    await _preferences?.remove(_coreSnapshotKey);
+    await _coreSnapshotStore?.clear();
     user = null;
     demoMode = false;
     ledgers = const [];
@@ -2666,11 +2668,9 @@ class LedgerController extends ChangeNotifier {
   }
 
   Future<void> _loadCoreSnapshot() async {
-    final raw = _preferences?.getString(_coreSnapshotKey);
-    if (raw == null || raw.isEmpty) return;
+    final decoded = await _coreSnapshotStore?.read();
+    if (decoded == null) return;
     try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return;
       final userJson = decoded['user'];
       final ledgersJson = decoded['ledgers'];
       final accountsJson = decoded['accounts'];
@@ -2849,52 +2849,47 @@ class LedgerController extends ChangeNotifier {
 
   Future<void> _persistCoreSnapshot() async {
     if (_preferences == null || !authenticated || demoMode) return;
-    await _preferences!.setString(
-      _coreSnapshotKey,
-      jsonEncode({
-        'user': user?.toJson(),
-        'ledgers': ledgers.map((item) => item.toJson()).toList(),
-        'accounts': accounts.map((item) => item.toJson()).toList(),
-        'transactions': transactions.toJson(),
-        'assets': assets.map((item) => item.toJson()).toList(),
-        'analysis': analysis?.toJson(),
-        'forecast': forecast?.toJson(),
-        'budgets': budgets.map((item) => item.toJson()).toList(),
-        'subscriptions': subscriptions.map((item) => item.toJson()).toList(),
-        'installments': installments.map((item) => item.toJson()).toList(),
-        'savingsGoals': savingsGoals.map((item) => item.toJson()).toList(),
-        'members': members.map((item) => item.toJson()).toList(),
-        'expenseCategories': expenseCategories
-            .map((item) => item.toJson())
-            .toList(),
-        'incomeCategories': incomeCategories
-            .map((item) => item.toJson())
-            .toList(),
-        'preferences': preferences.toJson(),
-        'lastAiReply': lastAiReply?.toJson(),
-        'p2pStatus': p2pStatus,
-        'exchangeRates': exchangeRates?.toJson(),
-        'automationRules': automationRules
-            .map((item) => item.toJson())
-            .toList(),
-        'quickSyncStatus': quickSyncStatus?.toJson(),
-        'securitySessions': securitySessions
-            .map((item) => item.toJson())
-            .toList(),
-        'securityAudit': securityAudit.toJson(),
-        'notifications': notifications.map((item) => item.toJson()).toList(),
-        'pendingTransactions': pendingTransactions.toJson(),
-        'fireSettings': {
-          if (monthlyExpense != null) 'monthlyExpense': monthlyExpense,
-          if (annualReturn != null) 'annualReturn': annualReturn,
-        },
-        'economicSettings': {
-          if (inflationRate != null) 'inflationRate': inflationRate,
-        },
-        'selectedLedgerIndex': selectedLedgerIndex,
-        'savedAt': DateTime.now().toUtc().toIso8601String(),
-      }),
-    );
+    await _coreSnapshotStore?.write({
+      'user': user?.toJson(),
+      'ledgers': ledgers.map((item) => item.toJson()).toList(),
+      'accounts': accounts.map((item) => item.toJson()).toList(),
+      'transactions': transactions.toJson(),
+      'assets': assets.map((item) => item.toJson()).toList(),
+      'analysis': analysis?.toJson(),
+      'forecast': forecast?.toJson(),
+      'budgets': budgets.map((item) => item.toJson()).toList(),
+      'subscriptions': subscriptions.map((item) => item.toJson()).toList(),
+      'installments': installments.map((item) => item.toJson()).toList(),
+      'savingsGoals': savingsGoals.map((item) => item.toJson()).toList(),
+      'members': members.map((item) => item.toJson()).toList(),
+      'expenseCategories': expenseCategories
+          .map((item) => item.toJson())
+          .toList(),
+      'incomeCategories': incomeCategories
+          .map((item) => item.toJson())
+          .toList(),
+      'preferences': preferences.toJson(),
+      'lastAiReply': lastAiReply?.toJson(),
+      'p2pStatus': p2pStatus,
+      'exchangeRates': exchangeRates?.toJson(),
+      'automationRules': automationRules.map((item) => item.toJson()).toList(),
+      'quickSyncStatus': quickSyncStatus?.toJson(),
+      'securitySessions': securitySessions
+          .map((item) => item.toJson())
+          .toList(),
+      'securityAudit': securityAudit.toJson(),
+      'notifications': notifications.map((item) => item.toJson()).toList(),
+      'pendingTransactions': pendingTransactions.toJson(),
+      'fireSettings': {
+        if (monthlyExpense != null) 'monthlyExpense': monthlyExpense,
+        if (annualReturn != null) 'annualReturn': annualReturn,
+      },
+      'economicSettings': {
+        if (inflationRate != null) 'inflationRate': inflationRate,
+      },
+      'selectedLedgerIndex': selectedLedgerIndex,
+      'savedAt': DateTime.now().toUtc().toIso8601String(),
+    });
     cachedAt = DateTime.now().toUtc().toIso8601String();
   }
 
