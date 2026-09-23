@@ -2837,7 +2837,7 @@ class _MobileAutomationPageState extends State<MobileAutomationPage> {
                   ),
                 ] else
                   const Text(
-                    '当前设备不提供 Android 系统支付识别权限。你仍可以使用下面的规则、导入和备份能力，数据与桌面端保持一致。',
+                    '当前设备不提供 Android 系统支付识别权限。iOS/iPadOS 也不能在后台读取其他应用的通知或界面，需要通过系统分享、剪贴板或文件导入主动提交内容。你仍可以使用下面的规则、导入和备份能力，数据与桌面端保持一致。',
                     style: TextStyle(color: _mobileMuted, height: 1.45),
                   ),
               ],
