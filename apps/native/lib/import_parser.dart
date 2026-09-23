@@ -6,10 +6,7 @@ import 'dart:convert';
 /// mapping, and the final import. This class only turns JSON/CSV text into the
 /// canonical transaction payload used by the preview endpoint.
 class LedgerImportParser {
-  static List<Map<String, dynamic>> parse(
-    String input, {
-    DateTime? now,
-  }) {
+  static List<Map<String, dynamic>> parse(String input, {DateTime? now}) {
     final text = input.replaceFirst('\uFEFF', '').trim();
     if (text.isEmpty) throw const FormatException('文件为空');
 
@@ -36,12 +33,13 @@ class LedgerImportParser {
     final rawItems = decoded is List
         ? decoded
         : container?['items'] ??
-            container?['transactions'] ??
-            container?['data'];
+              container?['transactions'] ??
+              container?['data'];
     // The Web export keeps transaction amounts in cents. Only treat a
     // versioned export containing the transactions array as that format;
     // arbitrary user JSON with a `title` field must remain in yuan.
-    final fromWebExport = container?['version'] != null &&
+    final fromWebExport =
+        container?['version'] != null &&
         container?['transactions'] is List &&
         identical(rawItems, container?['transactions']);
     if (rawItems is! List) {
@@ -169,10 +167,7 @@ class LedgerImportParser {
               '订单号',
               '交易订单号',
             }),
-            'currency': _value(row, headers, const {
-              'currency',
-              '币种',
-            }),
+            'currency': _value(row, headers, const {'currency', '币种'}),
           };
           return _normalizeRecord(
             record,
@@ -189,8 +184,8 @@ class LedgerImportParser {
     required bool useFallbackDate,
     bool fromWebExport = false,
   }) {
-    final hasAmountCents = raw.containsKey('amountCents') ||
-        raw.containsKey('amount_cents');
+    final hasAmountCents =
+        raw.containsKey('amountCents') || raw.containsKey('amount_cents');
     final rawAmount = hasAmountCents
         ? raw['amountCents'] ?? raw['amount_cents']
         : raw['amount'];
@@ -209,11 +204,9 @@ class LedgerImportParser {
       useFallback: useFallbackDate,
     );
     final source = '${raw['source'] ?? raw['sourceName'] ?? 'generic'}'.trim();
-    final sourceName =
-        '${raw['sourceName'] ?? raw['source'] ?? '通用账单'}'.trim();
+    final sourceName = '${raw['sourceName'] ?? raw['source'] ?? '通用账单'}'.trim();
     final accountName = '${raw['accountName'] ?? ''}'.trim();
-    final paymentMethod =
-        '${raw['paymentMethod'] ?? accountName}'.trim();
+    final paymentMethod = '${raw['paymentMethod'] ?? accountName}'.trim();
     return <String, dynamic>{
       'occurredAt': occurredAt,
       'merchant': '${raw['merchant'] ?? raw['title'] ?? ''}'.trim(),
@@ -221,8 +214,8 @@ class LedgerImportParser {
       'type': type,
       'source': source.isEmpty ? 'generic' : source,
       'sourceName': sourceName.isEmpty ? '通用账单' : sourceName,
-      'sourceCategory':
-          '${raw['sourceCategory'] ?? raw['category'] ?? ''}'.trim(),
+      'sourceCategory': '${raw['sourceCategory'] ?? raw['category'] ?? ''}'
+          .trim(),
       'category': '${raw['category'] ?? ''}'.trim(),
       'incomeCategory': '${raw['incomeCategory'] ?? ''}'.trim(),
       'paymentMethod': paymentMethod,
@@ -288,8 +281,9 @@ class LedgerImportParser {
     if (value == null || text.isEmpty || text == 'null') {
       return useFallback ? _formatDateTime(fallback) : '';
     }
-    final compact = RegExp(r'^(\d{4})(\d{2})(\d{2})(?:[ T]?(\d{2})(\d{2})(\d{2})?)?$')
-        .firstMatch(text);
+    final compact = RegExp(
+      r'^(\d{4})(\d{2})(\d{2})(?:[ T]?(\d{2})(\d{2})(\d{2})?)?$',
+    ).firstMatch(text);
     if (compact != null) {
       return _dateParts(
         compact.group(1)!,
@@ -330,13 +324,13 @@ class LedgerImportParser {
   }
 
   static String _formatDateTime(DateTime value) => _dateParts(
-        '${value.year}',
-        '${value.month}',
-        '${value.day}',
-        '${value.hour}',
-        '${value.minute}',
-        '${value.second}',
-      );
+    '${value.year}',
+    '${value.month}',
+    '${value.day}',
+    '${value.hour}',
+    '${value.minute}',
+    '${value.second}',
+  );
 
   static String _normalizeHeader(String value) => value
       .replaceFirst('\uFEFF', '')

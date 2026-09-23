@@ -55,8 +55,7 @@ Future<void> downloadAndInstallWindowsUpdate({
   }
 
   final checksumResponse = await _getUpdateResource(checksumUri);
-  if (checksumResponse.statusCode < 200 ||
-      checksumResponse.statusCode >= 300) {
+  if (checksumResponse.statusCode < 200 || checksumResponse.statusCode >= 300) {
     throw HttpException(
       '更新校验清单下载失败（HTTP ${checksumResponse.statusCode}）',
       uri: checksumUri,

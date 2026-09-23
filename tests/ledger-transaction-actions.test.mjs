@@ -33,5 +33,10 @@ test("transaction edit payload preserves optimistic concurrency fields", () => {
     mood: "刚需",
     category: "餐饮",
     incomeCategory: "薪资发放",
+    note: "",
+    tags: [],
+    reimbursable: false,
+    discountAmount: 0,
+    excludeFromBudget: false,
   });
 });

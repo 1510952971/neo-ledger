@@ -37,6 +37,9 @@ test("normalizes an imported transaction correction to integer cents", () => {
       occurredAt: "2025-07-16T12:30",
       originalTimezone: "Asia/Shanghai",
       expectedUpdatedAt: "2026-07-16T12:00:00.000Z",
+      reimbursable: null,
+      discountAmount: 0,
+      excludeFromBudget: null,
     },
   );
 });

@@ -199,6 +199,8 @@ type Transaction = {
   amount: number;
   type: TransactionType;
   mood: Mood | null;
+  note: string | null;
+  tags: string[];
   category: Category | null;
   incomeCategory: IncomeCategory | null;
   accountId: number;
@@ -211,6 +213,9 @@ type Transaction = {
   installmentId: number | null;
   installmentNumber: number | null;
   isSideHustle: boolean;
+  reimbursable: boolean;
+  discountAmount: number;
+  excludeFromBudget: boolean;
   occurredAt: string;
   updatedAt: string;
   createdAt: string;

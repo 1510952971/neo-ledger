@@ -207,7 +207,10 @@ export async function PUT(request: Request) {
             split_with_member_id=CASE WHEN ?='收入' THEN NULL ELSE split_with_member_id END,
             split_mode=CASE WHEN ?='收入' THEN NULL ELSE split_mode END,
             my_share_percent=CASE WHEN ?='收入' THEN 100 ELSE my_share_percent END,
-            is_side_hustle=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+            is_side_hustle=?,reimbursable=COALESCE(?,reimbursable),
+            discount_amount=COALESCE(?,discount_amount),
+            exclude_from_budget=COALESCE(?,exclude_from_budget),
+            updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
           WHERE id=? AND ledger_id=? AND updated_at=?`,
         )
         .bind(
@@ -233,6 +236,9 @@ export async function PUT(request: Request) {
           value.type,
           value.type,
           isSideHustle,
+          value.reimbursable,
+          value.discountAmount,
+          value.excludeFromBudget,
           value.id,
           value.ledgerId,
           value.expectedUpdatedAt,

@@ -594,6 +594,17 @@ export default async function Home({
     <LedgerApp
       transactions={records.map((row) => ({
         ...row,
+        note: row.note?.trim() || null,
+        tags: (() => {
+          try {
+            const value = JSON.parse(row.tagsJson || "[]");
+            return Array.isArray(value)
+              ? value.filter((tag): tag is string => typeof tag === "string")
+              : [];
+          } catch {
+            return [];
+          }
+        })(),
         category: row.categoryDynamic ?? row.category,
         incomeCategory: row.incomeCategoryDynamic ?? row.incomeCategory,
       }))}

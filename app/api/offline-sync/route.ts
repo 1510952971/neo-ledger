@@ -55,6 +55,9 @@ export async function POST(request: Request) {
         tags = [...new Set((Array.isArray(item.tags) ? item.tags : [])
           .map((tag) => String(tag).trim().slice(0, 24))
           .filter(Boolean))].slice(0, 12),
+        reimbursable = item.reimbursable === true || item.reimbursable === 1,
+        discountAmount = Math.max(0, Math.round(Number(item.discountAmount || 0) * 100)),
+        excludeFromBudget = item.excludeFromBudget === true || item.excludeFromBudget === 1,
         requestedCategory = String(item.category || ""),
         requestedIncomeCategory = String(item.incomeCategory || ""),
         originalTimezone = String(item.originalTimezone || "Asia/Shanghai"),
@@ -97,7 +100,7 @@ export async function POST(request: Request) {
       const results = await db.batch([
         db
           .prepare(
-            "INSERT INTO transactions(ledger_id,title,note,tags_json,amount,type,mood,category,category_dynamic,income_category,income_category_dynamic,account_id,paid_by_member_id,split_with_member_id,split_mode,my_share_percent,currency,original_amount,original_currency,exchange_rate_micros,original_timezone,is_side_hustle,occurred_at,offline_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1000000,?,?,?,?)",
+            "INSERT INTO transactions(ledger_id,title,note,tags_json,amount,type,mood,category,category_dynamic,income_category,income_category_dynamic,account_id,paid_by_member_id,split_with_member_id,split_mode,my_share_percent,currency,original_amount,original_currency,exchange_rate_micros,original_timezone,is_side_hustle,reimbursable,discount_amount,exclude_from_budget,occurred_at,offline_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1000000,?,?,?,?,?,?,?)",
           )
           .bind(
             ledgerId,
@@ -125,6 +128,9 @@ export async function POST(request: Request) {
             account.currency,
             originalTimezone,
             type === "收入" && item.isSideHustle ? 1 : 0,
+            reimbursable ? 1 : 0,
+            discountAmount,
+            excludeFromBudget ? 1 : 0,
             occurredAt,
             offlineId,
           ),

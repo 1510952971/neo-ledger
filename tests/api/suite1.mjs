@@ -119,18 +119,21 @@ r = await call(incomeCats, "POST", "/api/income-categories", { body: { ledgerId:
 check("非法收入分类颜色被拒", r.status === 400, `${r.status} ${r.text}`);
 
 describe("离线记账/流水");
-const mk = (i, type, amount) => ({ offlineId: `t-${i}`, ledgerId: L, accountId: acct1, amount, type, title: `测试${i}`, mood: "刚需", category: "餐饮", incomeCategory: "工资", occurredAt: "2026-07-20T12:00", originalTimezone: "Asia/Shanghai" });
+const mk = (i, type, amount) => ({ offlineId: `t-${i}`, ledgerId: L, accountId: acct1, amount, type, title: `测试${i}`, note: "项目聚餐", tags: ["工作", "报销"], reimbursable: true, discountAmount: 2.5, excludeFromBudget: true, mood: "刚需", category: "餐饮", incomeCategory: "工资", occurredAt: "2026-07-20T12:00", originalTimezone: "Asia/Shanghai" });
 r = await call(offline, "POST", "/api/offline-sync", { body: { items: [mk(1, "支出", 35.5), mk(2, "收入", 8888.88)] } });
 check("POST 两笔离线账单", r.status === 200, r.text);
-let txs = await q("SELECT id,amount,type,title,updated_at FROM transactions ORDER BY id");
+let txs = await q("SELECT id,amount,type,title,note,tags_json,reimbursable,discount_amount,exclude_from_budget,updated_at FROM transactions ORDER BY id");
 check("流水落库2条", txs.length === 2, JSON.stringify(txs).slice(0,150));
 check("金额转分正确 35.5→3550", txs[0]?.amount === 3550, String(txs[0]?.amount));
+check("离线账单高级字段落库", txs[0]?.note === "项目聚餐" && txs[0]?.tags_json === '["工作","报销"]' && txs[0]?.reimbursable === 1 && txs[0]?.discount_amount === 250 && txs[0]?.exclude_from_budget === 1, JSON.stringify(txs[0]));
 r = await call(offline, "POST", "/api/offline-sync", { body: { items: [mk(1, "支出", 35.5)] } });
 txs = await q("SELECT COUNT(*) n FROM transactions");
 check("重复 offlineId 幂等不重复入账", txs[0].n === 2, JSON.stringify(txs));
 const t1 = (await q("SELECT id,updated_at u FROM transactions WHERE title='测试1'"))[0];
-r = await call(transactions, "PUT", "/api/transactions", { body: { id: t1.id, ledgerId: L, accountId: acct1, amount: 66, type: "支出", title: "改名账单", mood: "冲动", category: "餐饮", occurredAt: "2026-07-20T13:00", expectedUpdatedAt: t1.u } });
+r = await call(transactions, "PUT", "/api/transactions", { body: { id: t1.id, ledgerId: L, accountId: acct1, amount: 66, type: "支出", title: "改名账单", note: "更新备注", tags: ["已核对"], reimbursable: false, discountAmount: 1.25, excludeFromBudget: false, mood: "冲动", category: "餐饮", occurredAt: "2026-07-20T13:00", expectedUpdatedAt: t1.u } });
 check("PUT 编辑账单", r.status === 200, r.text);
+const edited = (await q("SELECT note,tags_json,reimbursable,discount_amount,exclude_from_budget FROM transactions WHERE id=?", t1.id))[0];
+check("编辑账单高级字段同步", edited?.note === "更新备注" && edited?.tags_json === '["已核对"]' && edited?.reimbursable === 0 && edited?.discount_amount === 125 && edited?.exclude_from_budget === 0, JSON.stringify(edited));
 r = await call(transactions, "PUT", "/api/transactions", { body: { id: t1.id, ledgerId: L, accountId: acct1, amount: 66, type: "支出", title: "再改", mood: "冲动", category: "餐饮", occurredAt: "2026-07-20T13:00", expectedUpdatedAt: t1.u } });
 check("过期版本冲突返回409", r.status === 409, `${r.status} ${r.text}`);
 

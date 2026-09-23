@@ -1068,6 +1068,9 @@ class OfflineEntry {
     this.mySharePercent = 100,
     this.isSideHustle = false,
     this.isBusinessExpense = false,
+    this.reimbursable = false,
+    this.discountAmountCents = 0,
+    this.excludeFromBudget = false,
     this.originalTimezone = 'Asia/Shanghai',
   });
 
@@ -1087,6 +1090,9 @@ class OfflineEntry {
   final double mySharePercent;
   final bool isSideHustle;
   final bool isBusinessExpense;
+  final bool reimbursable;
+  final int discountAmountCents;
+  final bool excludeFromBudget;
   final String originalTimezone;
 
   Map<String, dynamic> toJson() => {
@@ -1106,6 +1112,9 @@ class OfflineEntry {
     'mySharePercent': mySharePercent,
     if (type == '收入') 'isSideHustle': isSideHustle,
     if (type == '收入') 'isBusinessExpense': isBusinessExpense,
+    'reimbursable': reimbursable,
+    'discountAmount': discountAmountCents / 100,
+    'excludeFromBudget': excludeFromBudget,
     'originalTimezone': originalTimezone,
     'occurredAt': occurredAt,
   };
@@ -1131,6 +1140,11 @@ class OfflineEntry {
     mySharePercent: (json['mySharePercent'] as num?)?.toDouble() ?? 100,
     isSideHustle: json['isSideHustle'] == true,
     isBusinessExpense: json['isBusinessExpense'] == true,
+    reimbursable: json['reimbursable'] == true || json['reimbursable'] == 1,
+    discountAmountCents:
+        (((json['discountAmount'] as num?)?.toDouble() ?? 0) * 100).round(),
+    excludeFromBudget:
+        json['excludeFromBudget'] == true || json['excludeFromBudget'] == 1,
     originalTimezone: '${json['originalTimezone'] ?? 'Asia/Shanghai'}',
   );
 }

@@ -155,6 +155,8 @@ export const transactions = sqliteTable("transactions", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   ledgerId: integer("ledger_id").notNull().default(1),
   title: text("title").notNull(),
+  note: text("note").notNull().default(""),
+  tagsJson: text("tags_json").notNull().default("[]"),
   amount: integer("amount").notNull(),
   type: text("type", { enum: ["支出", "收入"] }).notNull(),
   mood: text("mood", { enum: ["悦己", "刚需", "冲动"] }),

@@ -31,6 +31,8 @@ TransactionItem offlineEntryTransaction(
     ledgerId: entry.ledgerId,
     accountId: entry.accountId,
     title: entry.title,
+    note: entry.note,
+    tags: entry.tags,
     amountCents: amountCents,
     type: entry.type,
     occurredAt: entry.occurredAt,
@@ -41,6 +43,9 @@ TransactionItem offlineEntryTransaction(
     accountName: matchingAccount?.name,
     currency: matchingAccount?.currency ?? 'CNY',
     source: offlineTransactionSource,
+    reimbursable: entry.reimbursable,
+    discountAmountCents: entry.discountAmountCents,
+    excludeFromBudget: entry.excludeFromBudget,
   );
 }
 

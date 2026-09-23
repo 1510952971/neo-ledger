@@ -1150,6 +1150,9 @@ class LedgerController extends ChangeNotifier {
     bool isBusinessExpense = false,
     String? note,
     List<String> tags = const [],
+    bool reimbursable = false,
+    int discountAmountCents = 0,
+    bool excludeFromBudget = false,
   }) async {
     final ledger = selectedLedger;
     final account = accounts.isEmpty
@@ -1186,6 +1189,9 @@ class LedgerController extends ChangeNotifier {
       mySharePercent: mySharePercent,
       isSideHustle: isSideHustle,
       isBusinessExpense: isBusinessExpense,
+      reimbursable: reimbursable,
+      discountAmountCents: discountAmountCents,
+      excludeFromBudget: excludeFromBudget,
     );
     if (demoMode) {
       final item = TransactionItem(
@@ -1896,6 +1902,9 @@ class LedgerController extends ChangeNotifier {
     String? mood,
     String? note,
     List<String> tags = const [],
+    bool reimbursable = false,
+    int discountAmountCents = 0,
+    bool excludeFromBudget = false,
   }) async {
     if (demoMode) {
       String? accountName;
@@ -1916,6 +1925,9 @@ class LedgerController extends ChangeNotifier {
         category: type == '支出' ? category : item.category,
         incomeCategory: type == '收入' ? category : item.incomeCategory,
         mood: mood,
+        reimbursable: reimbursable,
+        discountAmountCents: discountAmountCents,
+        excludeFromBudget: excludeFromBudget,
       );
       final items = transactions.items
           .map((candidate) => candidate.id == item.id ? updated : candidate)
@@ -1945,6 +1957,9 @@ class LedgerController extends ChangeNotifier {
       mood: mood,
       note: note,
       tags: tags,
+      reimbursable: reimbursable,
+      discountAmountCents: discountAmountCents,
+      excludeFromBudget: excludeFromBudget,
     );
     await refresh();
   }
@@ -12003,12 +12018,15 @@ class _EditTransactionSheetState extends State<EditTransactionSheet> {
   late final TextEditingController title;
   late final TextEditingController note;
   late final TextEditingController tags;
+  late final TextEditingController discountAmount;
   late final TextEditingController amount;
   late final TextEditingController category;
   late String type;
   String? mood;
   int? accountId;
   bool saving = false;
+  late bool reimbursable;
+  late bool excludeFromBudget;
 
   @override
   void initState() {
@@ -12017,6 +12035,11 @@ class _EditTransactionSheetState extends State<EditTransactionSheet> {
     title = TextEditingController(text: item.title);
     note = TextEditingController(text: item.note ?? '');
     tags = TextEditingController(text: item.tags.join('，'));
+    discountAmount = TextEditingController(
+      text: item.discountAmountCents == 0
+          ? ''
+          : (item.discountAmountCents / 100).toStringAsFixed(2),
+    );
     amount = TextEditingController(text: item.amount.toStringAsFixed(2));
     category = TextEditingController(
       text: item.category ?? item.incomeCategory ?? '其他',
@@ -12024,6 +12047,8 @@ class _EditTransactionSheetState extends State<EditTransactionSheet> {
     type = item.type;
     mood = item.mood;
     accountId = item.accountId > 0 ? item.accountId : null;
+    reimbursable = item.reimbursable;
+    excludeFromBudget = item.excludeFromBudget;
   }
 
   @override
@@ -12031,6 +12056,7 @@ class _EditTransactionSheetState extends State<EditTransactionSheet> {
     title.dispose();
     note.dispose();
     tags.dispose();
+    discountAmount.dispose();
     amount.dispose();
     category.dispose();
     super.dispose();
@@ -12100,6 +12126,33 @@ class _EditTransactionSheetState extends State<EditTransactionSheet> {
                 labelText: '标签（可选）',
                 hintText: '多个标签用逗号分隔',
               ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: discountAmount,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: const InputDecoration(
+                labelText: '优惠金额（可选）',
+                prefixText: '¥ ',
+              ),
+            ),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('待报销'),
+              value: reimbursable,
+              onChanged: saving
+                  ? null
+                  : (value) => setState(() => reimbursable = value),
+            ),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('不计入预算'),
+              value: excludeFromBudget,
+              onChanged: saving
+                  ? null
+                  : (value) => setState(() => excludeFromBudget = value),
             ),
             const SizedBox(height: 12),
             if (accounts.isNotEmpty)
@@ -12179,6 +12232,10 @@ class _EditTransactionSheetState extends State<EditTransactionSheet> {
           .toSet()
           .take(12)
           .toList();
+      final parsedDiscount = double.tryParse(discountAmount.text.trim()) ?? 0;
+      if (parsedDiscount < 0 || !parsedDiscount.isFinite) {
+        throw const ApiException('优惠金额格式无效');
+      }
       await widget.controller.updateTransaction(
         widget.item,
         title: title.text.trim().isEmpty ? '未命名流水' : title.text.trim(),
@@ -12189,6 +12246,9 @@ class _EditTransactionSheetState extends State<EditTransactionSheet> {
         accountId: selectedAccount,
         category: category.text.trim(),
         mood: mood,
+        reimbursable: reimbursable,
+        discountAmountCents: (parsedDiscount * 100).round(),
+        excludeFromBudget: excludeFromBudget,
       );
       if (mounted) Navigator.of(context).pop();
     } catch (error) {

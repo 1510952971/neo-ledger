@@ -27,10 +27,7 @@ ShortcutEntryDraft? parseShortcutEntryUri(String raw) {
 
   final amountText = uri.queryParameters['amount']?.trim();
   final amount = amountText == null ? null : double.tryParse(amountText);
-  if (amount == null ||
-      !amount.isFinite ||
-      amount <= 0 ||
-      amount > 100000000) {
+  if (amount == null || !amount.isFinite || amount <= 0 || amount > 100000000) {
     return null;
   }
 

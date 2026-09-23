@@ -971,6 +971,9 @@ class NeoLedgerApi {
     String? mood,
     String? note,
     List<String> tags = const [],
+    bool reimbursable = false,
+    int discountAmountCents = 0,
+    bool excludeFromBudget = false,
   }) async {
     if (item.ledgerId <= 0 || item.updatedAt == null) {
       throw const ApiException('流水缺少版本信息，请刷新后再编辑');
@@ -987,6 +990,9 @@ class NeoLedgerApi {
       'title': title,
       if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
       if (tags.isNotEmpty) 'tags': tags,
+      'reimbursable': reimbursable,
+      'discountAmount': discountAmountCents / 100,
+      'excludeFromBudget': excludeFromBudget,
       'mood': mood ?? item.mood ?? '刚需',
       'category': type == '支出' ? category : '其它',
       'incomeCategory': type == '收入' ? category : '其它收入',

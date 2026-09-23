@@ -17,9 +17,7 @@ String? findExpectedSha256(String manifest, String fileName) {
     final line = rawLine.trim();
     if (line.isEmpty || line.startsWith('#')) continue;
 
-    final match = RegExp(
-      r'^([0-9a-fA-F]{64})\s+\*?(.+?)\s*$',
-    ).firstMatch(line);
+    final match = RegExp(r'^([0-9a-fA-F]{64})\s+\*?(.+?)\s*$').firstMatch(line);
     if (match == null) continue;
 
     final candidateName = match.group(2);
@@ -35,4 +33,3 @@ bool verifySha256({required List<int> bytes, required String expected}) {
   if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(normalized)) return false;
   return sha256.convert(bytes).toString() == normalized;
 }
-

@@ -65,9 +65,7 @@ class NeoLedgerUpdateService {
     required bool includePrerelease,
   }) {
     final matchingReleases = releases
-        .where(
-          (release) => tagPattern.hasMatch('${release['tag_name'] ?? ''}'),
-        )
+        .where((release) => tagPattern.hasMatch('${release['tag_name'] ?? ''}'))
         .where(
           (release) =>
               release['draft'] != true &&

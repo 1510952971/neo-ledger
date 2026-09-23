@@ -48,6 +48,16 @@ export function normalizeTransactionEdit(input) {
     input?.originalTimezone || "Asia/Shanghai",
   ).trim();
   const expectedUpdatedAt = String(input?.expectedUpdatedAt || "").trim();
+  const hasField = (name) => Object.prototype.hasOwnProperty.call(input || {}, name);
+  const reimbursable = hasField("reimbursable")
+    ? Boolean(input.reimbursable === true || input.reimbursable === 1 || input.reimbursable === "true" || input.reimbursable === "on")
+    : null;
+  const excludeFromBudget = hasField("excludeFromBudget")
+    ? Boolean(input.excludeFromBudget === true || input.excludeFromBudget === 1 || input.excludeFromBudget === "true" || input.excludeFromBudget === "on")
+    : null;
+  const discountAmount = hasField("discountAmount")
+    ? Math.max(0, Math.round(Number(input.discountAmount || 0) * 100))
+    : null;
   if (!Number.isInteger(id) || id <= 0) throw new Error("账单不存在");
   if (!Number.isInteger(ledgerId) || ledgerId <= 0)
     throw new Error("账本不存在");
@@ -77,5 +87,8 @@ export function normalizeTransactionEdit(input) {
     occurredAt,
     originalTimezone,
     expectedUpdatedAt,
+    reimbursable,
+    discountAmount: Number.isFinite(discountAmount) ? discountAmount : 0,
+    excludeFromBudget,
   };
 }

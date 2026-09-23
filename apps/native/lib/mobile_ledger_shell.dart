@@ -1408,6 +1408,17 @@ class _MobileTransactionDetailPageState
           _DetailRow(label: '账户', value: item.accountName ?? '未知账户'),
           _DetailRow(label: '币种', value: item.currency),
           if (item.mood != null) _DetailRow(label: '消费性质', value: item.mood!),
+          if (item.note != null && item.note!.trim().isNotEmpty)
+            _DetailRow(label: '备注', value: item.note!.trim()),
+          if (item.tags.isNotEmpty)
+            _DetailRow(label: '标签', value: item.tags.join(' · ')),
+          if (item.reimbursable) _DetailRow(label: '报销', value: '待报销'),
+          if (item.discountAmountCents > 0)
+            _DetailRow(
+              label: '优惠金额',
+              value: _mobileMoney(item.discountAmountCents),
+            ),
+          if (item.excludeFromBudget) _DetailRow(label: '预算', value: '不计入预算'),
           _DetailRow(
             label: '发生时间',
             value: occurredAt == null
@@ -3338,7 +3349,10 @@ class _MobileExperienceSettingsState extends State<_MobileExperienceSettings> {
 }
 
 class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
+  final _title = TextEditingController();
   final _note = TextEditingController();
+  final _tags = TextEditingController();
+  final _discountAmount = TextEditingController();
   final _categorySearch = TextEditingController();
   final _entryPreferences = const MobileEntryPreferences();
   late String _type;
@@ -3354,6 +3368,8 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
   bool _continuous = false;
   bool _hapticsEnabled = true;
   bool _accountManuallySelected = false;
+  bool _reimbursable = false;
+  bool _excludeFromBudget = false;
   List<String> _recentCategories = const [];
   bool _saving = false;
 
@@ -3377,7 +3393,10 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
 
   @override
   void dispose() {
+    _title.dispose();
     _note.dispose();
+    _tags.dispose();
+    _discountAmount.dispose();
     _categorySearch.dispose();
     super.dispose();
   }
@@ -3621,6 +3640,21 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
               ],
             ],
             const SizedBox(height: 8),
+            if (_type != '转账') ...[
+              TextField(
+                controller: _title,
+                textInputAction: TextInputAction.next,
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(
+                    Icons.storefront_outlined,
+                    color: _mobileMuted,
+                  ),
+                  labelText: '商户 / 项目',
+                  hintText: '例如：午餐、地铁、工资',
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
             TextField(
               controller: _note,
               textInputAction: TextInputAction.done,
@@ -3629,6 +3663,59 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
                 hintText: '添加备注，例如：午餐、地铁、房租…',
               ),
             ),
+            if (_type != '转账') ...[
+              const SizedBox(height: 8),
+              TextField(
+                controller: _tags,
+                textInputAction: TextInputAction.next,
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(
+                    Icons.label_outline_rounded,
+                    color: _mobileMuted,
+                  ),
+                  labelText: '标签（可选）',
+                  hintText: '多个标签用逗号分隔，例如：工作、报销',
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _discountAmount,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(
+                    Icons.local_offer_outlined,
+                    color: _mobileMuted,
+                  ),
+                  labelText: '优惠金额（可选）',
+                  prefixText: '¥ ',
+                ),
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                title: const Text('待报销'),
+                subtitle: const Text(
+                  '保留在报销清单中，不改变实际流水金额',
+                  style: TextStyle(color: _mobileMuted, fontSize: 12),
+                ),
+                value: _reimbursable,
+                activeTrackColor: _mobileBrand,
+                onChanged: (value) => setState(() => _reimbursable = value),
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                title: const Text('不计入预算'),
+                subtitle: const Text(
+                  '仍保留在账单中，但不参与预算统计',
+                  style: TextStyle(color: _mobileMuted, fontSize: 12),
+                ),
+                value: _excludeFromBudget,
+                activeTrackColor: _mobileBrand,
+                onChanged: (value) =>
+                    setState(() => _excludeFromBudget = value),
+              ),
+            ],
             const SizedBox(height: 8),
             SwitchListTile.adaptive(
               contentPadding: const EdgeInsets.symmetric(horizontal: 4),
@@ -3937,14 +4024,31 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
           occurredAt: _occurredAt,
         );
       } else {
+        final parsedTags = _tags.text
+            .split(RegExp(r'[,，]'))
+            .map((tag) => tag.trim())
+            .where((tag) => tag.isNotEmpty)
+            .toSet()
+            .take(12)
+            .toList();
+        final parsedDiscount =
+            double.tryParse(_discountAmount.text.trim()) ?? 0;
+        if (parsedDiscount < 0 || !parsedDiscount.isFinite) {
+          throw const ApiException('优惠金额格式无效');
+        }
         await controller.addEntry(
           amount: amount,
-          title: _note.text.trim().isEmpty ? _category! : _note.text.trim(),
+          title: _title.text.trim().isEmpty ? _category! : _title.text.trim(),
           category: _category!,
           type: _type,
           accountId: _accountId,
           occurredAt: _occurredAt.toUtc().toIso8601String(),
           mood: _type == '支出' ? _mood : null,
+          note: _note.text.trim().isEmpty ? null : _note.text.trim(),
+          tags: parsedTags,
+          reimbursable: _reimbursable,
+          discountAmountCents: (parsedDiscount * 100).round(),
+          excludeFromBudget: _excludeFromBudget,
           splitWithMemberId: _type == '支出' ? _splitMemberId : null,
           splitMode: _type == '支出' && _splitMemberId != null
               ? _splitMode
@@ -3969,7 +4073,12 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
       if (_continuous && _type != '转账') {
         setState(() {
           _amount = '0';
+          _title.clear();
           _note.clear();
+          _tags.clear();
+          _discountAmount.clear();
+          _reimbursable = false;
+          _excludeFromBudget = false;
         });
       } else {
         Navigator.pop(context);

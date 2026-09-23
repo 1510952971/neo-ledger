@@ -91,6 +91,11 @@ void main() {
       splitWithMemberId: 3,
       splitMode: '平均分摊',
       mySharePercent: 50,
+      note: '和同事聚餐',
+      tags: ['工作', '报销'],
+      reimbursable: true,
+      discountAmountCents: 250,
+      excludeFromBudget: true,
     );
 
     final restored = OfflineEntry.fromJson(entry.toJson());
@@ -98,6 +103,11 @@ void main() {
     expect(restored.splitWithMemberId, 3);
     expect(restored.splitMode, '平均分摊');
     expect(restored.mySharePercent, 50);
+    expect(restored.note, '和同事聚餐');
+    expect(restored.tags, ['工作', '报销']);
+    expect(restored.reimbursable, isTrue);
+    expect(restored.discountAmountCents, 250);
+    expect(restored.excludeFromBudget, isTrue);
   });
 
   test('generates UTC ISO timestamps for new offline entries', () {

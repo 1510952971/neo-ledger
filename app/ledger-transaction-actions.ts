@@ -4,7 +4,15 @@ import { useCallback } from "react";
 import { fetchClientJson } from "./client-api.ts";
 
 type TransactionEditDraftLike = {
-  transaction: { id: number; updatedAt: string };
+  transaction: {
+    id: number;
+    updatedAt: string;
+    note?: string | null;
+    tags?: string[];
+    reimbursable?: boolean;
+    discountAmount?: number;
+    excludeFromBudget?: boolean;
+  };
   type: string;
   accountId: number;
   mood: string;
@@ -37,6 +45,14 @@ export function transactionEditPayloadFromForm<Draft extends TransactionEditDraf
     mood: draft.mood,
     category: draft.category,
     incomeCategory: draft.incomeCategory,
+    note: String(formData.get("note") || ""),
+    tags: String(formData.get("tags") || "")
+      .split(/[,，]/u)
+      .map((tag) => tag.trim())
+      .filter(Boolean),
+    reimbursable: formData.get("reimbursable") === "on",
+    discountAmount: Number(formData.get("discountAmount") || 0),
+    excludeFromBudget: formData.get("excludeFromBudget") === "on",
   };
 }
 
