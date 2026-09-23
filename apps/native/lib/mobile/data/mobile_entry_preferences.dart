@@ -10,6 +10,7 @@ class MobileEntryPreferences {
   static const _hapticsKey = 'mobile.entry.haptics';
   static const _hideAmountsKey = 'mobile.home.hideAmounts';
   static const _billSearchHistoryKey = 'mobile.bill.searchHistory';
+  static const _billFilterHistoryKey = 'mobile.bill.filterHistory';
   static const _entryDraftKey = 'mobile.entry.draft';
 
   Future<List<String>> recentCategories() async {
@@ -72,6 +73,39 @@ class MobileEntryPreferences {
         normalized,
         ...recent.where((item) => item != normalized),
       ].take(6).toList(),
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> recentBillFilters() async {
+    final preferences = await SharedPreferences.getInstance();
+    final raw = preferences.getStringList(_billFilterHistoryKey) ?? const [];
+    final filters = <Map<String, dynamic>>[];
+    for (final encoded in raw) {
+      try {
+        final decoded = jsonDecode(encoded);
+        if (decoded is Map<String, dynamic>) {
+          filters.add(decoded);
+        } else if (decoded is Map) {
+          filters.add(
+            decoded.map((key, value) => MapEntry(key.toString(), value)),
+          );
+        }
+      } catch (_) {
+        // Corrupt local history must never block the bill page.
+      }
+    }
+    return filters;
+  }
+
+  Future<void> rememberBillFilter(Map<String, dynamic> filter) async {
+    final label = filter['label'];
+    if (label is! String || label.trim().isEmpty) return;
+    final preferences = await SharedPreferences.getInstance();
+    final encoded = jsonEncode(filter);
+    final recent = preferences.getStringList(_billFilterHistoryKey) ?? const [];
+    await preferences.setStringList(
+      _billFilterHistoryKey,
+      [encoded, ...recent.where((item) => item != encoded)].take(6).toList(),
     );
   }
 

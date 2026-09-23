@@ -976,6 +976,7 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
   bool _selectionMode = false;
   final _selectedIds = <int>{};
   List<String> _searchHistory = const [];
+  List<Map<String, dynamic>> _filterHistory = const [];
 
   LedgerController get controller => widget.controller;
 
@@ -986,6 +987,7 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
     _month = DateTime(now.year, now.month);
     _page = controller.transactions;
     _loadSearchHistory();
+    _loadFilterHistory();
     _load();
   }
 
@@ -1110,6 +1112,28 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
                 ],
               ],
             ),
+            if (_search.text.trim().isEmpty && _filterHistory.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '最近筛选',
+                  style: TextStyle(color: _mobileMuted, fontSize: 12),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  for (final filter in _filterHistory)
+                    ActionChip(
+                      label: Text('${filter['label']}'),
+                      onPressed: () => _applyFilterHistory(filter),
+                    ),
+                ],
+              ),
+            ],
             const SizedBox(height: 14),
             if (_loading) const LinearProgressIndicator(minHeight: 2),
             if (_error != null) ...[
@@ -1273,7 +1297,7 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: Text('删除 ${synced.length} 笔流水？'),
-          content: const Text('删除会同步到网页、Windows、macOS 和其他移动设备，且当前没有撤销入口。'),
+          content: const Text('删除会同步到网页、Windows、macOS 和其他移动设备，可在短时间内撤销。'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
@@ -1287,17 +1311,48 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
         ),
       );
       if (confirmed != true || !mounted) return;
+      final deleted = <MapEntry<TransactionItem, String>>[];
       try {
         for (final item in synced) {
-          await controller.deleteTransaction(item);
+          final token = await controller.deleteTransaction(item);
+          if (token != null) deleted.add(MapEntry(item, token));
         }
         if (mounted) {
           _exitSelectionMode();
           await _load();
           if (mounted) {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text('已删除 ${synced.length} 笔流水')));
+            final messenger = ScaffoldMessenger.of(context);
+            messenger.showSnackBar(
+              SnackBar(
+                content: Text(
+                  deleted.length == synced.length
+                      ? '已删除 ${synced.length} 笔流水，可在 2 分钟内撤销'
+                      : '已删除 ${synced.length} 笔流水',
+                ),
+                action: deleted.length == synced.length
+                    ? SnackBarAction(
+                        label: '撤销',
+                        onPressed: () async {
+                          try {
+                            for (final entry in deleted) {
+                              await controller.restoreTransaction(
+                                entry.key,
+                                entry.value,
+                              );
+                            }
+                            if (mounted) await _load();
+                          } catch (error) {
+                            if (mounted) {
+                              messenger.showSnackBar(
+                                SnackBar(content: Text('批量撤销失败：$error')),
+                              );
+                            }
+                          }
+                        },
+                      )
+                    : null,
+              ),
+            );
           }
         }
       } catch (error) {
@@ -1489,6 +1544,65 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
   Future<void> _loadSearchHistory() async {
     final history = await _searchPreferences.recentBillSearches();
     if (mounted) setState(() => _searchHistory = history);
+  }
+
+  Future<void> _loadFilterHistory() async {
+    final history = await _searchPreferences.recentBillFilters();
+    if (mounted) setState(() => _filterHistory = history);
+  }
+
+  void _applyFilterHistory(Map<String, dynamic> filter) {
+    setState(() {
+      _accountFilter = _filterInt(filter['accountId']);
+      _typeFilter = filter['type'] as String?;
+      _categoryFilter = filter['category'] as String?;
+      _minAmount = _filterDouble(filter['minAmount']);
+      _maxAmount = _filterDouble(filter['maxAmount']);
+      _dateFrom = _filterDate(filter['dateFrom']);
+      _dateTo = _filterDate(filter['dateTo']);
+    });
+    _load();
+  }
+
+  int? _filterInt(Object? value) =>
+      value is num ? value.toInt() : int.tryParse('$value');
+
+  double? _filterDouble(Object? value) =>
+      value is num ? value.toDouble() : double.tryParse('$value');
+
+  DateTime? _filterDate(Object? value) =>
+      value is String ? DateTime.tryParse(value) : null;
+
+  String _filterLabel({
+    String? type,
+    int? accountId,
+    String? category,
+    double? minAmount,
+    double? maxAmount,
+    DateTime? dateFrom,
+    DateTime? dateTo,
+  }) {
+    final labels = <String>[];
+    if (type != null) labels.add(type);
+    if (accountId != null) {
+      final account = controller.accounts
+          .where((item) => item.id == accountId)
+          .firstOrNull;
+      labels.add(account?.name ?? '账户');
+    }
+    if (category != null) labels.add(category);
+    if (minAmount != null || maxAmount != null) {
+      labels.add(
+        '${minAmount?.toStringAsFixed(2) ?? '不限'}-${maxAmount?.toStringAsFixed(2) ?? '不限'}',
+      );
+    }
+    if (dateFrom != null || dateTo != null) {
+      labels.add(
+        '${dateFrom == null ? '不限' : DateFormat('MM-dd').format(dateFrom)}~'
+        '${dateTo == null ? '不限' : DateFormat('MM-dd').format(dateTo)}',
+      );
+    }
+    return labels.isEmpty ? '全部账单' : labels.join(' · ');
   }
 
   Future<void> _rememberSearch() async {
@@ -1748,6 +1862,25 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
           _dateFrom = dateFrom;
           _dateTo = dateTo;
         });
+        await _searchPreferences.rememberBillFilter({
+          'label': _filterLabel(
+            type: type,
+            accountId: accountId,
+            category: category,
+            minAmount: min,
+            maxAmount: max,
+            dateFrom: dateFrom,
+            dateTo: dateTo,
+          ),
+          'type': type,
+          'accountId': accountId,
+          'category': category,
+          'minAmount': min,
+          'maxAmount': max,
+          'dateFrom': dateFrom?.toIso8601String(),
+          'dateTo': dateTo?.toIso8601String(),
+        });
+        await _loadFilterHistory();
         _load();
       }
     }
@@ -4202,6 +4335,7 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
         ? controller.expenseCategories
         : controller.incomeCategories;
     if (source.isNotEmpty) {
+      final byId = {for (final item in source) item.id: item};
       return source
           .where((item) => item.isActive)
           .map(
@@ -4209,6 +4343,9 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
               name: item.name,
               icon: item.icon,
               color: _mobileHex(item.color),
+              parentName: item.parentId == null
+                  ? null
+                  : byId[item.parentId]?.name,
             ),
           )
           .toList();
@@ -4270,7 +4407,10 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
     final query = _categorySearch.text.trim().toLowerCase();
     final choices = _choices
         .where(
-          (item) => query.isEmpty || item.name.toLowerCase().contains(query),
+          (item) =>
+              query.isEmpty ||
+              item.name.toLowerCase().contains(query) ||
+              (item.parentName?.toLowerCase().contains(query) ?? false),
         )
         .toList();
     choices.sort((left, right) {
@@ -6208,11 +6348,13 @@ class _MobileCategoryChoice {
     required this.name,
     required this.icon,
     required this.color,
+    this.parentName,
   });
 
   final String name;
   final String icon;
   final Color color;
+  final String? parentName;
 }
 
 class _CategoryChoice extends StatelessWidget {
@@ -6244,6 +6386,13 @@ class _CategoryChoice extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
+          if (choice.parentName != null)
+            Text(
+              choice.parentName!,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: _mobileMuted, fontSize: 8),
+            ),
           Text(choice.icon, style: const TextStyle(fontSize: 20)),
           const SizedBox(height: 4),
           Text(

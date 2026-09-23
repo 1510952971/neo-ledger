@@ -51,4 +51,25 @@ void main() {
     await preferences.clearEntryDraft();
     expect(await preferences.entryDraft(), isNull);
   });
+
+  test(
+    'remembers bounded bill filter history and ignores corrupt entries',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        'mobile.bill.filterHistory': ['not-json'],
+      });
+      const preferences = MobileEntryPreferences();
+
+      expect(await preferences.recentBillFilters(), isEmpty);
+      await preferences.rememberBillFilter({
+        'label': '支出 · 现金账户',
+        'type': '支出',
+        'accountId': 2,
+      });
+
+      final filters = await preferences.recentBillFilters();
+      expect(filters.single['label'], '支出 · 现金账户');
+      expect(filters.single['accountId'], 2);
+    },
+  );
 }
