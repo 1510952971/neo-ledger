@@ -2324,7 +2324,16 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
     final liabilities = controller.accounts.where((item) => item.type == '负债');
     return Scaffold(
       backgroundColor: _mobileBg,
-      appBar: AppBar(title: const Text('账户与资产')),
+      appBar: AppBar(
+        title: const Text('账户与资产'),
+        actions: [
+          IconButton(
+            tooltip: '新增数字资产',
+            onPressed: () => _editAsset(),
+            icon: const Icon(Icons.category_outlined),
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: _mobileBrand,
         foregroundColor: _mobileBg,
@@ -2358,17 +2367,10 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
               ),
               const SizedBox(height: 8),
               for (final asset in controller.assets)
-                _SettingsRow(
-                  icon: asset.assetType == '房产'
-                      ? '🏠'
-                      : asset.assetType == '车辆'
-                      ? '🚗'
-                      : asset.assetType == '贵金属'
-                      ? '💎'
-                      : '📦',
-                  title: asset.name,
-                  subtitle:
-                      '${asset.assetType} · ${_mobileMoney(asset.currentValueCents ?? asset.valueCents)}',
+                _MobileAssetRow(
+                  asset: asset,
+                  onEdit: () => _editAsset(asset),
+                  onLiquidate: () => _liquidateAsset(asset),
                 ),
             ],
           ],
@@ -2417,6 +2419,83 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
             .showSnackBar(SnackBar(content: Text('删除失败：$error')));
       }
     }
+  }
+
+  Future<void> _editAsset([DigitalAsset? asset]) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (_) => AssetSheet(controller: controller, existing: asset),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _liquidateAsset(DigitalAsset asset) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (_) =>
+          AssetLiquidationSheet(controller: controller, asset: asset),
+    );
+    if (mounted) setState(() {});
+  }
+}
+
+class _MobileAssetRow extends StatelessWidget {
+  const _MobileAssetRow({
+    required this.asset,
+    required this.onEdit,
+    required this.onLiquidate,
+  });
+
+  final DigitalAsset asset;
+  final VoidCallback onEdit;
+  final VoidCallback onLiquidate;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = asset.assetType == '房产'
+        ? '🏠'
+        : asset.assetType == '车辆'
+        ? '🚗'
+        : asset.assetType == '贵金属'
+        ? '💎'
+        : '📦';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: _mobileBoxDecoration(),
+      child: ListTile(
+        onTap: onEdit,
+        leading: Text(icon, style: const TextStyle(fontSize: 22)),
+        title: Text(asset.name),
+        subtitle: Text(
+          '${asset.assetType} · ${asset.currency} · ${asset.valuationMode ?? '手动估值'}',
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _mobileMoney(asset.currentValueCents ?? asset.valueCents),
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+            PopupMenuButton<String>(
+              onSelected: (value) {
+                if (value == 'edit') onEdit();
+                if (value == 'liquidate') onLiquidate();
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(value: 'edit', child: Text('编辑资产')),
+                PopupMenuItem(value: 'liquidate', child: Text('变现/注销')),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
