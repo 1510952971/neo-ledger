@@ -21,6 +21,9 @@ export type BillSectionRow = {
   incomeCategory: string | null;
   mood: string | null;
   currency: string;
+  originalAmount?: number | null;
+  originalCurrency?: string | null;
+  exchangeRateMicros?: number;
   accountId: number;
   amount: number;
   occurredAt: string;
@@ -248,7 +251,7 @@ export function BillSection({
                   <div className="expense-main"><h3>{item.title}</h3><p>{dateLabels[item.id] ?? displayDate(item.occurredAt)} · {accountNames.get(item.accountId) ?? "未命名账户"} · {item.type === "收入" ? item.incomeCategory : item.category}</p></div>
                   <span className={`flow-type ${item.type === "收入" ? "income" : ""}`}>{item.type}</span>
                   <span className={`reconciliation-status ${reconciliationStatus}`} title="对账状态">{reconciliationStatus === "reconciled" ? "已核对" : reconciliationStatus === "exception" ? "异常" : "未核对"}</span>
-                  <strong className={item.type === "收入" ? "income-money" : ""}>{item.type === "收入" ? "+" : "-"}{currencyFormat(item.amount / 100, item.currency)}{item.currency !== "CNY" && <small className="converted-money">折合 {money.format((item.amount * (exchangeRates[item.currency] ?? 1)) / 100)}</small>}</strong>
+                  <strong className={item.type === "收入" ? "income-money" : ""}>{item.type === "收入" ? "+" : "-"}{currencyFormat(item.amount / 100, item.currency)}{item.originalAmount && item.originalCurrency && item.originalCurrency !== item.currency && <small className="converted-money">原币 {currencyFormat(item.originalAmount / 100, item.originalCurrency)}</small>}{item.currency !== "CNY" && <small className="converted-money">折合 {money.format((item.amount * (exchangeRates[item.currency] ?? 1)) / 100)}</small>}</strong>
                   <div className="bill-row-actions">
                     <button className="edit-button" aria-label={`修改${item.title}`} title="修改账单" disabled={pending} onClick={() => onEdit(item)}>✎</button>
                     <button className="delete-button" aria-label={`删除${item.title}`} title="删除账单" disabled={pending || removingIds.has(item.id)} onClick={() => removeAfterAnimation(item.id)}>🗑</button>

@@ -308,6 +308,9 @@ class TransactionItem {
     this.installmentId,
     this.accountName,
     this.currency = 'CNY',
+    this.originalAmountCents,
+    this.originalCurrency,
+    this.exchangeRateMicros = 1000000,
     this.source = '账本',
     this.reimbursable = false,
     this.discountAmountCents = 0,
@@ -331,6 +334,9 @@ class TransactionItem {
   final int? installmentId;
   final String? accountName;
   final String currency;
+  final int? originalAmountCents;
+  final String? originalCurrency;
+  final int exchangeRateMicros;
   final String source;
   final bool reimbursable;
   final int discountAmountCents;
@@ -352,6 +358,9 @@ class TransactionItem {
     int? accountId,
     String? accountName,
     String? updatedAt,
+    int? originalAmountCents,
+    String? originalCurrency,
+    int? exchangeRateMicros,
     bool? reimbursable,
     int? discountAmountCents,
     bool? excludeFromBudget,
@@ -373,6 +382,9 @@ class TransactionItem {
     installmentId: installmentId,
     accountName: accountName ?? this.accountName,
     currency: currency,
+    originalAmountCents: originalAmountCents ?? this.originalAmountCents,
+    originalCurrency: originalCurrency ?? this.originalCurrency,
+    exchangeRateMicros: exchangeRateMicros ?? this.exchangeRateMicros,
     source: source,
     reimbursable: reimbursable ?? this.reimbursable,
     discountAmountCents: discountAmountCents ?? this.discountAmountCents,
@@ -408,6 +420,13 @@ class TransactionItem {
         : _asInt(json['installmentId']),
     accountName: json['accountName'] as String?,
     currency: '${json['currency'] ?? 'CNY'}',
+    originalAmountCents: json['originalAmount'] == null
+        ? null
+        : _asInt(json['originalAmount']),
+    originalCurrency: json['originalCurrency'] as String?,
+    exchangeRateMicros: _asInt(json['exchangeRateMicros']) == 0
+        ? 1000000
+        : _asInt(json['exchangeRateMicros']),
     source: '${json['source'] ?? '账本'}',
     reimbursable: json['reimbursable'] == true || json['reimbursable'] == 1,
     discountAmountCents: _asInt(json['discountAmount'] ?? 0),
@@ -433,6 +452,9 @@ class TransactionItem {
     if (installmentId != null) 'installmentId': installmentId,
     if (accountName != null) 'accountName': accountName,
     'currency': currency,
+    if (originalAmountCents != null) 'originalAmount': originalAmountCents,
+    if (originalCurrency != null) 'originalCurrency': originalCurrency,
+    'exchangeRateMicros': exchangeRateMicros,
     'source': source,
     'reimbursable': reimbursable,
     'discountAmount': discountAmountCents,
@@ -1071,6 +1093,9 @@ class OfflineEntry {
     this.reimbursable = false,
     this.discountAmountCents = 0,
     this.excludeFromBudget = false,
+    this.originalAmountCents,
+    this.originalCurrency,
+    this.exchangeRateMicros = 1000000,
     this.originalTimezone = 'Asia/Shanghai',
   });
 
@@ -1093,6 +1118,9 @@ class OfflineEntry {
   final bool reimbursable;
   final int discountAmountCents;
   final bool excludeFromBudget;
+  final int? originalAmountCents;
+  final String? originalCurrency;
+  final int exchangeRateMicros;
   final String originalTimezone;
 
   Map<String, dynamic> toJson() => {
@@ -1115,6 +1143,11 @@ class OfflineEntry {
     'reimbursable': reimbursable,
     'discountAmount': discountAmountCents / 100,
     'excludeFromBudget': excludeFromBudget,
+    if (originalAmountCents != null)
+      'originalAmount': originalAmountCents! / 100,
+    if (originalCurrency != null) 'originalCurrency': originalCurrency,
+    if (originalCurrency != null || originalAmountCents != null)
+      'exchangeRate': exchangeRateMicros / 1000000,
     'originalTimezone': originalTimezone,
     'occurredAt': occurredAt,
   };
@@ -1145,6 +1178,12 @@ class OfflineEntry {
         (((json['discountAmount'] as num?)?.toDouble() ?? 0) * 100).round(),
     excludeFromBudget:
         json['excludeFromBudget'] == true || json['excludeFromBudget'] == 1,
+    originalAmountCents: json['originalAmount'] == null
+        ? null
+        : (((json['originalAmount'] as num?)?.toDouble() ?? 0) * 100).round(),
+    originalCurrency: json['originalCurrency']?.toString(),
+    exchangeRateMicros:
+        (((json['exchangeRate'] as num?)?.toDouble() ?? 1) * 1000000).round(),
     originalTimezone: '${json['originalTimezone'] ?? 'Asia/Shanghai'}',
   );
 }

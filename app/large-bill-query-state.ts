@@ -14,6 +14,9 @@ export type RemoteBillRow = {
   incomeCategory: string | null;
   accountId: number;
   currency: string;
+  originalAmount?: number | null;
+  originalCurrency?: string | null;
+  exchangeRateMicros?: number;
   occurredAt: string;
   updatedAt: string;
   createdAt: string;

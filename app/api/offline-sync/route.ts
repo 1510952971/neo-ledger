@@ -18,6 +18,7 @@ function privateJson(body: unknown) {
 }
 
 const moods = ["悦己", "刚需", "冲动"];
+const currencies = new Set(["CNY", "USD", "JPY", "EUR"]);
 export async function POST(request: Request) {
   try {
     await ensureDb();
@@ -31,9 +32,9 @@ export async function POST(request: Request) {
       const offlineId = String(item.offlineId || "").slice(0, 80),
         ledgerId = Number(item.ledgerId || 1),
         accountId = Number(item.accountId),
-        amount = Math.round(Number(item.amount) * 100),
+        requestedAmount = Math.round(Number(item.amount) * 100),
         type = item.type === "收入" ? "收入" : "支出";
-      if (!offlineId || !amount || !accountId) continue;
+      if (!offlineId || !accountId) continue;
       await claimAndRequireLedger(request, ledgerId);
       const exists = await db
         .prepare("SELECT id FROM transactions WHERE offline_id=?")
@@ -48,6 +49,20 @@ export async function POST(request: Request) {
         .bind(accountId, ledgerId)
         .first<{ id: number; currency: string }>();
       if (!account) continue;
+      const originalCurrency = String(item.originalCurrency || account.currency).toUpperCase();
+      const originalAmountMajor = Number(
+        item.originalAmount ?? (requestedAmount / 100),
+      );
+      const exchangeRate = Number(item.exchangeRate ?? 1);
+      if (!currencies.has(originalCurrency) ||
+          !Number.isFinite(originalAmountMajor) || originalAmountMajor <= 0 ||
+          !Number.isFinite(exchangeRate) || exchangeRate <= 0 || exchangeRate > 1_000_000) {
+        throw new Error("原币金额或汇率无效");
+      }
+      const amount = Math.round(originalAmountMajor * exchangeRate * 100);
+      if (!amount || amount > 99999999999) throw new Error("记账金额超出范围");
+      const originalAmountCents = Math.round(originalAmountMajor * 100);
+      const exchangeRateMicros = Math.round(exchangeRate * 1_000_000);
       const mood = moods.includes(String(item.mood))
           ? String(item.mood)
           : "刚需",
@@ -100,7 +115,7 @@ export async function POST(request: Request) {
       const results = await db.batch([
         db
           .prepare(
-            "INSERT INTO transactions(ledger_id,title,note,tags_json,amount,type,mood,category,category_dynamic,income_category,income_category_dynamic,account_id,paid_by_member_id,split_with_member_id,split_mode,my_share_percent,currency,original_amount,original_currency,exchange_rate_micros,original_timezone,is_side_hustle,reimbursable,discount_amount,exclude_from_budget,occurred_at,offline_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1000000,?,?,?,?,?,?,?)",
+            "INSERT INTO transactions(ledger_id,title,note,tags_json,amount,type,mood,category,category_dynamic,income_category,income_category_dynamic,account_id,paid_by_member_id,split_with_member_id,split_mode,my_share_percent,currency,original_amount,original_currency,exchange_rate_micros,original_timezone,is_side_hustle,reimbursable,discount_amount,exclude_from_budget,occurred_at,offline_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
           )
           .bind(
             ledgerId,
@@ -124,8 +139,9 @@ export async function POST(request: Request) {
             shared ? splitMode : null,
             shared ? mySharePercent : 100,
             account.currency,
-            amount,
-            account.currency,
+            originalAmountCents,
+            originalCurrency,
+            exchangeRateMicros,
             originalTimezone,
             type === "收入" && item.isSideHustle ? 1 : 0,
             reimbursable ? 1 : 0,

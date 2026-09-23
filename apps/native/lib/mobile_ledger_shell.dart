@@ -21,6 +21,7 @@ const _mobilePurple = MobileColors.purple;
 const _mobileMuted = MobileColors.muted;
 const _mobileIncome = MobileColors.income;
 const _mobileExpense = MobileColors.expense;
+const _supportedMobileCurrencies = ['CNY', 'USD', 'JPY', 'EUR'];
 
 class MobileLedgerShell extends StatefulWidget {
   const MobileLedgerShell({
@@ -1830,7 +1831,7 @@ class _MobileTransactionDetailPageState
                 Text(item.type, style: const TextStyle(color: _mobileMuted)),
                 const SizedBox(height: 8),
                 Text(
-                  '${item.isIncome ? '+' : '-'}${_mobileMoney(item.amountCents)}',
+                  '${item.isIncome ? '+' : '-'}${_mobileMoneyCurrency(item.amountCents, item.currency)}',
                   style: TextStyle(
                     color: color,
                     fontSize: 38,
@@ -1856,6 +1857,21 @@ class _MobileTransactionDetailPageState
           ),
           _DetailRow(label: '账户', value: item.accountName ?? '未知账户'),
           _DetailRow(label: '币种', value: item.currency),
+          if (item.originalAmountCents != null && item.originalCurrency != null)
+            _DetailRow(
+              label: '原币金额',
+              value: _mobileMoneyCurrency(
+                item.originalAmountCents!,
+                item.originalCurrency!,
+              ),
+            ),
+          if (item.originalCurrency != null &&
+              item.originalCurrency != item.currency)
+            _DetailRow(
+              label: '汇率',
+              value:
+                  '1 ${item.originalCurrency} = ${(item.exchangeRateMicros / 1000000).toStringAsFixed(6)} ${item.currency}',
+            ),
           if (item.mood != null) _DetailRow(label: '消费性质', value: item.mood!),
           if (item.note != null && item.note!.trim().isNotEmpty)
             _DetailRow(label: '备注', value: item.note!.trim()),
@@ -3802,10 +3818,13 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
   final _note = TextEditingController();
   final _tags = TextEditingController();
   final _discountAmount = TextEditingController();
+  final _exchangeRate = TextEditingController();
   final _categorySearch = TextEditingController();
   final _entryPreferences = const MobileEntryPreferences();
   late String _type;
   String _amount = '0';
+  String _originalCurrency = 'CNY';
+  int _exchangeRateMicros = 1000000;
   int? _accountId;
   int? _toAccountId;
   String? _category;
@@ -3836,6 +3855,9 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
     _toAccountId = controller.accounts.length < 2
         ? null
         : controller.accounts[1].id;
+    _originalCurrency = _accountCurrency;
+    _exchangeRateMicros = _rateFor(_originalCurrency, _accountCurrency);
+    _exchangeRate.text = _rateText;
     _category = _choices.isEmpty ? null : _choices.first.name;
     _loadEntryPreferences();
   }
@@ -3846,6 +3868,7 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
     _note.dispose();
     _tags.dispose();
     _discountAmount.dispose();
+    _exchangeRate.dispose();
     _categorySearch.dispose();
     super.dispose();
   }
@@ -3977,9 +4000,48 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
               },
             ),
             const SizedBox(height: 18),
-            _AmountDisplay(amount: _amount, type: _type),
+            _AmountDisplay(
+              amount: _amount,
+              type: _type,
+              currency: _type == '转账' ? _accountCurrency : _originalCurrency,
+            ),
             const SizedBox(height: 16),
             _Keypad(onKey: _inputKey),
+            if (_type != '转账') ...[
+              const SizedBox(height: 16),
+              _MobileSelectRow(
+                icon: Icons.currency_exchange_rounded,
+                title: '原币种',
+                value: _originalCurrency,
+                onTap: _pickOriginalCurrency,
+              ),
+              if (_originalCurrency != _accountCurrency) ...[
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _exchangeRate,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  onChanged: (value) {
+                    final parsed = double.tryParse(value);
+                    if (parsed != null && parsed > 0 && parsed <= 1000000) {
+                      setState(
+                        () => _exchangeRateMicros = (parsed * 1000000).round(),
+                      );
+                    }
+                  },
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(
+                      Icons.sync_alt_rounded,
+                      color: _mobileMuted,
+                    ),
+                    labelText: '1 $_originalCurrency = ? $_accountCurrency',
+                    helperText:
+                        '本位币金额：${_mobileMoney(_baseAmountCents)} $_accountCurrency',
+                  ),
+                ),
+              ],
+            ],
             if (_type != '转账') ...[
               const SizedBox(height: 22),
               const _FormLabel(label: '分类'),
@@ -4196,7 +4258,7 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
                 child: _saving
                     ? const CircularProgressIndicator(strokeWidth: 2)
                     : Text(
-                        '保存$_type ${_mobileMoney(_amountCents)}',
+                        '保存$_type ${_mobileMoney(_baseAmountCents)} $_accountCurrency',
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
               ),
@@ -4214,6 +4276,29 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
     return controller.accounts.isEmpty
         ? '暂无账户'
         : '${controller.accounts.first.icon}  ${controller.accounts.first.name}';
+  }
+
+  String get _accountCurrency {
+    for (final account in controller.accounts) {
+      if (account.id == _accountId) return account.currency;
+    }
+    return controller.accounts.isEmpty
+        ? 'CNY'
+        : controller.accounts.first.currency;
+  }
+
+  String get _rateText => (_exchangeRateMicros / 1000000)
+      .toStringAsFixed(6)
+      .replaceFirst(RegExp(r'0+$'), '')
+      .replaceFirst(RegExp(r'\.$'), '');
+
+  int _rateFor(String original, String account) {
+    if (original == account) return 1000000;
+    final rates = controller.exchangeRates?.rates;
+    final from = rates?[original];
+    final to = rates?[account];
+    if (from == null || to == null || to <= 0) return 1000000;
+    return (from / to * 1000000).round();
   }
 
   String get _destinationAccountName {
@@ -4234,6 +4319,13 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
   }
 
   int get _amountCents => AmountExpression.evaluateCents(_amount) ?? 0;
+
+  int get _baseAmountCents {
+    if (_type == '转账' || _originalCurrency == _accountCurrency) {
+      return _amountCents;
+    }
+    return (_amountCents * _exchangeRateMicros / 1000000).round();
+  }
 
   void _inputKey(String key) {
     if (_hapticsEnabled) HapticFeedback.selectionClick();
@@ -4295,6 +4387,11 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
         } else {
           _accountId = id;
           _accountManuallySelected = true;
+          _originalCurrency = controller.accounts
+              .firstWhere((account) => account.id == id)
+              .currency;
+          _exchangeRateMicros = _rateFor(_originalCurrency, _accountCurrency);
+          _exchangeRate.text = _rateText;
         }
       });
     }
@@ -4391,8 +4488,151 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
         _recentCategories = recent;
         _hapticsEnabled = haptics;
       });
+      await _restoreEntryDraftIfPresent();
     }
   }
+
+  Future<void> _restoreEntryDraftIfPresent() async {
+    final draft = await _entryPreferences.entryDraft();
+    if (!mounted || draft == null) return;
+    final restore = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('恢复未完成记账'),
+        content: const Text('上次保存失败，是否恢复刚才填写的内容？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('放弃'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('恢复'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (restore == true) {
+      _applyEntryDraft(draft);
+    } else {
+      await _entryPreferences.clearEntryDraft();
+    }
+  }
+
+  Future<void> _pickOriginalCurrency() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: _supportedMobileCurrencies
+              .map(
+                (currency) => ListTile(
+                  leading: const Icon(Icons.currency_exchange_rounded),
+                  title: Text(currency),
+                  trailing: currency == _originalCurrency
+                      ? const Icon(Icons.check_rounded, color: _mobileBrand)
+                      : null,
+                  onTap: () => Navigator.pop(context, currency),
+                ),
+              )
+              .toList(),
+        ),
+      ),
+    );
+    if (selected == null || !mounted) return;
+    setState(() {
+      _originalCurrency = selected;
+      _exchangeRateMicros = _rateFor(selected, _accountCurrency);
+      _exchangeRate.text = _rateText;
+    });
+  }
+
+  void _applyEntryDraft(Map<String, dynamic> draft) {
+    final draftType = _draftString(draft['type']);
+    final draftOccurredAt = DateTime.tryParse(
+      _draftString(draft['occurredAt']) ?? '',
+    );
+    final accountId = _draftInt(draft['accountId']);
+    final toAccountId = _draftInt(draft['toAccountId']);
+    final splitMemberId = _draftInt(draft['splitMemberId']);
+    final draftCategory = _draftString(draft['category']);
+    setState(() {
+      if (draftType != null && const ['支出', '收入', '转账'].contains(draftType)) {
+        _type = draftType;
+      }
+      _amount = _draftString(draft['amount']) ?? '0';
+      _title.text = _draftString(draft['title']) ?? '';
+      _note.text = _draftString(draft['note']) ?? '';
+      _tags.text = _draftString(draft['tags']) ?? '';
+      _discountAmount.text = _draftString(draft['discountAmount']) ?? '';
+      final originalCurrency = _draftString(draft['originalCurrency']);
+      if (originalCurrency != null &&
+          _supportedMobileCurrencies.contains(originalCurrency)) {
+        _originalCurrency = originalCurrency;
+      }
+      _exchangeRateMicros =
+          (draft['exchangeRateMicros'] as num?)?.toInt() ??
+          _rateFor(_originalCurrency, _accountCurrency);
+      _exchangeRate.text = _rateText;
+      _mood = _draftString(draft['mood']) ?? '刚需';
+      _splitMode = _draftString(draft['splitMode']) ?? '按比例平摊';
+      _mySharePercent = (draft['mySharePercent'] as num?)?.toDouble() ?? 50;
+      _reimbursable = draft['reimbursable'] == true;
+      _excludeFromBudget = draft['excludeFromBudget'] == true;
+      if (draftOccurredAt != null) _occurredAt = draftOccurredAt.toLocal();
+      if (draftCategory != null &&
+          _choices.any((choice) => choice.name == draftCategory)) {
+        _category = draftCategory;
+      } else {
+        _category = _choices.isEmpty ? null : _choices.first.name;
+      }
+      if (accountId != null &&
+          controller.accounts.any((account) => account.id == accountId)) {
+        _accountId = accountId;
+      }
+      if (toAccountId != null &&
+          controller.accounts.any((account) => account.id == toAccountId)) {
+        _toAccountId = toAccountId;
+      }
+      if (splitMemberId != null &&
+          controller.members.any((member) => member.id == splitMemberId)) {
+        _splitMemberId = splitMemberId;
+      }
+    });
+  }
+
+  String? _draftString(Object? value) => value is String ? value : null;
+
+  int? _draftInt(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse('$value');
+  }
+
+  Map<String, dynamic> _entryDraft() => {
+    'type': _type,
+    'amount': _amount,
+    'title': _title.text,
+    'note': _note.text,
+    'tags': _tags.text,
+    'discountAmount': _discountAmount.text,
+    'originalCurrency': _originalCurrency,
+    'exchangeRateMicros': _exchangeRateMicros,
+    'accountId': _accountId,
+    'toAccountId': _toAccountId,
+    'category': _category,
+    'mood': _mood,
+    'splitMemberId': _splitMemberId,
+    'splitMode': _splitMode,
+    'mySharePercent': _mySharePercent,
+    'occurredAt': _occurredAt.toIso8601String(),
+    'reimbursable': _reimbursable,
+    'excludeFromBudget': _excludeFromBudget,
+  };
 
   Future<void> _selectCategory(String category) async {
     setState(() => _category = category);
@@ -4453,7 +4693,9 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
   Future<void> _save() async {
     final cents = AmountExpression.evaluateCents(_amount);
     final amount = cents == null ? 0.0 : cents / 100;
-    if (amount <= 0 || (_type != '转账' && _category == null)) {
+    if (amount <= 0 ||
+        (_type != '转账' && _category == null) ||
+        (_type != '转账' && _baseAmountCents <= 0)) {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('请输入金额并选择分类')));
       return;
@@ -4486,7 +4728,7 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
           throw const ApiException('优惠金额格式无效');
         }
         await controller.addEntry(
-          amount: amount,
+          amount: _baseAmountCents / 100,
           title: _title.text.trim().isEmpty ? _category! : _title.text.trim(),
           category: _category!,
           type: _type,
@@ -4498,6 +4740,9 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
           reimbursable: _reimbursable,
           discountAmountCents: (parsedDiscount * 100).round(),
           excludeFromBudget: _excludeFromBudget,
+          originalAmountCents: _amountCents,
+          originalCurrency: _originalCurrency,
+          exchangeRateMicros: _exchangeRateMicros,
           splitWithMemberId: _type == '支出' ? _splitMemberId : null,
           splitMode: _type == '支出' && _splitMemberId != null
               ? _splitMode
@@ -4506,6 +4751,11 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
         );
       }
       if (!mounted) return;
+      try {
+        await _entryPreferences.clearEntryDraft();
+      } catch (_) {
+        // Local draft cleanup must not turn a successful save into an error.
+      }
       if (_type != '转账' && _accountId != null && _category != null) {
         try {
           await _entryPreferences.remember(
@@ -4533,9 +4783,14 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
         Navigator.pop(context);
       }
     } catch (error) {
+      try {
+        await _entryPreferences.saveEntryDraft(_entryDraft());
+      } catch (_) {
+        // A draft is best effort; retain the original save error for the user.
+      }
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$error')));
+            .showSnackBar(SnackBar(content: Text('$error；已保留本次填写内容')));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -4856,7 +5111,7 @@ class _TransactionTile extends StatelessWidget {
             Text(
               hideAmount
                   ? '••••'
-                  : '${item.isIncome ? '+' : '-'}${_mobileMoney(item.amountCents)}',
+                  : '${item.isIncome ? '+' : '-'}${_mobileMoneyCurrency(item.amountCents, item.currency)}',
               style: TextStyle(color: color, fontWeight: FontWeight.w800),
             ),
           ],
@@ -5509,10 +5764,15 @@ class _TypeSwitch extends StatelessWidget {
 }
 
 class _AmountDisplay extends StatelessWidget {
-  const _AmountDisplay({required this.amount, required this.type});
+  const _AmountDisplay({
+    required this.amount,
+    required this.type,
+    required this.currency,
+  });
 
   final String amount;
   final String type;
+  final String currency;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -5531,7 +5791,7 @@ class _AmountDisplay extends StatelessWidget {
           ),
         ),
         child: Text(
-          '¥$amount',
+          '$currency $amount',
           key: ValueKey(amount),
           style: TextStyle(
             color: type == '支出'
@@ -5836,6 +6096,14 @@ String _mobileMoney(int cents) => NumberFormat.currency(
   symbol: '¥',
   decimalDigits: 2,
 ).format(cents / 100);
+
+String _mobileMoneyCurrency(int cents, String currency) =>
+    NumberFormat.currency(
+      locale: 'zh_CN',
+      name: currency,
+      symbol: currency,
+      decimalDigits: currency == 'JPY' ? 0 : 2,
+    ).format(cents / 100);
 
 String _mobileDate(String value) {
   final parsed = DateTime.tryParse(value);

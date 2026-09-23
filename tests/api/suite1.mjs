@@ -41,6 +41,9 @@ const acct1 = r.json?.id;
 r = await call(accounts, "POST", "/api/accounts", { body: { ledgerId: L, name: "信用卡", type: "负债", balance: 5000, billDay: 5, repaymentDay: 25 } });
 check("POST 负债账户", r.status === 201, r.text);
 const acct2 = r.json?.id;
+r = await call(accounts, "POST", "/api/accounts", { body: { ledgerId: L, name: "美元账户", type: "资产", balance: 0, currency: "USD" } });
+check("POST 多币种账户", r.status === 201 && r.json?.id, r.text);
+const fxAccount = r.json?.id;
 for (const [name, body, why] of [
   ["空名称被拒", { ledgerId: L, type: "资产", balance: 1, name: "" }, "请输入账户名称"],
   ["负余额被拒", { ledgerId: L, type: "资产", balance: -5, name: "x" }, "请输入正确金额"],
@@ -129,6 +132,13 @@ check("离线账单高级字段落库", txs[0]?.note === "项目聚餐" && txs[0
 r = await call(offline, "POST", "/api/offline-sync", { body: { items: [mk(1, "支出", 35.5)] } });
 txs = await q("SELECT COUNT(*) n FROM transactions");
 check("重复 offlineId 幂等不重复入账", txs[0].n === 2, JSON.stringify(txs));
+r = await call(offline, "POST", "/api/offline-sync", { body: { items: [{ offlineId: "fx-1", ledgerId: L, accountId: fxAccount, amount: 13.89, type: "支出", title: "境外消费", category: "餐饮", mood: "刚需", originalAmount: 100, originalCurrency: "CNY", exchangeRate: 0.138889, occurredAt: "2026-07-20T14:00", originalTimezone: "Asia/Shanghai" }] } });
+const fxTransaction = (await q("SELECT id,amount,currency,original_amount,original_currency,exchange_rate_micros FROM transactions WHERE offline_id='fx-1'"))[0];
+check("离线多币种按原币汇率落库", r.status === 200 && fxTransaction?.amount === 1389 && fxTransaction.currency === "USD" && fxTransaction.original_amount === 10000 && fxTransaction.original_currency === "CNY" && fxTransaction.exchange_rate_micros === 138889, JSON.stringify(fxTransaction));
+await B.batch([
+  B.prepare("DELETE FROM transactions WHERE id=? AND ledger_id=?").bind(fxTransaction?.id, L),
+  B.prepare("UPDATE accounts SET current_balance=current_balance+? WHERE id=? AND ledger_id=?").bind(fxTransaction?.amount ?? 0, fxAccount, L),
+]);
 const t1 = (await q("SELECT id,updated_at u FROM transactions WHERE title='测试1'"))[0];
 r = await call(transactions, "PUT", "/api/transactions", { body: { id: t1.id, ledgerId: L, accountId: acct1, amount: 66, type: "支出", title: "改名账单", note: "更新备注", tags: ["已核对"], reimbursable: false, discountAmount: 1.25, excludeFromBudget: false, mood: "冲动", category: "餐饮", occurredAt: "2026-07-20T13:00", expectedUpdatedAt: t1.u } });
 check("PUT 编辑账单", r.status === 200, r.text);

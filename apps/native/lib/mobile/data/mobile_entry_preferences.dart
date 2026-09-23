@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 class MobileEntryPreferences {
@@ -8,6 +10,7 @@ class MobileEntryPreferences {
   static const _hapticsKey = 'mobile.entry.haptics';
   static const _hideAmountsKey = 'mobile.home.hideAmounts';
   static const _billSearchHistoryKey = 'mobile.bill.searchHistory';
+  static const _entryDraftKey = 'mobile.entry.draft';
 
   Future<List<String>> recentCategories() async {
     final preferences = await SharedPreferences.getInstance();
@@ -70,5 +73,31 @@ class MobileEntryPreferences {
         ...recent.where((item) => item != normalized),
       ].take(6).toList(),
     );
+  }
+
+  Future<Map<String, dynamic>?> entryDraft() async {
+    final preferences = await SharedPreferences.getInstance();
+    final encoded = preferences.getString(_entryDraftKey);
+    if (encoded == null || encoded.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(encoded);
+      if (decoded is Map<String, dynamic>) return decoded;
+      if (decoded is Map) {
+        return decoded.map((key, value) => MapEntry(key.toString(), value));
+      }
+    } catch (_) {
+      // A corrupt local draft must never prevent opening the entry page.
+    }
+    return null;
+  }
+
+  Future<void> saveEntryDraft(Map<String, dynamic> draft) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_entryDraftKey, jsonEncode(draft));
+  }
+
+  Future<void> clearEntryDraft() async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.remove(_entryDraftKey);
   }
 }

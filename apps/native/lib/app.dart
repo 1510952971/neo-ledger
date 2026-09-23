@@ -1153,6 +1153,9 @@ class LedgerController extends ChangeNotifier {
     bool reimbursable = false,
     int discountAmountCents = 0,
     bool excludeFromBudget = false,
+    int? originalAmountCents,
+    String? originalCurrency,
+    int exchangeRateMicros = 1000000,
   }) async {
     final ledger = selectedLedger;
     final account = accounts.isEmpty
@@ -1192,6 +1195,9 @@ class LedgerController extends ChangeNotifier {
       reimbursable: reimbursable,
       discountAmountCents: discountAmountCents,
       excludeFromBudget: excludeFromBudget,
+      originalAmountCents: originalAmountCents,
+      originalCurrency: originalCurrency,
+      exchangeRateMicros: exchangeRateMicros,
     );
     if (demoMode) {
       final item = TransactionItem(
@@ -1205,6 +1211,9 @@ class LedgerController extends ChangeNotifier {
         category: category,
         accountName: account.name,
         source: '本机演示',
+        originalAmountCents: originalAmountCents,
+        originalCurrency: originalCurrency,
+        exchangeRateMicros: exchangeRateMicros,
       );
       final items = [item, ...transactions.items];
       final income =

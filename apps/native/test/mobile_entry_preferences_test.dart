@@ -29,4 +29,26 @@ void main() {
     await preferences.setHapticsEnabled(false);
     expect(await preferences.hapticsEnabled(), isFalse);
   });
+
+  test('stores and clears a failed entry draft', () async {
+    SharedPreferences.setMockInitialValues({});
+    const preferences = MobileEntryPreferences();
+
+    await preferences.saveEntryDraft({
+      'type': '支出',
+      'amount': '12.50',
+      'tags': '工作,报销',
+      'reimbursable': true,
+    });
+
+    expect(await preferences.entryDraft(), {
+      'type': '支出',
+      'amount': '12.50',
+      'tags': '工作,报销',
+      'reimbursable': true,
+    });
+
+    await preferences.clearEntryDraft();
+    expect(await preferences.entryDraft(), isNull);
+  });
 }

@@ -110,6 +110,27 @@ void main() {
     expect(restored.excludeFromBudget, isTrue);
   });
 
+  test('round-trips original currency and account conversion rate', () {
+    const entry = OfflineEntry(
+      offlineId: 'offline-fx',
+      ledgerId: 1,
+      accountId: 7,
+      amount: 13.89,
+      type: '支出',
+      title: '境外消费',
+      category: '旅行',
+      occurredAt: '2026-09-23T12:00:00Z',
+      originalAmountCents: 10000,
+      originalCurrency: 'CNY',
+      exchangeRateMicros: 138889,
+    );
+
+    final restored = OfflineEntry.fromJson(entry.toJson());
+    expect(restored.originalAmountCents, 10000);
+    expect(restored.originalCurrency, 'CNY');
+    expect(restored.exchangeRateMicros, 138889);
+  });
+
   test('generates UTC ISO timestamps for new offline entries', () {
     expect(iso8601NowUtc(), endsWith('Z'));
   });
