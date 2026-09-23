@@ -2045,10 +2045,13 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
       case 'edit':
         await _openDetail(item);
       case 'copy':
+        final amount = controller.preferences.hideAmounts
+            ? '金额已隐藏'
+            : _mobileMoney(item.amountCents);
         await Clipboard.setData(
           ClipboardData(
             text:
-                '${item.type} ${_mobileMoney(item.amountCents)} · ${item.title} · ${item.category ?? item.incomeCategory ?? '未分类'} · ${_mobileDate(item.occurredAt)}',
+                '${item.type} $amount · ${item.title} · ${item.category ?? item.incomeCategory ?? '未分类'} · ${_mobileDate(item.occurredAt)}',
           ),
         );
         if (mounted) {
