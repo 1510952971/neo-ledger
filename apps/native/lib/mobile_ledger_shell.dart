@@ -424,7 +424,7 @@ class _MobileLoginPageState extends State<MobileLoginPage> {
   }
 }
 
-class MobileHomePage extends StatelessWidget {
+class MobileHomePage extends StatefulWidget {
   const MobileHomePage({
     super.key,
     required this.controller,
@@ -437,13 +437,111 @@ class MobileHomePage extends StatelessWidget {
   final VoidCallback onTransfer;
 
   @override
+  State<MobileHomePage> createState() => _MobileHomePageState();
+}
+
+class _MobileHomePageState extends State<MobileHomePage> {
+  final _preferences = const MobileEntryPreferences();
+  bool _hideAmounts = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPreferences();
+  }
+
+  Future<void> _loadPreferences() async {
+    final hidden = await _preferences.hideAmounts();
+    if (mounted) setState(() => _hideAmounts = hidden);
+  }
+
+  Future<void> _toggleAmounts() async {
+    final next = !_hideAmounts;
+    setState(() => _hideAmounts = next);
+    await _preferences.setHideAmounts(next);
+  }
+
+  Future<void> _openNotifications() async {
+    try {
+      await widget.controller.markNotificationsRead();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('通知同步失败：$error')));
+      }
+    }
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (_) => NotificationSheet(items: widget.controller.notifications),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final controller = widget.controller;
     final page = controller.transactions;
     final displayName = controller.user?.displayName ?? '朋友';
     return _MobilePage(
       controller: controller,
       title: '首页',
-      trailing: _SyncButton(controller: controller),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: _hideAmounts ? '显示金额' : '隐藏金额',
+            onPressed: _toggleAmounts,
+            icon: Icon(
+              _hideAmounts
+                  ? Icons.visibility_off_outlined
+                  : Icons.visibility_outlined,
+              color: _mobileMuted,
+            ),
+          ),
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              IconButton(
+                tooltip: '通知中心',
+                onPressed: _openNotifications,
+                icon: const Icon(
+                  Icons.notifications_none_rounded,
+                  color: _mobileMuted,
+                ),
+              ),
+              if (controller.unreadNotificationCount > 0)
+                Positioned(
+                  right: 2,
+                  top: 0,
+                  child: Container(
+                    constraints: const BoxConstraints(
+                      minWidth: 17,
+                      minHeight: 17,
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: _mobileExpense,
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: Text(
+                      '${controller.unreadNotificationCount}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          _SyncButton(controller: controller),
+        ],
+      ),
       child: RefreshIndicator(
         color: _mobileBrand,
         backgroundColor: _mobileSurfaceRaised,
@@ -463,14 +561,25 @@ class MobileHomePage extends StatelessWidget {
                   ?.copyWith(color: Colors.white, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 18),
-            _MonthlyCard(page: page),
+            _LedgerContextCard(
+              controller: controller,
+              hideAmounts: _hideAmounts,
+            ),
+            const SizedBox(height: 12),
+            _MonthlyCard(page: page, hideAmounts: _hideAmounts),
             if (controller.budgets.isNotEmpty) ...[
               const SizedBox(height: 14),
-              _HomeBudgetCard(controller: controller),
+              _HomeBudgetCard(
+                controller: controller,
+                hideAmounts: _hideAmounts,
+              ),
             ],
             if (controller.pendingTransactions.items.isNotEmpty) ...[
               const SizedBox(height: 14),
-              _HomePendingCard(controller: controller),
+              _HomePendingCard(
+                controller: controller,
+                hideAmounts: _hideAmounts,
+              ),
             ],
             const SizedBox(height: 20),
             _SectionHeader(title: '快捷操作', action: '全部功能'),
@@ -482,7 +591,7 @@ class MobileHomePage extends StatelessWidget {
                     icon: Icons.add_rounded,
                     label: '记一笔',
                     color: _mobileBrand,
-                    onTap: onAdd,
+                    onTap: widget.onAdd,
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -491,7 +600,7 @@ class MobileHomePage extends StatelessWidget {
                     icon: Icons.swap_horiz_rounded,
                     label: '转账',
                     color: _mobilePurple,
-                    onTap: onTransfer,
+                    onTap: widget.onTransfer,
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -528,7 +637,10 @@ class MobileHomePage extends StatelessWidget {
                   .map(
                     (item) => Padding(
                       padding: const EdgeInsets.only(bottom: 8),
-                      child: _TransactionTile(item: item),
+                      child: _TransactionTile(
+                        item: item,
+                        hideAmount: _hideAmounts,
+                      ),
                     ),
                   ),
           ],
@@ -538,10 +650,74 @@ class MobileHomePage extends StatelessWidget {
   }
 }
 
-class _HomeBudgetCard extends StatelessWidget {
-  const _HomeBudgetCard({required this.controller});
+class _LedgerContextCard extends StatelessWidget {
+  const _LedgerContextCard({
+    required this.controller,
+    required this.hideAmounts,
+  });
 
   final LedgerController controller;
+  final bool hideAmounts;
+
+  @override
+  Widget build(BuildContext context) {
+    final ledger = controller.selectedLedger;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+      decoration: _mobileBoxDecoration(),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: _mobileBrand.withValues(alpha: .14),
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: Text(
+              ledger?.icon ?? '📚',
+              style: const TextStyle(fontSize: 20),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  ledger?.name ?? '我的账本',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '${DateFormat('yyyy年MM月').format(DateTime.now())} · ${controller.error == null ? '已同步' : '离线快照'}',
+                  style: const TextStyle(color: _mobileMuted, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          Icon(
+            hideAmounts
+                ? Icons.visibility_off_outlined
+                : Icons.cloud_done_outlined,
+            size: 19,
+            color: controller.error == null ? _mobileIncome : _mobileMuted,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HomeBudgetCard extends StatelessWidget {
+  const _HomeBudgetCard({required this.controller, required this.hideAmounts});
+
+  final LedgerController controller;
+  final bool hideAmounts;
 
   @override
   Widget build(BuildContext context) {
@@ -582,7 +758,9 @@ class _HomeBudgetCard extends StatelessWidget {
                 ),
               ),
               Text(
-                danger ? '已超支' : '剩余 ${_mobileMoney(totalBudget - totalSpent)}',
+                danger
+                    ? '已超支'
+                    : '剩余 ${hideAmounts ? '••••' : _mobileMoney(totalBudget - totalSpent)}',
                 style: TextStyle(color: danger ? _mobileExpense : _mobileMuted),
               ),
             ],
@@ -601,7 +779,7 @@ class _HomeBudgetCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            '${_mobileMoney(totalSpent)} / ${_mobileMoney(totalBudget)} · ${controller.budgets.length} 个分类预算',
+            '${hideAmounts ? '••••' : _mobileMoney(totalSpent)} / ${hideAmounts ? '••••' : _mobileMoney(totalBudget)} · ${controller.budgets.length} 个分类预算',
             style: const TextStyle(color: _mobileMuted, fontSize: 12),
           ),
         ],
@@ -611,9 +789,10 @@ class _HomeBudgetCard extends StatelessWidget {
 }
 
 class _HomePendingCard extends StatelessWidget {
-  const _HomePendingCard({required this.controller});
+  const _HomePendingCard({required this.controller, required this.hideAmounts});
 
   final LedgerController controller;
+  final bool hideAmounts;
 
   @override
   Widget build(BuildContext context) {
@@ -635,7 +814,7 @@ class _HomePendingCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${item.title} · ${_mobileMoney(item.amountCents)}',
+                  '${item.title} · ${hideAmounts ? '••••' : _mobileMoney(item.amountCents)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: _mobileMuted, fontSize: 12),
@@ -3849,9 +4028,10 @@ class _MobilePage extends StatelessWidget {
 }
 
 class _MonthlyCard extends StatelessWidget {
-  const _MonthlyCard({required this.page});
+  const _MonthlyCard({required this.page, required this.hideAmounts});
 
   final TransactionPage page;
+  final bool hideAmounts;
 
   @override
   Widget build(BuildContext context) {
@@ -3884,7 +4064,7 @@ class _MonthlyCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            _mobileMoney(page.balanceCents),
+            hideAmounts ? '••••' : _mobileMoney(page.balanceCents),
             style: const TextStyle(
               color: Colors.white,
               fontSize: 34,
@@ -3899,6 +4079,7 @@ class _MonthlyCard extends StatelessWidget {
                   label: '收入',
                   amount: page.incomeCents,
                   color: _mobileIncome,
+                  hideAmount: hideAmounts,
                 ),
               ),
               Expanded(
@@ -3906,6 +4087,7 @@ class _MonthlyCard extends StatelessWidget {
                   label: '支出',
                   amount: page.expenseCents,
                   color: _mobileExpense,
+                  hideAmount: hideAmounts,
                 ),
               ),
             ],
@@ -3992,12 +4174,14 @@ class _TransactionTile extends StatelessWidget {
     this.dense = false,
     this.onTap,
     this.onLongPress,
+    this.hideAmount = false,
   });
 
   final TransactionItem item;
   final bool dense;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
+  final bool hideAmount;
 
   @override
   Widget build(BuildContext context) {
@@ -4057,7 +4241,9 @@ class _TransactionTile extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             Text(
-              '${item.isIncome ? '+' : '-'}${_mobileMoney(item.amountCents)}',
+              hideAmount
+                  ? '••••'
+                  : '${item.isIncome ? '+' : '-'}${_mobileMoney(item.amountCents)}',
               style: TextStyle(color: color, fontWeight: FontWeight.w800),
             ),
           ],
@@ -4440,11 +4626,13 @@ class _SummaryValue extends StatelessWidget {
     required this.label,
     required this.amount,
     required this.color,
+    this.hideAmount = false,
   });
 
   final String label;
   final int amount;
   final Color color;
+  final bool hideAmount;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -4453,7 +4641,7 @@ class _SummaryValue extends StatelessWidget {
       Text(label, style: const TextStyle(color: _mobileMuted, fontSize: 12)),
       const SizedBox(height: 4),
       Text(
-        _mobileMoney(amount),
+        hideAmount ? '••••' : _mobileMoney(amount),
         style: TextStyle(color: color, fontWeight: FontWeight.w800),
       ),
     ],
