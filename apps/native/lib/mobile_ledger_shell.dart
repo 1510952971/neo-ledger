@@ -3934,6 +3934,7 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
           toAccountId: _toAccountId!,
           amount: amount,
           note: _note.text.trim().isEmpty ? null : _note.text.trim(),
+          occurredAt: _occurredAt,
         );
       } else {
         await controller.addEntry(

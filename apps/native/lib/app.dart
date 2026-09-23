@@ -693,6 +693,7 @@ class LedgerController extends ChangeNotifier {
     required int toAccountId,
     required double amount,
     String? note,
+    DateTime? occurredAt,
   }) async {
     final ledger = selectedLedger;
     if (ledger == null) throw const ApiException('没有可用的账本');
@@ -747,7 +748,7 @@ class LedgerController extends ChangeNotifier {
       fromAccountId: from.id,
       toAccountId: to.id,
       amount: amount,
-      occurredAt: DateTime.now().toUtc().toIso8601String(),
+      occurredAt: (occurredAt ?? DateTime.now()).toUtc().toIso8601String(),
       originalTimezone: 'Asia/Shanghai',
       note: note,
     );
