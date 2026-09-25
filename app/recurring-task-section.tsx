@@ -49,8 +49,12 @@ export function RecurringTaskSection({ ledgerId, initialRows, accounts, expenseC
     if (!response.ok) throw new Error("读取周期记账任务失败");
     if (Array.isArray(data)) setRows(data);
   }, [ledgerId]);
+  const handleLoadError = useCallback(() => setError("暂时无法同步周期任务，请稍后重试。"), []);
 
-  useEffect(() => { void loadRows().catch(() => setError("暂时无法同步周期任务，请稍后重试。")); }, [loadRows]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadRows().catch(handleLoadError); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [handleLoadError, loadRows]);
 
   const categories = draft?.type === "收入" ? incomeCategories : expenseCategories;
   function openNew() {
