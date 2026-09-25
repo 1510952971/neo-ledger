@@ -22,6 +22,7 @@ import {
 } from "../../../restore-limits";
 import { recordAuditEvent, requestIdFromRequest } from "../../../audit-log";
 import { canonicalRestorePayload, fingerprintRestorePlan } from "../../../restore-plan";
+import { normalizeScreenshotRecognition } from "../../../screenshot-recognition-core.js";
 type Row = Record<string, unknown>;
 
 function privateJson(body: unknown, init: ResponseInit = {}) {
@@ -72,6 +73,7 @@ function validateRestoreRows(data: Record<string, unknown>) {
     "members",
     "transactions",
     "subscriptions",
+    "recurringTasks",
     "savingsGoals",
     "installments",
     "digitalAssets",
@@ -101,7 +103,7 @@ function validateRestoreRows(data: Record<string, unknown>) {
     if (!ledgerIds.has(Number(row.ledgerId))) throw new Error(`${label}归属了不存在的账本`);
   };
   for (const key of [
-    "categoryBudgets", "subscriptions", "savingsGoals", "members", "installments",
+    "categoryBudgets", "subscriptions", "recurringTasks", "savingsGoals", "members", "installments",
     "achievements", "sideHustleDeductions", "pendingTransactions", "systemNotifications",
     "fireSettings", "economicSettings", "crdtTombstones", "digitalAssets", "expenseCategories",
     "incomeCategories", "accountTransfers", "syncTombstones", "transactionReconciliation", "automationRules",
@@ -160,6 +162,19 @@ function validateRestoreRows(data: Record<string, unknown>) {
   }
   for (const row of ((data.subscriptions as Row[]) ?? []))
     if (!accountIds.has(Number(row.accountId))) throw new Error("备份续费引用了不存在的账户");
+  for (const row of ((data.recurringTasks as Row[]) ?? [])) {
+    if (!accountIds.has(Number(row.accountId))) throw new Error("备份周期记账引用了不存在的账户");
+    if (typeof row.name !== "string" || !row.name.trim() || row.name.length > 40)
+      throw new Error("备份包含无效周期记账名称");
+    if (!Number.isSafeInteger(Number(row.amount)) || Number(row.amount) <= 0)
+      throw new Error("备份包含无效周期记账金额");
+    if (!["支出", "收入"].includes(String(row.type)) || !["每天", "每周", "每月", "每季", "每年"].includes(String(row.cycle)))
+      throw new Error("备份包含无效周期记账类型或频率");
+    if (typeof row.nextRunDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(row.nextRunDate))
+      throw new Error("备份包含无效周期记账日期");
+    if (!Number.isSafeInteger(Number(row.reminderDays ?? 1)) || Number(row.reminderDays ?? 1) < 0 || Number(row.reminderDays ?? 1) > 30)
+      throw new Error("备份包含无效周期记账提醒天数");
+  }
   for (const row of ((data.installments as Row[]) ?? []))
     for (const accountId of [row.accountId, row.paymentAccountId])
       if (accountId != null && !accountIds.has(Number(accountId))) throw new Error("备份分期引用了不存在的账户");
@@ -188,6 +203,7 @@ async function remapLocalIds(db: ReturnType<typeof getDbBinding>, rows: Record<s
   const definitions = [
     ["ledgers", "ledgers"], ["accounts", "accounts"], ["members", "members"],
     ["transactions", "transactions"], ["subscriptions", "subscriptions"],
+    ["recurringTasks", "recurring_tasks"],
     ["savingsGoals", "savings_goals"], ["installments", "installments"],
     ["digitalAssets", "digital_assets"], ["expenseCategories", "expense_categories"],
     ["incomeCategories", "income_categories"], ["pendingTransactions", "pending_transactions"],
@@ -277,7 +293,7 @@ export async function POST(request: Request) {
       ? await loadRestoreSnapshot(ownerId, snapshotId)
       : submitted;
     if (
-      ![7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23].includes(Number(data.version)) ||
+      ![7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24].includes(Number(data.version)) ||
       !Array.isArray(data.ledgers) ||
       !Array.isArray(data.accounts) ||
       !Array.isArray(data.transactions)
@@ -291,6 +307,7 @@ export async function POST(request: Request) {
       budgetSettings?: Row[];
       categoryBudgets?: Row[];
       subscriptions?: Row[];
+      recurringTasks?: Row[];
       savingsGoals?: Row[];
       members?: Row[];
       installments?: Row[];
@@ -360,6 +377,7 @@ export async function POST(request: Request) {
       budgetSettings?: Row[];
       categoryBudgets?: Row[];
       subscriptions?: Row[];
+      recurringTasks?: Row[];
       savingsGoals?: Row[];
       members?: Row[];
       installments?: Row[];
@@ -419,6 +437,7 @@ export async function POST(request: Request) {
       db.prepare("DELETE FROM installments WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
       db.prepare("DELETE FROM achievements WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
       db.prepare("DELETE FROM subscriptions WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
+      db.prepare("DELETE FROM recurring_tasks WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
       db.prepare("DELETE FROM savings_goals WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
       db.prepare("DELETE FROM category_budgets WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
       db.prepare("DELETE FROM members WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id=?)").bind(ownerId),
@@ -587,11 +606,23 @@ export async function POST(request: Request) {
             x.createdAt,
           ),
       );
-    for (const x of rows.transactions)
+    for (const x of rows.transactions) {
+      let recognitionCorrections: unknown = {};
+      try {
+        recognitionCorrections = JSON.parse(String(x.recognitionCorrectionsJson ?? "{}"));
+      } catch {
+        recognitionCorrections = {};
+      }
+      const recognition = normalizeScreenshotRecognition({
+        source: x.source,
+        recognitionText: x.recognitionText,
+        recognitionCompleteness: x.recognitionCompleteness,
+        recognitionCorrections,
+      });
       q.push(
         db
           .prepare(
-            "INSERT INTO transactions(id,ledger_id,title,amount,type,mood,category,category_dynamic,income_category,income_category_dynamic,account_id,paid_by_member_id,split_with_member_id,split_mode,my_share_percent,currency,original_amount,original_currency,exchange_rate_micros,original_timezone,installment_id,installment_number,occurrence_key,is_side_hustle,offline_id,crdt_id,updated_at,occurred_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO transactions(id,ledger_id,title,amount,type,mood,category,category_dynamic,income_category,income_category_dynamic,account_id,paid_by_member_id,split_with_member_id,split_mode,my_share_percent,currency,original_amount,original_currency,exchange_rate_micros,original_timezone,installment_id,installment_number,occurrence_key,is_side_hustle,source,recognition_text,recognition_completeness,recognition_corrections_json,offline_id,crdt_id,updated_at,occurred_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
           )
           .bind(
             x.id,
@@ -618,6 +649,10 @@ export async function POST(request: Request) {
             x.installmentNumber ?? null,
             x.occurrenceKey ?? null,
             x.isSideHustle ? 1 : 0,
+            recognition.source,
+            recognition.recognitionText,
+            recognition.recognitionCompleteness,
+            recognition.recognitionCorrectionsJson,
             x.offlineId ?? null,
             x.crdtId ?? null,
             x.updatedAt ?? x.createdAt,
@@ -625,6 +660,7 @@ export async function POST(request: Request) {
             x.createdAt,
           ),
       );
+    }
     for (const x of rows.achievements ?? [])
       q.push(
         db
@@ -764,15 +800,15 @@ export async function POST(request: Request) {
       q.push(
         db
           .prepare(
-            "INSERT INTO category_budgets(ledger_id,category,amount,updated_at) VALUES(?,?,?,?)",
+            "INSERT INTO category_budgets(ledger_id,category,amount,carryover_enabled,updated_at) VALUES(?,?,?,?,?)",
           )
-          .bind(x.ledgerId, x.category, x.amount, x.updatedAt),
+          .bind(x.ledgerId, x.category, x.amount, x.carryoverEnabled ? 1 : 0, x.updatedAt),
       );
     for (const x of rows.subscriptions ?? [])
       q.push(
         db
           .prepare(
-            "INSERT INTO subscriptions(id,ledger_id,name,amount,account_id,cycle,category,category_dynamic,next_charge_date,uuid,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO subscriptions(id,ledger_id,name,amount,account_id,cycle,category,category_dynamic,next_charge_date,is_paused,uuid,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
           )
           .bind(
             x.id,
@@ -784,9 +820,31 @@ export async function POST(request: Request) {
             x.category,
             x.categoryDynamic ?? x.category,
             x.nextChargeDate,
+            x.paused || x.isPaused ? 1 : 0,
             x.uuid ?? x.syncId,
             x.updatedAt ?? x.createdAt,
             x.createdAt,
+          ),
+      );
+    for (const x of rows.recurringTasks ?? [])
+      q.push(
+        db.prepare("INSERT INTO recurring_tasks(id,uuid,ledger_id,name,amount,type,account_id,cycle,category,category_dynamic,next_run_date,reminder_days,is_paused,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+          .bind(
+            x.id,
+            x.uuid ?? x.syncId,
+            x.ledgerId,
+            x.name,
+            x.amount,
+            x.type,
+            x.accountId,
+            x.cycle,
+            x.category,
+            x.categoryDynamic ?? x.category,
+            x.nextRunDate,
+            x.reminderDays ?? 1,
+            x.isPaused === true || x.paused === true ? 1 : 0,
+            x.createdAt ?? x.updatedAt,
+            x.updatedAt ?? x.createdAt,
           ),
       );
     for (const x of rows.savingsGoals ?? [])

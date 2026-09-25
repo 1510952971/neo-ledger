@@ -140,12 +140,37 @@ test("v23 reconciliation and automation rules survive cross-device ID remapping"
     automationRules: [{ id: "coffee-rule", ledgerSyncId: "ledger-global-1", ledgerId: 90, name: "咖啡", conditions: { accountId: 99 }, actions: { accountId: 99, category: "餐饮" }, conditionAccountSyncId: "account-sync", actionAccountSyncId: "account-sync", updatedAt: "2026-08-16T11:00:00.000Z" }],
   };
   const merged = mergeSyncSnapshots(local, remote);
-  assert.equal(merged.version, 23);
+  assert.equal(merged.version, 24);
   assert.equal(merged.transactions[0].id, 8);
   assert.equal(merged.transactionReconciliation[0].transactionId, 8);
   assert.equal(merged.automationRules[0].conditions.accountId, 7);
   assert.equal(merged.automationRules[0].actions.accountId, 7);
   assert.ok(merged.mergeReport.conflictCount >= 2);
+});
+
+test("recurring-task sync remaps its account and honors a delete tombstone", () => {
+  const local = {
+    version: 24,
+    ledgers: [ledger("2026-09-24T09:00:00.000Z")],
+    accounts: [{ id: 7, syncId: "account-sync", ledgerSyncId: "ledger-global-1", ledgerId: 1, name: "本机账户", updatedAt: "2026-09-24T09:00:00.000Z" }],
+    transactions: [],
+    recurringTasks: [],
+  };
+  const remote = {
+    version: 24,
+    ledgers: [ledger("2026-09-24T09:00:00.000Z")],
+    accounts: [{ id: 99, syncId: "account-sync", ledgerSyncId: "ledger-global-1", ledgerId: 99, name: "云端账户", updatedAt: "2026-09-24T09:00:00.000Z" }],
+    transactions: [],
+    recurringTasks: [{ id: 40, syncId: "task-sync", ledgerSyncId: "ledger-global-1", accountSyncId: "account-sync", ledgerId: 99, accountId: 99, name: "每月房租", amount: 250000, type: "支出", cycle: "每月", updatedAt: "2026-09-24T10:00:00.000Z" }],
+  };
+  const merged = mergeSyncSnapshots(local, remote);
+  assert.equal(merged.version, 24);
+  assert.equal(merged.recurringTasks.length, 1);
+  assert.equal(merged.recurringTasks[0].accountId, 7);
+  assert.equal(merged.recurringTasks[0].ledgerId, 1);
+
+  local.syncTombstones = [{ entityType: "recurring-task", entityUuid: "task-sync", syncId: "task-sync", ledgerSyncId: "ledger-global-1", ledgerId: 1, deletedAt: "2026-09-24T11:00:00.000Z" }];
+  assert.equal(mergeSyncSnapshots(local, remote).recurringTasks.length, 0);
 });
 
 test("1000 randomized two-device merges preserve winners and relationships", () => {

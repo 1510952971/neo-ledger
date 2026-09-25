@@ -41,6 +41,7 @@ import { ASSET_TYPE_OPTIONS } from "./asset-core.js";
 import { splitBalanceDelta } from "./split-core.js";
 import { AuthPanel, type ClientAuthUser } from "./auth-panel.tsx";
 import { SubscriptionSection, type SubscriptionListItem } from "./subscription-section";
+import { RecurringTaskSection, type RecurringTaskListItem } from "./recurring-task-section";
 import { SavingsGoalSection, type SavingsGoalListItem } from "./savings-goal-section";
 import { InstallmentSection } from "./installment-section";
 import { CategoryBudgetSection } from "./category-budget-section";
@@ -97,6 +98,7 @@ import {
   removeInstallment as removeInstallmentRequest,
   removeSubscription as removeSubscriptionRequest,
   saveSubscription,
+  setSubscriptionPaused,
 } from "./recurring-actions";
 import { useAssetManagerState } from "./asset-manager-state";
 import { useTransactionEditState } from "./transaction-edit-state";
@@ -219,6 +221,10 @@ type Transaction = {
   reimbursable: boolean;
   discountAmount: number;
   excludeFromBudget: boolean;
+  source?: string;
+  recognitionText?: string | null;
+  recognitionCompleteness?: number | null;
+  recognitionCorrections?: Record<string, { recognized: string | number; confirmed: string | number }>;
   occurredAt: string;
   updatedAt: string;
   createdAt: string;
@@ -249,7 +255,14 @@ type Account = {
   updatedAt: string;
   createdAt: string;
 };
-type CategoryBudget = { category: Category; amount: number; updatedAt: string };
+type CategoryBudget = {
+  category: Category;
+  amount: number;
+  updatedAt: string;
+  carryoverEnabled?: boolean;
+  carryoverAmount?: number;
+  availableAmount?: number;
+};
 type Subscription = {
   id: number;
   name: string;
@@ -258,6 +271,7 @@ type Subscription = {
   cycle: "每月" | "每季" | "每年";
   category: Category;
   nextChargeDate: string;
+  isPaused: boolean;
   createdAt: string;
 };
 type Ledger = { id: number; name: string; icon: string; updatedAt: string; createdAt: string };
@@ -523,6 +537,7 @@ export function LedgerApp({
   budget,
   categoryBudgets,
   subscriptions,
+  recurringTasks,
   ledgers,
   currentLedgerId,
   savingsGoals,
@@ -552,6 +567,7 @@ export function LedgerApp({
   budget: number;
   categoryBudgets: CategoryBudget[];
   subscriptions: Subscription[];
+  recurringTasks: RecurringTaskListItem[];
   ledgers: Ledger[];
   currentLedgerId: number;
   savingsGoals: SavingsGoal[];
@@ -914,7 +930,7 @@ export function LedgerApp({
     setLabel: setQuickSyncLabel,
     setExpiryDays: setQuickSyncExpiryDays,
   } = quickSync;
-  const forecast = useForecastState({ active: tab === "analytics", ledgerId: currentLedgerId, transactionsKey: transactions, subscriptionsKey: subscriptions });
+  const forecast = useForecastState({ active: tab === "analytics", ledgerId: currentLedgerId, transactionsKey: transactions, subscriptionsKey: subscriptionList });
   const serverSummary = useTransactionSummary({
     ledgerId: currentLedgerId,
     todayKey,
@@ -2395,12 +2411,13 @@ export function LedgerApp({
       try {
         const category = String(formData.get("category")) as Category;
         const amount = Number(formData.get("amount"));
-        const result = await saveCategoryBudgetRequest({ ledgerId: currentLedgerId, category, amount });
+        const carryoverEnabled = formData.get("carryoverEnabled") === "on";
+        const result = await saveCategoryBudgetRequest({ ledgerId: currentLedgerId, category, amount, carryoverEnabled });
         if (result.ok)
           setCategoryBudgetList((rows) =>
             rows.map((row) =>
               row.category === category
-                ? { ...row, amount: Math.round(amount * 100) }
+                ? { ...row, amount: Math.round(amount * 100), carryoverEnabled, carryoverAmount: 0, availableAmount: Math.round(amount * 100) }
                 : row,
             ),
           );
@@ -2459,6 +2476,28 @@ export function LedgerApp({
         else setSubscriptionError("删除失败，请稍后重试");
       } catch (error) {
         setSubscriptionError(error instanceof Error ? error.message : "删除失败，请稍后重试");
+      }
+    });
+  }
+  function toggleSubscriptionPaused(item: SubscriptionListItem) {
+    const paused = !item.isPaused;
+    startTransition(async () => {
+      try {
+        const { response, data } = await setSubscriptionPaused({
+          id: item.id,
+          ledgerId: currentLedgerId,
+          paused,
+        });
+        if (response.ok) {
+          setSubscriptionList((rows) => rows.map((row) =>
+            row.id === item.id ? { ...row, isPaused: paused } : row,
+          ));
+          setToast({ kind: "success", message: paused ? "续费已暂停，不会自动记账。" : "续费已恢复。" });
+        } else {
+          notify(data?.error || "订阅状态更新失败，请稍后重试。");
+        }
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "订阅状态更新失败，请稍后重试。");
       }
     });
   }
@@ -3085,6 +3124,7 @@ export function LedgerApp({
     });
   }
   const activeCategoryLimit =
+      categoryBudgetList.find((item) => item.category === category)?.availableAmount ??
       categoryBudgetList.find((item) => item.category === category)?.amount ??
       0,
     budgetFriction =
@@ -3582,7 +3622,15 @@ export function LedgerApp({
                   openDialog(subscriptionRef, setSubscriptionOpen);
                 }}
                 onRemove={removeSubscription}
+                onTogglePaused={toggleSubscriptionPaused}
                 onPageChange={changeSubscriptionPage}
+              />
+              <RecurringTaskSection
+                ledgerId={currentLedgerId}
+                initialRows={recurringTasks}
+                accounts={accountList}
+                expenseCategories={expenseCategories.filter((item) => item.isActive).map((item) => item.name)}
+                incomeCategories={incomeCategories.filter((item) => item.isActive).map((item) => item.name)}
               />
             </section>
 

@@ -51,9 +51,9 @@ export async function GET(request: Request) {
       : { results: [] };
     const password = user
       ? await db
-          .prepare("SELECT password_enabled passwordEnabled FROM app_users WHERE id=?")
+          .prepare("SELECT password_enabled passwordEnabled,created_at createdAt FROM app_users WHERE id=?")
           .bind(user.id)
-          .first<{ passwordEnabled: number }>()
+          .first<{ passwordEnabled: number; createdAt: string }>()
       : null;
     const mfa = user
       ? await db
@@ -76,6 +76,9 @@ export async function GET(request: Request) {
             displayName: user.displayName,
             email: user.email,
             avatarUrl: user.avatarUrl,
+            createdAt: password?.createdAt ?? null,
+            passwordEnabled: Boolean(password?.passwordEnabled),
+            linkedProviders: linked.results.map((row) => row.provider),
           }
         : null,
     });
@@ -275,6 +278,7 @@ export async function PATCH(request: Request) {
       currentPassword?: string;
       newPassword?: string;
       avatarUrl?: string | null;
+      displayName?: string;
     }>(request, MAX_AUTH_BODY_BYTES);
     const updatesAvatar = Object.prototype.hasOwnProperty.call(body, "avatarUrl");
     const updatesEmail = Object.prototype.hasOwnProperty.call(body, "email");
@@ -290,6 +294,18 @@ export async function PATCH(request: Request) {
         .bind(avatarUrl, session.id)
         .run();
       return privateJson({ ok: true, avatarUrl });
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "displayName")) {
+      const displayName = String(body.displayName ?? "").trim();
+      if (!displayName || displayName.length > 40 || /[\x00-\x1f\x7f]/u.test(displayName))
+        throw new ApiAccessError("昵称需为 1—40 个字符，且不能包含控制字符", 400);
+      if (updatesEmail)
+        throw new ApiAccessError("请分别更新昵称和绑定邮箱", 400);
+      await getDbBinding()
+        .prepare("UPDATE app_users SET display_name=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND disabled=0")
+        .bind(displayName, session.id)
+        .run();
+      return privateJson({ ok: true, displayName });
     }
     const email = validateEmail(body.email);
     if (!email) throw new ApiAccessError("请输入邮箱地址", 400);

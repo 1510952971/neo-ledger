@@ -1,0 +1,15 @@
+{
+  "@@locale": "zh",
+  "appTitle": "Neo Ledger",
+  "home": "首页",
+  "bills": "账单",
+  "analytics": "分析",
+  "profile": "我的",
+  "quickEntry": "记一笔",
+  "closeEntry": "关闭记账",
+  "entryTitle": "记一笔",
+  "expense": "支出",
+  "income": "收入",
+  "transfer": "转账",
+  "saveEntry": "保存"
+}

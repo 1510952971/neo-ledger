@@ -12,12 +12,13 @@ export type SubscriptionListItem = {
   cycle: "每月" | "每季" | "每年";
   category: string;
   nextChargeDate: string;
+  isPaused: boolean;
   createdAt: string;
 };
 
 const money = new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY", minimumFractionDigits: 2 });
 
-export function SubscriptionSection({ sectionRef, rows, totalRows, page, totalPages, todayKey, categoryEmoji, onAdd, onEdit, onRemove, onPageChange }: {
+export function SubscriptionSection({ sectionRef, rows, totalRows, page, totalPages, todayKey, categoryEmoji, onAdd, onEdit, onRemove, onTogglePaused, onPageChange }: {
   sectionRef: RefObject<HTMLElement | null>;
   rows: SubscriptionListItem[];
   totalRows: number;
@@ -28,6 +29,7 @@ export function SubscriptionSection({ sectionRef, rows, totalRows, page, totalPa
   onAdd: () => void;
   onEdit: (item: SubscriptionListItem) => void;
   onRemove: (id: number) => void;
+  onTogglePaused: (item: SubscriptionListItem) => void;
   onPageChange: (page: number) => void;
 }) {
   return (
@@ -42,9 +44,10 @@ export function SubscriptionSection({ sectionRef, rows, totalRows, page, totalPa
           return (
             <article className={statusClass} key={item.id}>
               <span>{categoryEmoji(item.category)}</span>
-              <div className="subscription-info"><strong>{item.name}</strong><small>到期 {item.nextChargeDate.replaceAll("-", ".")} · <i>{expiryStatus}</i></small></div>
+              <div className="subscription-info"><strong>{item.name}{item.isPaused && <em className="subscription-paused-label">已暂停</em>}</strong><small>到期 {item.nextChargeDate.replaceAll("-", ".")} · <i>{item.isPaused ? "暂停中" : expiryStatus}</i></small></div>
               <div className="subscription-cost"><b>{money.format(item.amount / 100)}</b><em>{item.cycle} · 约 {money.format(dailyCost / 100)}/天</em></div>
               <div className="subscription-actions">
+                <button aria-label={item.isPaused ? `恢复${item.name}` : `暂停${item.name}`} title={item.isPaused ? "恢复续费" : "暂停续费"} onClick={() => onTogglePaused(item)}>{item.isPaused ? "▶" : "Ⅱ"}</button>
                 <button aria-label={`修改${item.name}`} title="修改续费" onClick={() => onEdit(item)}>✎</button>
                 <button aria-label={`删除${item.name}`} title="删除续费" onClick={() => onRemove(item.id)}>×</button>
               </div>

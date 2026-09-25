@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { ensureDb, getDbBinding } from "../../../db";
 import { normalizeSubscriptionInput } from "./rules.js";
 import { ApiAccessError, accessErrorResponse, claimAndRequireLedger, guardedApiResponse } from "../../api-security";
-import { readSubscriptionCreateInput, readSubscriptionUpdateInput } from "../../internal-api-contract";
+import { readSubscriptionCreateInput, readSubscriptionPauseInput, readSubscriptionUpdateInput } from "../../internal-api-contract";
 import { MAX_SUBSCRIPTION_COUNT } from "../../planning-limits";
+import { dateKeyInZone, nextRecurringDate } from "../../time-money.js";
 
 function privateJson(body: unknown, init: ResponseInit = {}) {
   const headers = new Headers(init.headers);
@@ -53,16 +54,47 @@ export async function GET(request: Request) {
       .first<{ count: number }>();
     const rows = await db
       .prepare(
-        "SELECT id,ledger_id AS ledgerId,name,amount,account_id AS accountId,cycle,COALESCE(category_dynamic,category) AS category,next_charge_date AS nextChargeDate,uuid,updated_at AS updatedAt,created_at AS createdAt FROM subscriptions WHERE ledger_id=? ORDER BY next_charge_date,id LIMIT ?",
+        "SELECT id,ledger_id AS ledgerId,name,amount,account_id AS accountId,cycle,COALESCE(category_dynamic,category) AS category,next_charge_date AS nextChargeDate,is_paused AS isPaused,uuid,updated_at AS updatedAt,created_at AS createdAt FROM subscriptions WHERE ledger_id=? ORDER BY is_paused,next_charge_date,id LIMIT ?",
       )
       .bind(ledgerId, MAX_SUBSCRIPTION_COUNT)
       .all();
-    const response = privateJson(rows.results);
+    const response = privateJson(rows.results.map((row) => ({
+      ...row,
+      isPaused: Number((row as { isPaused?: unknown }).isPaused ?? 0) === 1,
+    })));
     const totalCount = Number(total?.count ?? 0);
     response.headers.set("X-Total-Count", String(totalCount));
     response.headers.set("X-Has-More", totalCount > MAX_SUBSCRIPTION_COUNT ? "1" : "0");
     return response;
   });
+}
+
+export async function PATCH(request: Request) {
+  try {
+    await ensureDb();
+    const body = await readSubscriptionPauseInput(request);
+    await claimAndRequireLedger(request, body.ledgerId);
+    const db = getDbBinding();
+    const current = await db.prepare(
+      "SELECT is_paused AS isPaused,next_charge_date AS nextChargeDate,cycle FROM subscriptions WHERE id=? AND ledger_id=?",
+    ).bind(body.id, body.ledgerId).first<{ isPaused: number; nextChargeDate: string; cycle: string }>();
+    if (!current) throw new Error("续费项目不存在");
+    let nextChargeDate = current.nextChargeDate;
+    if (!body.paused && Number(current.isPaused) === 1) {
+      const today = dateKeyInZone(new Date(), "Asia/Shanghai");
+      let guard = 0;
+      while (nextChargeDate <= today && guard++ < 10_000) {
+        nextChargeDate = nextRecurringDate(nextChargeDate, current.cycle);
+      }
+    }
+    const result = await db.prepare(
+      "UPDATE subscriptions SET is_paused=?,next_charge_date=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND ledger_id=?",
+    ).bind(body.paused ? 1 : 0, nextChargeDate, body.id, body.ledgerId).run();
+    if (Number(result.meta.changes ?? 0) === 0) throw new Error("续费项目不存在");
+    return privateJson({ ok: true, paused: body.paused, nextChargeDate });
+  } catch (error) {
+    return accessErrorResponse(error, "更新订阅状态失败", request);
+  }
 }
 
 export async function POST(request: Request) {

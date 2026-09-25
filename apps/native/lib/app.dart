@@ -14,10 +14,15 @@ import 'feature_catalog.dart';
 import 'import_file_loader.dart';
 import 'import_parser.dart';
 import 'features/accounts/account_transfer_editor.dart';
+import 'l10n/generated/app_localizations.dart';
 import 'models.dart';
 import 'mobile/data/mobile_core_snapshot_store.dart';
 import 'mobile/data/mobile_offline_queue_store.dart';
+import 'mobile/data/mobile_local_cache_store.dart';
+import 'mobile/core/mobile_design.dart';
 import 'mobile/domain/offline_projection.dart';
+import 'mobile/domain/mobile_background_refresh_policy.dart';
+import 'mobile/domain/mobile_import_batcher.dart';
 import 'mobile/core/mobile_route_registry.dart';
 import 'shortcut_entry.dart';
 import 'update_service.dart';
@@ -58,13 +63,15 @@ class NeoLedgerApp extends StatefulWidget {
   State<NeoLedgerApp> createState() => _NeoLedgerAppState();
 }
 
-class _NeoLedgerAppState extends State<NeoLedgerApp> {
+class _NeoLedgerAppState extends State<NeoLedgerApp>
+    with WidgetsBindingObserver {
   late final LedgerController controller;
   late final MobileRouteRegistry _mobileRoutes;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     controller = LedgerController();
     _mobileRoutes = MobileRouteRegistry({
       MobileRouteName.home: MobileRouteDefinition(
@@ -94,7 +101,12 @@ class _NeoLedgerAppState extends State<NeoLedgerApp> {
       MobileRouteName.entry: MobileRouteDefinition(
         (_, arguments) => MobileAddTransactionPage(
           controller: controller,
-          initialType: arguments is String ? arguments : '支出',
+          initialType: arguments is ShortcutEntryDraft
+              ? arguments.type
+              : arguments is String
+              ? arguments
+              : '支出',
+          initialDraft: arguments is ShortcutEntryDraft ? arguments : null,
         ),
         fullscreenDialog: true,
       ),
@@ -128,12 +140,20 @@ class _NeoLedgerAppState extends State<NeoLedgerApp> {
     }
   }
 
+  @override
+  void didChangePlatformBrightness() {
+    if (mounted && controller.preferences.mobileThemeMode == 'system') {
+      setState(() {});
+    }
+  }
+
   bool get _isMobileNative =>
       defaultTargetPlatform == TargetPlatform.android ||
       defaultTargetPlatform == TargetPlatform.iOS;
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     controller.dispose();
     super.dispose();
   }
@@ -143,48 +163,61 @@ class _NeoLedgerAppState extends State<NeoLedgerApp> {
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) {
+        MobileColors.configure(
+          theme: controller.preferences.theme,
+          mode: controller.preferences.mobileThemeMode,
+          systemBrightness:
+              WidgetsBinding.instance.platformDispatcher.platformBrightness,
+          highContrast: controller.preferences.highContrast,
+        );
+        final brightness = MobileColors.brightness;
         return MaterialApp(
           debugShowCheckedModeBanner: false,
-          title: 'Neo Ledger',
+          onGenerateTitle: (context) => AppLocalizations.of(context)!.appTitle,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           theme: ThemeData(
-            brightness: Brightness.dark,
-            scaffoldBackgroundColor: _surface,
+            brightness: brightness,
+            scaffoldBackgroundColor: MobileColors.background,
             colorScheme: ColorScheme.fromSeed(
-              seedColor: _brand,
-              brightness: Brightness.dark,
+              seedColor: MobileColors.brand,
+              brightness: brightness,
+              surface: MobileColors.surface,
             ),
             cardTheme: CardThemeData(
-              color: _surfaceAlt,
+              color: MobileColors.surfaceRaised,
               margin: EdgeInsets.zero,
               elevation: 0,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.all(Radius.circular(22)),
-                side: BorderSide(color: Color(0x1fffffff)),
+                side: BorderSide(color: MobileColors.line),
               ),
             ),
-            appBarTheme: const AppBarTheme(
-              backgroundColor: _surface,
-              foregroundColor: Colors.white,
+            appBarTheme: AppBarTheme(
+              backgroundColor: MobileColors.background,
+              foregroundColor: MobileColors.foreground,
               elevation: 0,
               scrolledUnderElevation: 0,
             ),
             inputDecorationTheme: InputDecorationTheme(
               filled: true,
-              fillColor: _surfaceAlt,
-              border: const OutlineInputBorder(
-                borderRadius: BorderRadius.all(Radius.circular(14)),
-                borderSide: BorderSide(color: Color(0x1fffffff)),
+              fillColor: MobileColors.surfaceRaised,
+              border: OutlineInputBorder(
+                borderRadius: const BorderRadius.all(Radius.circular(14)),
+                borderSide: BorderSide(color: MobileColors.line),
               ),
-              enabledBorder: const OutlineInputBorder(
-                borderRadius: BorderRadius.all(Radius.circular(14)),
-                borderSide: BorderSide(color: Color(0x1fffffff)),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: const BorderRadius.all(Radius.circular(14)),
+                borderSide: BorderSide(color: MobileColors.line),
               ),
             ),
-            navigationBarTheme: const NavigationBarThemeData(
-              backgroundColor: _surfaceAlt,
-              indicatorColor: Color(0xff304d25),
+            navigationBarTheme: NavigationBarThemeData(
+              backgroundColor: MobileColors.surfaceRaised,
+              indicatorColor: brightness == Brightness.dark
+                  ? const Color(0xff304d25)
+                  : const Color(0xffd9e8ce),
             ),
-            dividerTheme: const DividerThemeData(color: Color(0x1fffffff)),
+            dividerTheme: DividerThemeData(color: MobileColors.line),
           ),
           home: _isMobileNative
               ? MobileLedgerShell(
@@ -229,6 +262,7 @@ class LedgerController extends ChangeNotifier {
   Forecast? forecast;
   List<CategoryBudget> budgets = const [];
   List<Subscription> subscriptions = const [];
+  List<RecurringTask> recurringTasks = const [];
   List<Installment> installments = const [];
   List<SavingsGoal> savingsGoals = const [];
   List<DigitalAsset> assets = const [];
@@ -267,7 +301,7 @@ class LedgerController extends ChangeNotifier {
   MobileOfflineQueueStore? _offlineQueueStore;
   Future<void>? _refreshOperation;
   Future<void>? _syncOperation;
-  String? _transactionRevisionMarker;
+  String? _ledgerSyncRevisionMarker;
 
   bool get authenticated => user != null;
   List<Account> get activeAccounts =>
@@ -472,6 +506,7 @@ class LedgerController extends ChangeNotifier {
     forecast = null;
     budgets = const [];
     subscriptions = const [];
+    recurringTasks = const [];
     installments = const [];
     savingsGoals = const [];
     assets = const [];
@@ -578,9 +613,7 @@ class LedgerController extends ChangeNotifier {
       accounts = await api.fetchAccounts(ledger.id);
       transactions = await api.fetchTransactions(ledger.id);
       _projectQueueIntoTransactions();
-      _transactionRevisionMarker = await api.fetchTransactionRevision(
-        ledger.id,
-      );
+      _ledgerSyncRevisionMarker = await api.fetchLedgerSyncRevision(ledger.id);
       await _refreshAdvanced(ledger.id);
       await _persistCoreSnapshot();
       error = null;
@@ -596,17 +629,17 @@ class LedgerController extends ChangeNotifier {
     }
   }
 
-  /// Checks the shared transaction revision before doing an aggregate refresh.
+  /// Checks the shared ledger revision before doing an aggregate refresh.
   Future<bool> refreshIfChanged({bool silent = false}) async {
     if (demoMode || (!authenticated && !api.hasSession)) return false;
     final ledger = selectedLedger;
     if (ledger == null) return false;
-    final marker = await api.fetchTransactionRevision(ledger.id);
-    if (_transactionRevisionMarker == null) {
-      _transactionRevisionMarker = marker;
+    final marker = await api.fetchLedgerSyncRevision(ledger.id);
+    if (_ledgerSyncRevisionMarker == null) {
+      _ledgerSyncRevisionMarker = marker;
       return false;
     }
-    if (marker == _transactionRevisionMarker) return false;
+    if (marker == _ledgerSyncRevisionMarker) return false;
     await refresh(silent: silent);
     return true;
   }
@@ -925,22 +958,53 @@ class LedgerController extends ChangeNotifier {
     if (demoMode) {
       final current = user;
       if (current == null) return;
-      user = SessionUser(
-        username: current.username,
-        displayName: current.displayName,
-        avatarUrl: dataUrl,
-      );
+      user = current.copyWith(avatarUrl: dataUrl, clearAvatar: dataUrl == null);
       notifyListeners();
       return;
     }
     final avatarUrl = await api.updateAvatar(dataUrl);
     final current = user;
     if (current == null) return;
-    user = SessionUser(
-      username: current.username,
-      displayName: current.displayName,
+    user = current.copyWith(
       avatarUrl: avatarUrl,
+      clearAvatar: avatarUrl == null,
     );
+    await _persistCoreSnapshot();
+    notifyListeners();
+  }
+
+  Future<void> updateDisplayName(String value) async {
+    final current = user;
+    final normalized = value.trim();
+    if (current == null) throw const ApiException('当前账号信息不可用');
+    if (normalized.isEmpty || normalized.length > 40) {
+      throw const ApiException('昵称需为 1—40 个字符');
+    }
+    if (demoMode) {
+      user = current.copyWith(displayName: normalized);
+      notifyListeners();
+      return;
+    }
+    await api.updateDisplayName(normalized);
+    user = await api.fetchSessionUser();
+    await _persistCoreSnapshot();
+    notifyListeners();
+  }
+
+  Future<void> bindAccountEmail({
+    required String email,
+    required String code,
+    String? currentPassword,
+    String? newPassword,
+  }) async {
+    if (demoMode) throw const ApiException('演示模式不能绑定邮箱');
+    await api.bindAccountEmail(
+      email: email,
+      code: code,
+      currentPassword: currentPassword,
+      newPassword: newPassword,
+    );
+    user = await api.fetchSessionUser();
     await _persistCoreSnapshot();
     notifyListeners();
   }
@@ -1177,6 +1241,9 @@ class LedgerController extends ChangeNotifier {
   Future<void> savePreferences({
     required String theme,
     required bool lockEnabled,
+    String? mobileThemeMode,
+    bool? highContrast,
+    String? defaultCurrency,
     String? pin,
   }) async {
     final normalizedTheme = theme.trim().isEmpty ? 'cream' : theme.trim();
@@ -1186,11 +1253,20 @@ class LedgerController extends ChangeNotifier {
         (normalizedPin == null || normalizedPin.isEmpty)) {
       throw const ApiException('首次开启隐私锁必须设置 PIN');
     }
-    preferences = Preferences(theme: normalizedTheme, lockEnabled: lockEnabled);
+    preferences = preferences.copyWith(
+      theme: normalizedTheme,
+      lockEnabled: lockEnabled,
+      mobileThemeMode: mobileThemeMode,
+      highContrast: highContrast,
+      defaultCurrency: defaultCurrency,
+    );
     notifyListeners();
     if (demoMode) return;
     await api.updatePreferences(
       theme: normalizedTheme,
+      mobileThemeMode: mobileThemeMode,
+      highContrast: highContrast,
+      defaultCurrency: defaultCurrency,
       enabled: lockEnabled,
       pin: normalizedPin,
     );
@@ -1342,6 +1418,10 @@ class LedgerController extends ChangeNotifier {
     int? originalAmountCents,
     String? originalCurrency,
     int exchangeRateMicros = 1000000,
+    String source = '移动端记账',
+    String? recognitionText,
+    int? recognitionCompleteness,
+    Map<String, dynamic> recognitionCorrections = const {},
   }) async {
     final ledger = selectedLedger;
     final account = accounts.isEmpty
@@ -1384,6 +1464,10 @@ class LedgerController extends ChangeNotifier {
       originalAmountCents: originalAmountCents,
       originalCurrency: originalCurrency,
       exchangeRateMicros: exchangeRateMicros,
+      source: source,
+      recognitionText: recognitionText,
+      recognitionCompleteness: recognitionCompleteness,
+      recognitionCorrections: recognitionCorrections,
     );
     if (demoMode) {
       final item = TransactionItem(
@@ -1397,6 +1481,9 @@ class LedgerController extends ChangeNotifier {
         category: category,
         accountName: account.name,
         source: '本机演示',
+        recognitionText: recognitionText,
+        recognitionCompleteness: recognitionCompleteness,
+        recognitionCorrections: recognitionCorrections,
         originalAmountCents: originalAmountCents,
         originalCurrency: originalCurrency,
         exchangeRateMicros: exchangeRateMicros,
@@ -1616,17 +1703,53 @@ class LedgerController extends ChangeNotifier {
   }
 
   Future<Map<String, dynamic>> importBills(
-    List<Map<String, dynamic>> items,
-  ) async {
+    List<Map<String, dynamic>> items, {
+    bool Function()? shouldCancel,
+    ImportBatchProgress? onProgress,
+  }) async {
     final ledger = selectedLedger;
     if (ledger == null || accounts.isEmpty) {
       throw const ApiException('没有可用的账本账户');
     }
     if (items.isEmpty) throw const ApiException('没有可导入的流水');
     if (!demoMode) {
-      final result = await api.importBills(ledgerId: ledger.id, items: items);
-      await refresh();
-      return result;
+      var completedChunks = 0;
+      try {
+        final result = await importInBatches(
+          items: items,
+          sendBatch: (batch) =>
+              api.importBills(ledgerId: ledger.id, items: batch),
+          shouldCancel: shouldCancel ?? () => false,
+          onProgress:
+              ({
+                required int completed,
+                required int total,
+                required int imported,
+                required int duplicates,
+                required int skipped,
+              }) {
+                completedChunks = completed;
+                onProgress?.call(
+                  completed: completed,
+                  total: total,
+                  imported: imported,
+                  duplicates: duplicates,
+                  skipped: skipped,
+                );
+              },
+        );
+        if (result.completed > 0) await refresh();
+        return result.toJson();
+      } catch (_) {
+        if (completedChunks > 0) {
+          try {
+            await refresh();
+          } catch (_) {
+            // Keep the original import error; completed rows remain on server.
+          }
+        }
+        rethrow;
+      }
     }
     final imported = <TransactionItem>[];
     for (final raw in items) {
@@ -1718,6 +1841,7 @@ class LedgerController extends ChangeNotifier {
     forecast = null;
     budgets = const [];
     subscriptions = const [];
+    recurringTasks = const [];
     installments = const [];
     savingsGoals = const [];
     assets = const [];
@@ -1771,6 +1895,7 @@ class LedgerController extends ChangeNotifier {
       _optional(() => api.fetchSecuritySessions()),
       _optional(() => api.fetchSecurityAudit()),
       _optional(() => api.fetchAnalysis(ledgerId, dimension: '日')),
+      _optional(() => api.fetchRecurringTasks(ledgerId)),
     ]);
     if (values[0] is AnalysisSummary) analysis = values[0] as AnalysisSummary;
     if (values[21] is AnalysisSummary) {
@@ -1781,6 +1906,9 @@ class LedgerController extends ChangeNotifier {
     }
     if (values[2] is List<Subscription>) {
       subscriptions = values[2] as List<Subscription>;
+    }
+    if (values[22] is List<RecurringTask>) {
+      recurringTasks = values[22] as List<RecurringTask>;
     }
     if (values[3] is List<Installment>) {
       installments = values[3] as List<Installment>;
@@ -2162,6 +2290,7 @@ class LedgerController extends ChangeNotifier {
   Future<void> saveBudget({
     required String category,
     required double amount,
+    bool carryoverEnabled = false,
   }) async {
     final ledger = selectedLedger;
     if (ledger == null) throw const ApiException('没有可用的账本');
@@ -2174,6 +2303,7 @@ class LedgerController extends ChangeNotifier {
         category: category.trim(),
         amountCents: (amount * 100).round(),
         updatedAt: DateTime.now().toIso8601String(),
+        carryoverEnabled: carryoverEnabled,
       );
       budgets = [
         ...budgets.where((item) => item.category != next.category),
@@ -2186,6 +2316,7 @@ class LedgerController extends ChangeNotifier {
       ledgerId: ledger.id,
       category: category,
       amount: amount,
+      carryoverEnabled: carryoverEnabled,
     );
     await refresh();
   }
@@ -2362,10 +2493,12 @@ class LedgerController extends ChangeNotifier {
         name: name.trim(),
         amountCents: (amount * 100).round(),
         cycle: cycle,
+        ledgerId: ledger.id,
         accountId: accountId,
         category: category.trim(),
         nextChargeDate: nextChargeDate,
         updatedAt: DateTime.now().toIso8601String(),
+        isPaused: existing?.isPaused ?? false,
       );
       subscriptions = [
         for (final item in subscriptions)
@@ -2399,6 +2532,161 @@ class LedgerController extends ChangeNotifier {
       return;
     }
     await api.deleteSubscription(id: item.id, ledgerId: ledger.id);
+    await refresh();
+  }
+
+  Future<void> setSubscriptionPaused(Subscription item, bool paused) async {
+    final ledger = selectedLedger;
+    if (ledger == null || ledger.id != item.ledgerId) {
+      throw const ApiException('订阅所属账本已变化，请刷新后重试');
+    }
+    if (demoMode) {
+      subscriptions = [
+        for (final value in subscriptions)
+          if (value.id == item.id)
+            Subscription(
+              id: value.id,
+              name: value.name,
+              amountCents: value.amountCents,
+              cycle: value.cycle,
+              ledgerId: value.ledgerId,
+              accountId: value.accountId,
+              category: value.category,
+              nextChargeDate: value.nextChargeDate,
+              updatedAt: value.updatedAt,
+              isPaused: paused,
+            )
+          else
+            value,
+      ];
+      notifyListeners();
+      return;
+    }
+    await api.setSubscriptionPaused(
+      id: item.id,
+      ledgerId: ledger.id,
+      paused: paused,
+    );
+    await refresh();
+  }
+
+  Future<void> saveRecurringTask({
+    RecurringTask? existing,
+    required String name,
+    required double amount,
+    required String type,
+    required int accountId,
+    required String cycle,
+    required String category,
+    required String nextRunDate,
+    required int reminderDays,
+  }) async {
+    final ledger = selectedLedger;
+    if (ledger == null) throw const ApiException('没有可用的账本');
+    if (name.trim().isEmpty ||
+        name.trim().length > 40 ||
+        !amount.isFinite ||
+        amount <= 0) {
+      throw const ApiException('请填写有效名称和金额');
+    }
+    if (!const ['支出', '收入'].contains(type) ||
+        !const ['每天', '每周', '每月', '每季', '每年'].contains(cycle) ||
+        !const [0, 1, 3, 7, 14, 30].contains(reminderDays)) {
+      throw const ApiException('周期、类型或提醒设置无效');
+    }
+    final account = accounts.where((item) => item.id == accountId).firstOrNull;
+    if (account == null || account.type != '资产' || !account.isActive) {
+      throw const ApiException('请选择已启用的资产账户');
+    }
+    if (category.trim().isEmpty || DateTime.tryParse(nextRunDate) == null) {
+      throw const ApiException('请填写分类和首次执行日期');
+    }
+    if (demoMode) {
+      final next = RecurringTask(
+        id: existing?.id ?? DateTime.now().millisecondsSinceEpoch,
+        ledgerId: ledger.id,
+        name: name.trim(),
+        amountCents: (amount * 100).round(),
+        type: type,
+        accountId: accountId,
+        cycle: cycle,
+        category: category.trim(),
+        nextRunDate: nextRunDate,
+        reminderDays: reminderDays,
+        isPaused: existing?.isPaused ?? false,
+      );
+      recurringTasks = [
+        for (final item in recurringTasks)
+          if (item.id != next.id) item,
+        next,
+      ];
+      notifyListeners();
+      return;
+    }
+    await api.saveRecurringTask(
+      id: existing?.id,
+      ledgerId: ledger.id,
+      name: name,
+      amount: amount,
+      type: type,
+      accountId: accountId,
+      cycle: cycle,
+      category: category,
+      nextRunDate: nextRunDate,
+      reminderDays: reminderDays,
+    );
+    await refresh();
+  }
+
+  Future<void> deleteRecurringTask(RecurringTask item) async {
+    final ledger = selectedLedger;
+    if (ledger == null || ledger.id != item.ledgerId) {
+      throw const ApiException('周期任务所属账本已变化，请刷新后重试');
+    }
+    if (demoMode) {
+      recurringTasks = recurringTasks
+          .where((value) => value.id != item.id)
+          .toList();
+      notifyListeners();
+      return;
+    }
+    await api.deleteRecurringTask(id: item.id, ledgerId: ledger.id);
+    await refresh();
+  }
+
+  Future<void> setRecurringTaskPaused(RecurringTask item, bool paused) async {
+    final ledger = selectedLedger;
+    if (ledger == null || ledger.id != item.ledgerId) {
+      throw const ApiException('周期任务所属账本已变化，请刷新后重试');
+    }
+    if (demoMode) {
+      recurringTasks = [
+        for (final value in recurringTasks)
+          if (value.id == item.id)
+            RecurringTask(
+              id: value.id,
+              ledgerId: value.ledgerId,
+              name: value.name,
+              amountCents: value.amountCents,
+              type: value.type,
+              accountId: value.accountId,
+              cycle: value.cycle,
+              category: value.category,
+              nextRunDate: value.nextRunDate,
+              reminderDays: value.reminderDays,
+              isPaused: paused,
+            )
+          else
+            value,
+      ];
+      notifyListeners();
+      return;
+    }
+    await api.setRecurringTaskPaused(
+      id: item.id,
+      ledgerId: ledger.id,
+      paused: paused,
+    );
     await refresh();
   }
 
@@ -2793,6 +3081,12 @@ class LedgerController extends ChangeNotifier {
           Subscription.fromJson,
         );
       }
+      if (decoded.containsKey('recurringTasks')) {
+        recurringTasks = decodeList(
+          decoded['recurringTasks'],
+          RecurringTask.fromJson,
+        );
+      }
       if (decoded.containsKey('installments')) {
         installments = decodeList(
           decoded['installments'],
@@ -2921,6 +3215,7 @@ class LedgerController extends ChangeNotifier {
       'forecast': forecast?.toJson(),
       'budgets': budgets.map((item) => item.toJson()).toList(),
       'subscriptions': subscriptions.map((item) => item.toJson()).toList(),
+      'recurringTasks': recurringTasks.map((item) => item.toJson()).toList(),
       'installments': installments.map((item) => item.toJson()).toList(),
       'savingsGoals': savingsGoals.map((item) => item.toJson()).toList(),
       'members': members.map((item) => item.toJson()).toList(),
@@ -3332,6 +3627,7 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
   AppLifecycleState _lifecycleState = AppLifecycleState.resumed;
   bool _backgroundRefreshInFlight = false;
   bool _hasObservedBackgroundCounts = false;
+  final _backgroundRefreshPolicy = MobileBackgroundRefreshPolicy();
   final _shortcutUrls = <String>[];
   final _queuedShortcutUrls = <String>{};
   bool _drainingShortcutUrls = false;
@@ -3341,7 +3637,7 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _backgroundRefreshTimer = Timer.periodic(
-      const Duration(seconds: 15),
+      MobileBackgroundRefreshPolicy.probeInterval,
       (_) => _refreshInBackground(),
     );
     unawaited(
@@ -3440,20 +3736,27 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
       try {
         if (widget.controller.queue.isNotEmpty) {
           await widget.controller.syncQueue(silent: true);
-        } else {
-          // Refresh all shared ledger resources. A transaction-only revision
-          // cannot represent account, budget, notification or preference
-          // changes made by another client.
-          await widget.controller.refresh(silent: true);
-        }
-        refreshed = true;
-      } catch (_) {
-        // A failed sync remains queued; still try to refresh server-side data.
-        try {
-          await widget.controller.refresh(silent: true);
+          _backgroundRefreshPolicy.recordFullRefresh();
           refreshed = true;
-        } catch (_) {
-          // Background work must not interrupt the current page or show a toast.
+        } else if (_backgroundRefreshPolicy.isFullRefreshDue()) {
+          await widget.controller.refresh(silent: true);
+          _backgroundRefreshPolicy.recordFullRefresh();
+          refreshed = true;
+        } else {
+          refreshed = await widget.controller.refreshIfChanged(silent: true);
+        }
+      } catch (_) {
+        // If queue sync failed, keep retrying it on the next tick. Otherwise
+        // use a full refresh as a low-frequency recovery path for older APIs.
+        if (widget.controller.queue.isEmpty &&
+            _backgroundRefreshPolicy.isFullRefreshDue()) {
+          try {
+            await widget.controller.refresh(silent: true);
+            _backgroundRefreshPolicy.recordFullRefresh();
+            refreshed = true;
+          } catch (_) {
+            // Background work must not interrupt the current page or show a toast.
+          }
         }
       }
 
@@ -5285,7 +5588,7 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
                 leading: const Icon(Icons.autorenew),
                 title: Text(item.name),
                 subtitle: Text(
-                  '${item.cycle} · ${item.category ?? '未分类'}${item.nextChargeDate == null ? '' : ' · 下次 ${item.nextChargeDate}'}',
+                  '${item.isPaused ? '已暂停 · ' : ''}${item.cycle} · ${item.category ?? '未分类'}${item.nextChargeDate == null ? '' : ' · 下次 ${item.nextChargeDate}'}',
                 ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -5301,11 +5604,80 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
                           _openSubscription(item);
                         } else if (value == 'delete') {
                           _deleteSubscription(item);
+                        } else if (value == 'pause' || value == 'resume') {
+                          _toggleSubscriptionPaused(item);
                         }
                       },
-                      itemBuilder: (context) => const [
-                        PopupMenuItem(value: 'edit', child: Text('编辑订阅')),
-                        PopupMenuItem(value: 'delete', child: Text('删除订阅')),
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(value: 'edit', child: Text('编辑订阅')),
+                        PopupMenuItem(
+                          value: item.isPaused ? 'resume' : 'pause',
+                          child: Text(item.isPaused ? '恢复自动记账' : '暂停自动记账'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'delete',
+                          child: Text('删除订阅'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+        const SizedBox(height: 16),
+        _sectionTitle(
+          '周期记账',
+          onAction: () => _openRecurringTask(),
+          actionLabel: '新增规则',
+        ),
+        const SizedBox(height: 10),
+        if (controller.recurringTasks.isEmpty)
+          const _EmptyState(message: '暂无周期记账规则')
+        else ...[
+          for (final item in controller.recurringTasks)
+            Card(
+              margin: const EdgeInsets.only(bottom: 8),
+              child: ListTile(
+                leading: Icon(
+                  item.type == '收入'
+                      ? Icons.south_west_rounded
+                      : Icons.north_east_rounded,
+                ),
+                title: Text('${item.isPaused ? '已暂停 · ' : ''}${item.name}'),
+                subtitle: Text(
+                  '${item.type} · ${item.cycle} · ${item.category} · 下次 ${item.nextRunDate}${item.reminderDays == 0 ? '' : ' · 提前${item.reminderDays}天提醒'}',
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _money(item.amountCents),
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    PopupMenuButton<String>(
+                      tooltip: '周期任务操作',
+                      onSelected: (value) {
+                        if (value == 'edit') {
+                          _openRecurringTask(item);
+                        }
+                        if (value == 'pause' || value == 'resume') {
+                          _toggleRecurringTask(item);
+                        }
+                        if (value == 'delete') {
+                          _deleteRecurringTask(item);
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(value: 'edit', child: Text('编辑规则')),
+                        PopupMenuItem(
+                          value: item.isPaused ? 'resume' : 'pause',
+                          child: Text(item.isPaused ? '恢复规则' : '暂停规则'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'delete',
+                          child: Text('删除规则'),
+                        ),
                       ],
                     ),
                   ],
@@ -5998,6 +6370,15 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
         child: Wrap(
           children: [
             ListTile(
+              leading: const Icon(Icons.event_repeat_rounded),
+              title: const Text('新增周期记账规则'),
+              subtitle: const Text('重复收支自动生成账单，支持暂停和提醒'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _openRecurringTask();
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.autorenew),
               title: const Text('新增固定订阅'),
               subtitle: const Text('按月、按季或按年生成规划提醒'),
@@ -6040,6 +6421,63 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _openRecurringTask([RecurringTask? existing]) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) =>
+          RecurringTaskSheet(controller: widget.controller, existing: existing),
+    );
+  }
+
+  Future<void> _deleteRecurringTask(RecurringTask item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除周期规则？'),
+        content: Text('删除“${item.name}”规则，但已生成的历史账单会保留。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('删除规则'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await widget.controller.deleteRecurringTask(item);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('删除周期规则失败：$error')));
+      }
+    }
+  }
+
+  Future<void> _toggleRecurringTask(RecurringTask item) async {
+    try {
+      await widget.controller.setRecurringTaskPaused(item, !item.isPaused);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(item.isPaused ? '周期任务已恢复' : '周期任务已暂停，暂停期间不补记'),
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('更新周期规则失败：$error')));
+      }
+    }
+  }
+
   Future<void> _deleteSubscription(Subscription item) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -6069,6 +6507,22 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('删除订阅失败：$error')));
+      }
+    }
+  }
+
+  Future<void> _toggleSubscriptionPaused(Subscription item) async {
+    try {
+      await widget.controller.setSubscriptionPaused(item, !item.isPaused);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(item.isPaused ? '已恢复自动记账' : '已暂停自动记账')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('更新订阅状态失败：$error')));
       }
     }
   }
@@ -9090,7 +9544,7 @@ class _DataCenterSheetState extends State<DataCenterSheet> {
                       keyboardType: TextInputType.multiline,
                       decoration: const InputDecoration(
                         labelText: '粘贴备份 JSON',
-                        hintText: '从另一台设备复制的 neo-ledger-backup-v23.json 内容',
+                        hintText: '粘贴 Neo Ledger JSON 备份内容',
                         alignLabelWithHint: true,
                       ),
                       onChanged: (_) {
@@ -9181,6 +9635,32 @@ class _DataCenterSheetState extends State<DataCenterSheet> {
               ),
             ),
             const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      '本机缓存',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      '仅清除本机的账本快照、搜索历史、分类快捷记录和未提交草稿。不会删除云端账单、登录信息、应用设置或待同步流水。',
+                      style: TextStyle(height: 1.4),
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed: _clearLocalCache,
+                      icon: const Icon(Icons.cleaning_services_outlined),
+                      label: const Text('清除本机缓存'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
             Text(
               '数据中心使用当前登录会话。部署到 NAS 或网站时，请通过 HTTPS 和统一域名访问，避免三端各自保存不同地址。',
               style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
@@ -9189,6 +9669,37 @@ class _DataCenterSheetState extends State<DataCenterSheet> {
         ),
       ),
     );
+  }
+
+  Future<void> _clearLocalCache() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('清除本机缓存？'),
+        content: const Text(
+          '此操作不会删除云端账单、待同步流水、登录信息或应用设置，只会移除本机缓存和未提交草稿。确定继续吗？',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('清除缓存'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final preferences = await SharedPreferences.getInstance();
+    final removed = await MobileLocalCacheStore(preferences)
+        .clearDisposableCache();
+    if (mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('已清除 $removed 项本机缓存；待同步流水仍已保留')));
+    }
   }
 }
 
@@ -9530,6 +10041,9 @@ class SecuritySheet extends StatefulWidget {
 
 class _SecuritySheetState extends State<SecuritySheet> {
   late String theme;
+  late String mobileThemeMode;
+  late bool highContrast;
+  late String defaultCurrency;
   late bool lockEnabled;
   late final TextEditingController pin;
   bool saving = false;
@@ -9540,6 +10054,9 @@ class _SecuritySheetState extends State<SecuritySheet> {
   void initState() {
     super.initState();
     theme = widget.controller.preferences.theme;
+    mobileThemeMode = widget.controller.preferences.mobileThemeMode;
+    highContrast = widget.controller.preferences.highContrast;
+    defaultCurrency = widget.controller.preferences.defaultCurrency;
     lockEnabled = widget.controller.preferences.lockEnabled;
     pin = TextEditingController();
   }
@@ -9556,6 +10073,9 @@ class _SecuritySheetState extends State<SecuritySheet> {
       await widget.controller.savePreferences(
         theme: theme,
         lockEnabled: lockEnabled,
+        mobileThemeMode: mobileThemeMode,
+        highContrast: highContrast,
+        defaultCurrency: defaultCurrency,
         pin: pin.text,
       );
       if (mounted) Navigator.pop(context, true);
@@ -9606,13 +10126,53 @@ class _SecuritySheetState extends State<SecuritySheet> {
                 border: OutlineInputBorder(),
               ),
               items: const [
-                DropdownMenuItem(value: 'cream', child: Text('奶油绿')),
-                DropdownMenuItem(value: 'dark', child: Text('深色')),
-                DropdownMenuItem(value: 'light', child: Text('浅色')),
+                DropdownMenuItem(value: 'cream', child: Text('治愈奶卡')),
+                DropdownMenuItem(value: 'obsidian', child: Text('曜石极客')),
+                DropdownMenuItem(value: 'glacier', child: Text('冰川极简')),
+                DropdownMenuItem(value: 'peach', child: Text('蜜桃多巴胺')),
               ],
               onChanged: (value) {
                 if (value != null) setState(() => theme = value);
               },
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: mobileThemeMode,
+              decoration: const InputDecoration(
+                labelText: '界面明暗',
+                border: OutlineInputBorder(),
+              ),
+              items: const [
+                DropdownMenuItem(value: 'system', child: Text('跟随系统')),
+                DropdownMenuItem(value: 'dark', child: Text('深色模式')),
+                DropdownMenuItem(value: 'light', child: Text('浅色模式')),
+              ],
+              onChanged: (value) {
+                if (value != null) setState(() => mobileThemeMode = value);
+              },
+            ),
+            DropdownButtonFormField<String>(
+              initialValue: defaultCurrency,
+              decoration: const InputDecoration(
+                labelText: '新账户默认币种',
+                border: OutlineInputBorder(),
+              ),
+              items: const [
+                DropdownMenuItem(value: 'CNY', child: Text('CNY · 人民币')),
+                DropdownMenuItem(value: 'USD', child: Text('USD · 美元')),
+                DropdownMenuItem(value: 'JPY', child: Text('JPY · 日元')),
+                DropdownMenuItem(value: 'EUR', child: Text('EUR · 欧元')),
+              ],
+              onChanged: (value) {
+                if (value != null) setState(() => defaultCurrency = value);
+              },
+            ),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('高对比度'),
+              subtitle: const Text('增强边界与文字对比，改善低视力阅读'),
+              value: highContrast,
+              onChanged: (value) => setState(() => highContrast = value),
             ),
             SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
@@ -10096,6 +10656,12 @@ class _ImportSheetState extends State<ImportSheet> {
   bool importing = false;
   Map<String, dynamic>? preview;
   List<Map<String, dynamic>> normalizedItems = const [];
+  List<Map<String, dynamic>>? _pendingImportItems;
+  int _importOffset = 0;
+  int _importedCount = 0;
+  int _duplicateCount = 0;
+  int _skippedCount = 0;
+  bool _cancelImportRequested = false;
 
   @override
   void initState() {
@@ -10126,6 +10692,7 @@ class _ImportSheetState extends State<ImportSheet> {
       setState(() {
         preview = null;
         normalizedItems = const [];
+        _resetImportProgress();
       });
       if (showSnack) {
         final name = path.split(RegExp(r'[\\/]')).last;
@@ -10161,6 +10728,7 @@ class _ImportSheetState extends State<ImportSheet> {
       setState(() {
         preview = null;
         normalizedItems = const [];
+        _resetImportProgress();
       });
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('已载入 ${file.name}，请预览并检查')));
@@ -10184,6 +10752,7 @@ class _ImportSheetState extends State<ImportSheet> {
       setState(() {
         preview = null;
         normalizedItems = const [];
+        _resetImportProgress();
       });
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('已读取剪贴板内容，请预览并检查')));
@@ -10218,6 +10787,7 @@ class _ImportSheetState extends State<ImportSheet> {
       previewing = true;
       preview = null;
       normalizedItems = items;
+      _resetImportProgress();
     });
     try {
       final result = await widget.controller.previewBillImport(items);
@@ -10234,7 +10804,7 @@ class _ImportSheetState extends State<ImportSheet> {
 
   Future<void> _import() async {
     final result = preview;
-    if (result == null) return;
+    if (result == null && _pendingImportItems == null) return;
     if (_number('unmapped') > 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -10243,25 +10813,87 @@ class _ImportSheetState extends State<ImportSheet> {
       );
       return;
     }
-    final items = result['items'];
-    final commitItems = items is List
-        ? items.whereType<Map>().map(Map<String, dynamic>.from).toList()
-        : normalizedItems;
-    setState(() => importing = true);
+    final items = result?['items'];
+    final commitItems =
+        _pendingImportItems ??
+        (items is List
+            ? items.whereType<Map>().map(Map<String, dynamic>.from).toList()
+            : normalizedItems);
+    if (_pendingImportItems == null) {
+      _pendingImportItems = commitItems;
+      _importOffset = 0;
+      _importedCount = 0;
+      _duplicateCount = 0;
+      _skippedCount = 0;
+    }
+    final startOffset = _importOffset;
+    final startImported = _importedCount;
+    final startDuplicates = _duplicateCount;
+    final startSkipped = _skippedCount;
+    setState(() {
+      importing = true;
+      _cancelImportRequested = false;
+    });
     try {
-      final imported = await widget.controller.importBills(commitItems);
+      final imported = await widget.controller.importBills(
+        commitItems.skip(startOffset).toList(growable: false),
+        shouldCancel: () => _cancelImportRequested,
+        onProgress:
+            ({
+              required completed,
+              required total,
+              required imported,
+              required duplicates,
+              required skipped,
+            }) {
+              if (!mounted) return;
+              setState(() {
+                _importOffset = startOffset + completed;
+                _importedCount = startImported + imported;
+                _duplicateCount = startDuplicates + duplicates;
+                _skippedCount = startSkipped + skipped;
+              });
+            },
+      );
       if (!mounted) return;
-      final count = imported['imported'] ?? commitItems.length;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('已导入 $count 条流水')));
+      if (imported['cancelled'] == true) {
+        setState(() => importing = false);
+        return;
+      }
+      final count = _importedCount;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '导入完成：$count 条，重复 $_duplicateCount 条，跳过 $_skippedCount 条',
+          ),
+        ),
+      );
       Navigator.pop(context);
     } catch (error) {
       if (mounted) {
         setState(() => importing = false);
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('导入失败：$error')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '导入已暂停（$_importOffset/${commitItems.length}），可继续：$error',
+            ),
+          ),
+        );
       }
     }
+  }
+
+  void _requestImportCancel() {
+    setState(() => _cancelImportRequested = true);
+  }
+
+  void _resetImportProgress() {
+    _pendingImportItems = null;
+    _importOffset = 0;
+    _importedCount = 0;
+    _duplicateCount = 0;
+    _skippedCount = 0;
+    _cancelImportRequested = false;
   }
 
   Widget _summaryRow(String label, int value) =>
@@ -10323,7 +10955,12 @@ class _ImportSheetState extends State<ImportSheet> {
                 border: OutlineInputBorder(),
               ),
               onChanged: (_) {
-                if (preview != null) setState(() => preview = null);
+                if (preview != null || _pendingImportItems != null) {
+                  setState(() {
+                    preview = null;
+                    _resetImportProgress();
+                  });
+                }
               },
             ),
             const SizedBox(height: 10),
@@ -10390,19 +11027,38 @@ class _ImportSheetState extends State<ImportSheet> {
                     ),
                   ),
               const SizedBox(height: 8),
-              FilledButton.icon(
-                onPressed: importing || _number('unmapped') > 0
-                    ? null
-                    : _import,
-                icon: importing
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.download_done_outlined),
-                label: Text(importing ? '导入中…' : '确认导入'),
-              ),
+              if (_pendingImportItems != null) ...[
+                const SizedBox(height: 8),
+                LinearProgressIndicator(
+                  value: _pendingImportItems!.isEmpty
+                      ? 0
+                      : _importOffset / _pendingImportItems!.length,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '已确认 $_importOffset/${_pendingImportItems!.length} 条；导入完成的部分已安全保存。',
+                ),
+              ],
+              if (importing)
+                OutlinedButton.icon(
+                  onPressed: _cancelImportRequested
+                      ? null
+                      : _requestImportCancel,
+                  icon: const Icon(Icons.pause_circle_outline),
+                  label: Text(
+                    _cancelImportRequested ? '将在当前批次完成后暂停…' : '暂停后续批次',
+                  ),
+                )
+              else
+                FilledButton.icon(
+                  onPressed: _number('unmapped') > 0 ? null : _import,
+                  icon: const Icon(Icons.download_done_outlined),
+                  label: Text(
+                    _importOffset > 0
+                        ? '继续导入剩余 ${_pendingImportItems!.length - _importOffset} 条'
+                        : '确认导入',
+                  ),
+                ),
             ],
           ],
         ),
@@ -11719,6 +12375,308 @@ class _SubscriptionSheetState extends State<SubscriptionSheet> {
                     )
                   : const Icon(Icons.save_outlined),
               label: Text(saving ? '保存中…' : '保存订阅'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class RecurringTaskSheet extends StatefulWidget {
+  const RecurringTaskSheet({
+    required this.controller,
+    this.existing,
+    super.key,
+  });
+
+  final LedgerController controller;
+  final RecurringTask? existing;
+
+  @override
+  State<RecurringTaskSheet> createState() => _RecurringTaskSheetState();
+}
+
+class _RecurringTaskSheetState extends State<RecurringTaskSheet> {
+  late final TextEditingController name;
+  late final TextEditingController amount;
+  late final TextEditingController nextRunDate;
+  late String type;
+  late String cycle;
+  late String categoryName;
+  late int reminderDays;
+  int? accountId;
+  bool saving = false;
+
+  List<Account> get accounts => widget.controller.accounts
+      .where((item) => item.isActive && item.type == '资产')
+      .toList(growable: false);
+  List<Category> get categories =>
+      (type == '收入'
+              ? widget.controller.incomeCategories
+              : widget.controller.expenseCategories)
+          .where((item) => item.isActive)
+          .toList(growable: false);
+
+  @override
+  void initState() {
+    super.initState();
+    final existing = widget.existing;
+    type = existing?.type ?? '支出';
+    name = TextEditingController(text: existing?.name ?? '');
+    amount = TextEditingController(
+      text: existing == null
+          ? ''
+          : (existing.amountCents / 100).toStringAsFixed(2),
+    );
+    nextRunDate = TextEditingController(
+      text:
+          existing?.nextRunDate ??
+          DateFormat('yyyy-MM-dd').format(DateTime.now()),
+    );
+    cycle = const ['每天', '每周', '每月', '每季', '每年'].contains(existing?.cycle)
+        ? existing!.cycle
+        : '每月';
+    categoryName = existing?.category ?? categories.firstOrNull?.name ?? '';
+    reminderDays = existing?.reminderDays ?? 1;
+    final available = accounts;
+    accountId = available.any((item) => item.id == existing?.accountId)
+        ? existing!.accountId
+        : available.firstOrNull?.id;
+  }
+
+  @override
+  void dispose() {
+    name.dispose();
+    amount.dispose();
+    nextRunDate.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDate() async {
+    final initial = DateTime.tryParse(nextRunDate.text) ?? DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      firstDate: DateTime(1970),
+      lastDate: DateTime(2100),
+      initialDate: initial,
+    );
+    if (picked == null) return;
+    nextRunDate.text = DateFormat('yyyy-MM-dd').format(picked);
+    setState(() {});
+  }
+
+  Future<void> _save() async {
+    final parsedAmount = double.tryParse(amount.text.trim());
+    if (name.text.trim().isEmpty || parsedAmount == null || parsedAmount <= 0) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请填写规则名称和大于 0 的金额')));
+      return;
+    }
+    if (accountId == null || accounts.every((item) => item.id != accountId)) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请选择已启用的资产账户')));
+      return;
+    }
+    if (categories.isEmpty ||
+        categories.every((item) => item.name != categoryName)) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('当前收支类型没有可用分类，请先创建分类')));
+      return;
+    }
+    setState(() => saving = true);
+    try {
+      await widget.controller.saveRecurringTask(
+        existing: widget.existing,
+        name: name.text,
+        amount: parsedAmount,
+        type: type,
+        accountId: accountId!,
+        cycle: cycle,
+        category: categoryName,
+        nextRunDate: nextRunDate.text,
+        reminderDays: reminderDays,
+      );
+      if (mounted) Navigator.pop(context);
+    } catch (error) {
+      if (mounted) {
+        setState(() => saving = false);
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('保存周期规则失败：$error')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final available = accounts;
+    final categoryOptions = categories;
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          8,
+          20,
+          20 + MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              widget.existing == null ? '新增周期记账规则' : '编辑周期记账规则',
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            const Text('到期时自动生成一笔账单并更新账户；恢复规则不会补记暂停期间的日期。'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: name,
+              maxLength: 40,
+              decoration: const InputDecoration(
+                labelText: '规则名称',
+                hintText: '例如：每月房租、每周零花钱',
+              ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: type,
+                    decoration: const InputDecoration(labelText: '类型'),
+                    items: const ['支出', '收入']
+                        .map(
+                          (value) => DropdownMenuItem(
+                            value: value,
+                            child: Text(value),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: saving
+                        ? null
+                        : (value) => setState(() {
+                            type = value ?? '支出';
+                            categoryName = categories.firstOrNull?.name ?? '';
+                          }),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    controller: amount,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: '金额',
+                      prefixText: '¥ ',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<int>(
+              initialValue: accountId,
+              decoration: const InputDecoration(labelText: '资产账户'),
+              items: available
+                  .map(
+                    (item) => DropdownMenuItem(
+                      value: item.id,
+                      child: Text('${item.icon} ${item.name}'),
+                    ),
+                  )
+                  .toList(),
+              onChanged: saving
+                  ? null
+                  : (value) => setState(() => accountId = value),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue:
+                  categoryOptions.any((item) => item.name == categoryName)
+                  ? categoryName
+                  : null,
+              decoration: const InputDecoration(labelText: '收支分类'),
+              items: categoryOptions
+                  .map(
+                    (item) => DropdownMenuItem(
+                      value: item.name,
+                      child: Text('${item.icon} ${item.name}'),
+                    ),
+                  )
+                  .toList(),
+              onChanged: saving
+                  ? null
+                  : (value) => setState(() => categoryName = value ?? ''),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: cycle,
+                    decoration: const InputDecoration(labelText: '重复周期'),
+                    items: const ['每天', '每周', '每月', '每季', '每年']
+                        .map(
+                          (value) => DropdownMenuItem(
+                            value: value,
+                            child: Text(value),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: saving
+                        ? null
+                        : (value) => setState(() => cycle = value ?? '每月'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    controller: nextRunDate,
+                    readOnly: true,
+                    onTap: _pickDate,
+                    decoration: const InputDecoration(
+                      labelText: '首次执行日',
+                      suffixIcon: Icon(Icons.calendar_today_outlined),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<int>(
+              initialValue: reminderDays,
+              decoration: const InputDecoration(labelText: '执行前提醒'),
+              items: const <int>[0, 1, 3, 7, 14, 30]
+                  .map(
+                    (value) => DropdownMenuItem(
+                      value: value,
+                      child: Text(value == 0 ? '不提醒' : '提前 $value 天'),
+                    ),
+                  )
+                  .toList(),
+              onChanged: saving
+                  ? null
+                  : (value) => setState(() => reminderDays = value ?? 1),
+            ),
+            if (available.isEmpty || categoryOptions.isEmpty) ...[
+              const SizedBox(height: 10),
+              const Text('需先在当前账本启用一个资产账户和收支分类。'),
+            ],
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: saving || available.isEmpty || categoryOptions.isEmpty
+                  ? null
+                  : _save,
+              icon: saving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.save_outlined),
+              label: Text(saving ? '保存中…' : '保存规则'),
             ),
           ],
         ),

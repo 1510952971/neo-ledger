@@ -97,6 +97,14 @@ export async function POST(request: Request) {
       transaction.reimbursable ? 1 : 0,
       Number(transaction.discount_amount ?? 0),
       transaction.exclude_from_budget ? 1 : 0,
+      String(transaction.source ?? '账本').slice(0, 60),
+      typeof transaction.recognition_text === 'string' ? transaction.recognition_text.slice(0, 4000) : null,
+      Number.isInteger(transaction.recognition_completeness)
+        ? Math.max(0, Math.min(100, Number(transaction.recognition_completeness)))
+        : null,
+      typeof transaction.recognition_corrections_json === 'string'
+        ? transaction.recognition_corrections_json.slice(0, 2000)
+        : null,
       transaction.offline_id ?? null,
       crdtId,
       updatedAt,
@@ -108,7 +116,7 @@ export async function POST(request: Request) {
     const results = await db.batch([
       db
         .prepare(
-          "INSERT INTO transactions(id,ledger_id,title,note,tags_json,amount,type,mood,category,category_dynamic,income_category,income_category_dynamic,account_id,paid_by_member_id,split_with_member_id,split_mode,my_share_percent,currency,original_amount,original_currency,exchange_rate_micros,original_timezone,occurrence_key,installment_id,installment_number,is_side_hustle,reimbursable,discount_amount,exclude_from_budget,offline_id,crdt_id,updated_at,occurred_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+          "INSERT INTO transactions(id,ledger_id,title,note,tags_json,amount,type,mood,category,category_dynamic,income_category,income_category_dynamic,account_id,paid_by_member_id,split_with_member_id,split_mode,my_share_percent,currency,original_amount,original_currency,exchange_rate_micros,original_timezone,occurrence_key,installment_id,installment_number,is_side_hustle,reimbursable,discount_amount,exclude_from_budget,source,recognition_text,recognition_completeness,recognition_corrections_json,offline_id,crdt_id,updated_at,occurred_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(...values),
       db

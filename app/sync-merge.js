@@ -1,6 +1,6 @@
 const ARRAY_TABLES = [
   "ledgers", "accounts", "transactions", "budgetSettings", "categoryBudgets",
-  "subscriptions", "savingsGoals", "members", "installments", "achievements",
+  "subscriptions", "recurringTasks", "savingsGoals", "members", "installments", "achievements",
   "sideHustleDeductions", "pendingTransactions", "systemNotifications",
   "fireSettings", "economicSettings", "crdtTombstones", "digitalAssets",
   "expenseCategories", "incomeCategories", "accountTransfers",
@@ -8,7 +8,7 @@ const ARRAY_TABLES = [
 ];
 
 const ID_TABLES = new Set([
-  "ledgers", "accounts", "transactions", "subscriptions", "savingsGoals",
+  "ledgers", "accounts", "transactions", "subscriptions", "recurringTasks", "savingsGoals",
   "members", "installments", "sideHustleDeductions", "pendingTransactions",
   "systemNotifications", "digitalAssets", "expenseCategories", "incomeCategories",
 ]);
@@ -18,6 +18,7 @@ const tombstoneTable = {
   account: "accounts",
   transaction: "transactions",
   subscription: "subscriptions",
+  "recurring-task": "recurringTasks",
   "savings-goal": "savingsGoals",
   installment: "installments",
 };
@@ -59,7 +60,7 @@ function syncKey(table, row, source) {
 export function mergeSyncSnapshots(local, remote) {
   const merged = {
     ...local,
-    version: Math.max(Number(local.version || 0), Number(remote.version || 0), 23),
+    version: Math.max(Number(local.version || 0), Number(remote.version || 0), 24),
     exportedAt: new Date().toISOString(),
   };
   const tombstones = new Map();

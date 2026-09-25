@@ -17,6 +17,7 @@ const protocolRoutes = new Set([
   "p2p/signals/route.ts",
   "transactions/route.ts",
   "v1/ai/chat/route.ts",
+  "v1/ai/screenshot-recognition/route.ts",
 ]);
 
 function routeFiles(directory) {

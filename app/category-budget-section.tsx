@@ -4,7 +4,14 @@ import type { RefObject } from "react";
 import { CollectionPagination } from "./collection-pagination";
 import { categoryBudgetPresentation } from "./category-budget-presentation.js";
 
-export type CategoryBudgetListItem = { category: string; amount: number; updatedAt: string };
+export type CategoryBudgetListItem = {
+  category: string;
+  amount: number;
+  updatedAt: string;
+  carryoverEnabled?: boolean;
+  carryoverAmount?: number;
+  availableAmount?: number;
+};
 const money = new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY", minimumFractionDigits: 2 });
 
 export function CategoryBudgetSection({ sectionRef, categories, budgets, spend, categoryEmoji, configuredCategoryNames, page, totalPages, totalRows, onCustomize, onEditCategory, onSave, onPageChange }: {
@@ -22,7 +29,8 @@ export function CategoryBudgetSection({ sectionRef, categories, budgets, spend, 
   onSave: (formData: FormData) => void;
   onPageChange: (page: number) => void;
 }) {
-  const budgetByCategory = new Map(budgets.map((item) => [item.category, item.amount]));
+  const budgetByCategory = new Map(budgets.map((item) => [item.category, item.availableAmount ?? item.amount]));
+  const budgetSettings = new Map(budgets.map((item) => [item.category, item]));
   const configuredNames = new Set(configuredCategoryNames);
   return (
     <section className="control-grid module-planning">
@@ -34,6 +42,7 @@ export function CategoryBudgetSection({ sectionRef, categories, budgets, spend, 
         <div className="category-budget-grid">
           {categories.map((category) => {
             const limit = budgetByCategory.get(category) ?? 0;
+            const setting = budgetSettings.get(category);
             const model = categoryBudgetPresentation(spend[category] ?? 0, limit);
             const configured = configuredNames.has(category);
             return (
@@ -48,8 +57,12 @@ export function CategoryBudgetSection({ sectionRef, categories, budgets, spend, 
                 </div>
                 <div className="category-budget-track"><i style={{ width: `${model.progress}%` }} /></div>
                 <small>{money.format((spend[category] ?? 0) / 100)} / </small>
-                <input name="amount" type="number" min="0" step="1" defaultValue={(limit / 100).toFixed(0)} aria-label={`${category}预算`} />
+                <input name="amount" type="number" min="0" step="1" defaultValue={((setting?.amount ?? 0) / 100).toFixed(0)} aria-label={`${category}月度预算`} />
                 <button>保存</button>
+                <label className="category-budget-rollover">
+                  <input name="carryoverEnabled" type="checkbox" defaultChecked={setting?.carryoverEnabled ?? false} />
+                  <span>结余结转{setting?.carryoverAmount ? ` · +${money.format(setting.carryoverAmount / 100)}` : ""}</span>
+                </label>
                 {model.level === "danger" && <p>警报！{category}预算已烧光，请强制开启搬砖模式！</p>}
               </form>
             );

@@ -3,22 +3,58 @@ class SessionUser {
     required this.username,
     required this.displayName,
     this.avatarUrl,
+    this.email,
+    this.createdAt,
+    this.passwordEnabled = false,
+    this.linkedProviders = const [],
   });
 
   final String username;
   final String displayName;
   final String? avatarUrl;
+  final String? email;
+  final String? createdAt;
+  final bool passwordEnabled;
+  final List<String> linkedProviders;
+
+  SessionUser copyWith({
+    String? displayName,
+    String? avatarUrl,
+    bool clearAvatar = false,
+    String? email,
+    String? createdAt,
+    bool? passwordEnabled,
+    List<String>? linkedProviders,
+  }) => SessionUser(
+    username: username,
+    displayName: displayName ?? this.displayName,
+    avatarUrl: clearAvatar ? null : avatarUrl ?? this.avatarUrl,
+    email: email ?? this.email,
+    createdAt: createdAt ?? this.createdAt,
+    passwordEnabled: passwordEnabled ?? this.passwordEnabled,
+    linkedProviders: linkedProviders ?? this.linkedProviders,
+  );
 
   factory SessionUser.fromJson(Map<String, dynamic> json) => SessionUser(
     username: '${json['username'] ?? ''}',
     displayName: '${json['displayName'] ?? json['username'] ?? '用户'}',
     avatarUrl: json['avatarUrl'] as String?,
+    email: json['email'] as String?,
+    createdAt: json['createdAt'] as String?,
+    passwordEnabled: _asBool(json['passwordEnabled']),
+    linkedProviders: (json['linkedProviders'] as List<dynamic>? ?? const [])
+        .whereType<String>()
+        .toList(),
   );
 
   Map<String, dynamic> toJson() => {
     'username': username,
     'displayName': displayName,
     if (avatarUrl != null) 'avatarUrl': avatarUrl,
+    if (email != null) 'email': email,
+    if (createdAt != null) 'createdAt': createdAt,
+    'passwordEnabled': passwordEnabled,
+    'linkedProviders': linkedProviders,
   };
 }
 
@@ -48,6 +84,18 @@ class Ledger {
     'icon': icon,
     if (updatedAt != null) 'updatedAt': updatedAt,
   };
+}
+
+class LedgerTag {
+  const LedgerTag({required this.name, required this.count});
+
+  final String name;
+  final int count;
+
+  factory LedgerTag.fromJson(Map<String, dynamic> json) => LedgerTag(
+    name: '${json['name'] ?? ''}'.trim(),
+    count: _asInt(json['count']),
+  );
 }
 
 class Account {
@@ -332,6 +380,9 @@ class Category {
 class Preferences {
   const Preferences({
     this.theme = 'cream',
+    this.mobileThemeMode = 'dark',
+    this.highContrast = false,
+    this.defaultCurrency = 'CNY',
     this.lockEnabled = false,
     this.hideAmounts = false,
     this.hapticsEnabled = true,
@@ -347,6 +398,9 @@ class Preferences {
   });
 
   final String theme;
+  final String mobileThemeMode;
+  final bool highContrast;
+  final String defaultCurrency;
   final bool lockEnabled;
   final bool hideAmounts;
   final bool hapticsEnabled;
@@ -356,6 +410,9 @@ class Preferences {
 
   Preferences copyWith({
     String? theme,
+    String? mobileThemeMode,
+    bool? highContrast,
+    String? defaultCurrency,
     bool? lockEnabled,
     bool? hideAmounts,
     bool? hapticsEnabled,
@@ -364,6 +421,9 @@ class Preferences {
     List<String>? homeModules,
   }) => Preferences(
     theme: theme ?? this.theme,
+    mobileThemeMode: mobileThemeMode ?? this.mobileThemeMode,
+    highContrast: highContrast ?? this.highContrast,
+    defaultCurrency: defaultCurrency ?? this.defaultCurrency,
     lockEnabled: lockEnabled ?? this.lockEnabled,
     hideAmounts: hideAmounts ?? this.hideAmounts,
     hapticsEnabled: hapticsEnabled ?? this.hapticsEnabled,
@@ -387,6 +447,15 @@ class Preferences {
         .toList();
     return Preferences(
       theme: '${json['theme'] ?? 'cream'}',
+      mobileThemeMode:
+          const {'system', 'light', 'dark'}.contains(json['mobileThemeMode'])
+          ? '${json['mobileThemeMode']}'
+          : 'dark',
+      highContrast: _asBool(json['highContrast']),
+      defaultCurrency:
+          const {'CNY', 'USD', 'JPY', 'EUR'}.contains(json['defaultCurrency'])
+          ? '${json['defaultCurrency']}'
+          : 'CNY',
       lockEnabled: _asBool(json['lockEnabled'] ?? json['enabled']),
       hideAmounts: _asBool(json['hideAmounts']),
       hapticsEnabled: json['hapticsEnabled'] == false ? false : true,
@@ -400,6 +469,9 @@ class Preferences {
 
   Map<String, dynamic> toJson() => {
     'theme': theme,
+    'mobileThemeMode': mobileThemeMode,
+    'highContrast': highContrast,
+    'defaultCurrency': defaultCurrency,
     'lockEnabled': lockEnabled,
     'hideAmounts': hideAmounts,
     'hapticsEnabled': hapticsEnabled,
@@ -456,6 +528,9 @@ class TransactionItem {
     this.originalCurrency,
     this.exchangeRateMicros = 1000000,
     this.source = '账本',
+    this.recognitionText,
+    this.recognitionCompleteness,
+    this.recognitionCorrections = const {},
     this.reimbursable = false,
     this.discountAmountCents = 0,
     this.excludeFromBudget = false,
@@ -482,6 +557,9 @@ class TransactionItem {
   final String? originalCurrency;
   final int exchangeRateMicros;
   final String source;
+  final String? recognitionText;
+  final int? recognitionCompleteness;
+  final Map<String, dynamic> recognitionCorrections;
   final bool reimbursable;
   final int discountAmountCents;
   final bool excludeFromBudget;
@@ -508,6 +586,9 @@ class TransactionItem {
     bool? reimbursable,
     int? discountAmountCents,
     bool? excludeFromBudget,
+    String? recognitionText,
+    int? recognitionCompleteness,
+    Map<String, dynamic>? recognitionCorrections,
   }) => TransactionItem(
     id: id,
     ledgerId: ledgerId,
@@ -530,6 +611,11 @@ class TransactionItem {
     originalCurrency: originalCurrency ?? this.originalCurrency,
     exchangeRateMicros: exchangeRateMicros ?? this.exchangeRateMicros,
     source: source,
+    recognitionText: recognitionText ?? this.recognitionText,
+    recognitionCompleteness:
+        recognitionCompleteness ?? this.recognitionCompleteness,
+    recognitionCorrections:
+        recognitionCorrections ?? this.recognitionCorrections,
     reimbursable: reimbursable ?? this.reimbursable,
     discountAmountCents: discountAmountCents ?? this.discountAmountCents,
     excludeFromBudget: excludeFromBudget ?? this.excludeFromBudget,
@@ -572,6 +658,19 @@ class TransactionItem {
         ? 1000000
         : _asInt(json['exchangeRateMicros']),
     source: '${json['source'] ?? '账本'}',
+    recognitionText:
+        json['recognitionText']?.toString() ??
+        json['recognition_text']?.toString(),
+    recognitionCompleteness:
+        json['recognitionCompleteness'] == null &&
+            json['recognition_completeness'] == null
+        ? null
+        : _asInt(
+            json['recognitionCompleteness'] ?? json['recognition_completeness'],
+          ),
+    recognitionCorrections: _asMap(
+      json['recognitionCorrections'] ?? json['recognition_corrections'],
+    ),
     reimbursable: json['reimbursable'] == true || json['reimbursable'] == 1,
     discountAmountCents: _asInt(json['discountAmount'] ?? 0),
     excludeFromBudget:
@@ -600,6 +699,11 @@ class TransactionItem {
     if (originalCurrency != null) 'originalCurrency': originalCurrency,
     'exchangeRateMicros': exchangeRateMicros,
     'source': source,
+    if (recognitionText != null) 'recognitionText': recognitionText,
+    if (recognitionCompleteness != null)
+      'recognitionCompleteness': recognitionCompleteness,
+    if (recognitionCorrections.isNotEmpty)
+      'recognitionCorrections': recognitionCorrections,
     'reimbursable': reimbursable,
     'discountAmount': discountAmountCents,
     'excludeFromBudget': excludeFromBudget,
@@ -764,18 +868,28 @@ class CategoryBudget {
     required this.category,
     required this.amountCents,
     this.updatedAt,
-  });
+    this.carryoverEnabled = false,
+    this.carryoverAmountCents = 0,
+    int? availableAmountCents,
+  }) : availableAmountCents = availableAmountCents ?? amountCents;
 
   final int ledgerId;
   final String category;
   final int amountCents;
   final String? updatedAt;
+  final bool carryoverEnabled;
+  final int carryoverAmountCents;
+  final int availableAmountCents;
 
   factory CategoryBudget.fromJson(Map<String, dynamic> json) => CategoryBudget(
     ledgerId: _asInt(json['ledgerId'] ?? json['ledger_id']),
     category: '${json['category'] ?? '其他'}',
     amountCents: _asInt(json['amount']),
     updatedAt: json['updatedAt'] as String?,
+    carryoverEnabled:
+        json['carryoverEnabled'] == true || json['carryoverEnabled'] == 1,
+    carryoverAmountCents: _asInt(json['carryoverAmount']),
+    availableAmountCents: _asInt(json['availableAmount'] ?? json['amount']),
   );
 
   Map<String, dynamic> toJson() => {
@@ -783,6 +897,9 @@ class CategoryBudget {
     'category': category,
     'amount': amountCents,
     if (updatedAt != null) 'updatedAt': updatedAt,
+    'carryoverEnabled': carryoverEnabled,
+    'carryoverAmount': carryoverAmountCents,
+    'availableAmount': availableAmountCents,
   };
 }
 
@@ -792,30 +909,36 @@ class Subscription {
     required this.name,
     required this.amountCents,
     required this.cycle,
+    this.ledgerId = 1,
     this.accountId = 0,
     this.category,
     this.nextChargeDate,
     this.updatedAt,
+    this.isPaused = false,
   });
 
   final int id;
   final String name;
   final int amountCents;
   final String cycle;
+  final int ledgerId;
   final int accountId;
   final String? category;
   final String? nextChargeDate;
   final String? updatedAt;
+  final bool isPaused;
 
   factory Subscription.fromJson(Map<String, dynamic> json) => Subscription(
     id: _asInt(json['id']),
     name: '${json['name'] ?? '固定订阅'}',
     amountCents: _asInt(json['amount']),
     cycle: '${json['cycle'] ?? '月'}',
+    ledgerId: _asInt(json['ledgerId'] ?? json['ledger_id'] ?? 1),
     accountId: _asInt(json['accountId'] ?? json['account_id']),
     category: json['category'] as String?,
     nextChargeDate: json['nextChargeDate'] as String?,
     updatedAt: json['updatedAt'] as String?,
+    isPaused: _asBool(json['isPaused'] ?? json['paused'] ?? false),
   );
 
   Map<String, dynamic> toJson() => {
@@ -823,10 +946,68 @@ class Subscription {
     'name': name,
     'amount': amountCents,
     'cycle': cycle,
+    'ledgerId': ledgerId,
     'accountId': accountId,
     if (category != null) 'category': category,
     if (nextChargeDate != null) 'nextChargeDate': nextChargeDate,
     if (updatedAt != null) 'updatedAt': updatedAt,
+    'isPaused': isPaused,
+  };
+}
+
+class RecurringTask {
+  const RecurringTask({
+    required this.id,
+    required this.ledgerId,
+    required this.name,
+    required this.amountCents,
+    required this.type,
+    required this.accountId,
+    required this.cycle,
+    required this.category,
+    required this.nextRunDate,
+    this.reminderDays = 1,
+    this.isPaused = false,
+  });
+
+  final int id;
+  final int ledgerId;
+  final String name;
+  final int amountCents;
+  final String type;
+  final int accountId;
+  final String cycle;
+  final String category;
+  final String nextRunDate;
+  final int reminderDays;
+  final bool isPaused;
+
+  factory RecurringTask.fromJson(Map<String, dynamic> json) => RecurringTask(
+    id: _asInt(json['id']),
+    ledgerId: _asInt(json['ledgerId'] ?? json['ledger_id'] ?? 1),
+    name: '${json['name'] ?? '周期记账'}',
+    amountCents: _asInt(json['amount']),
+    type: '${json['type'] ?? '支出'}',
+    accountId: _asInt(json['accountId'] ?? json['account_id']),
+    cycle: '${json['cycle'] ?? '每月'}',
+    category: '${json['category'] ?? '未分类'}',
+    nextRunDate: '${json['nextRunDate'] ?? json['next_run_date'] ?? ''}',
+    reminderDays: _asInt(json['reminderDays'] ?? json['reminder_days'] ?? 1),
+    isPaused: _asBool(json['isPaused'] ?? json['is_paused'] ?? false),
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'ledgerId': ledgerId,
+    'name': name,
+    'amount': amountCents,
+    'type': type,
+    'accountId': accountId,
+    'cycle': cycle,
+    'category': category,
+    'nextRunDate': nextRunDate,
+    'reminderDays': reminderDays,
+    'isPaused': isPaused,
   };
 }
 
@@ -962,6 +1143,27 @@ class ForecastPoint {
   };
 }
 
+class ForecastAllocation {
+  const ForecastAllocation({
+    required this.assetClass,
+    required this.amountCents,
+  });
+
+  final String assetClass;
+  final int amountCents;
+
+  factory ForecastAllocation.fromJson(Map<String, dynamic> json) =>
+      ForecastAllocation(
+        assetClass: '${json['assetClass'] ?? ''}',
+        amountCents: _asInt(json['amount']),
+      );
+
+  Map<String, dynamic> toJson() => {
+    'assetClass': assetClass,
+    'amount': amountCents,
+  };
+}
+
 class Forecast {
   const Forecast({
     required this.netWorthCents,
@@ -971,6 +1173,15 @@ class Forecast {
     required this.hasSpendingData,
     required this.points,
     this.bankruptcyDate,
+    this.hasPortfolioMetrics = false,
+    this.assetTotalCents = 0,
+    this.accountAssetTotalCents = 0,
+    this.digitalAssetTotalCents = 0,
+    this.liabilityTotalCents = 0,
+    this.debtRatio = 0,
+    this.allocation = const [],
+    this.inflationRate = 0,
+    this.realNetWorthOneYearCents = 0,
   });
 
   final int netWorthCents;
@@ -980,6 +1191,15 @@ class Forecast {
   final bool hasSpendingData;
   final List<ForecastPoint> points;
   final String? bankruptcyDate;
+  final bool hasPortfolioMetrics;
+  final int assetTotalCents;
+  final int accountAssetTotalCents;
+  final int digitalAssetTotalCents;
+  final int liabilityTotalCents;
+  final double debtRatio;
+  final List<ForecastAllocation> allocation;
+  final double inflationRate;
+  final int realNetWorthOneYearCents;
 
   factory Forecast.fromJson(Map<String, dynamic> json) => Forecast(
     netWorthCents: _asInt(json['netWorth']),
@@ -989,6 +1209,17 @@ class Forecast {
     hasSpendingData: json['hasSpendingData'] == true,
     points: _asMaps(json['points']).map(ForecastPoint.fromJson).toList(),
     bankruptcyDate: json['bankruptcyDate'] as String?,
+    hasPortfolioMetrics: json.containsKey('assetTotal'),
+    assetTotalCents: _asInt(json['assetTotal']),
+    accountAssetTotalCents: _asInt(json['accountAssetTotal']),
+    digitalAssetTotalCents: _asInt(json['digitalAssetTotal']),
+    liabilityTotalCents: _asInt(json['liabilityTotal']),
+    debtRatio: _asDouble(json['debtRatio']),
+    allocation: _asMaps(json['allocation'])
+        .map(ForecastAllocation.fromJson)
+        .toList(),
+    inflationRate: _asDouble(json['inflationRate']),
+    realNetWorthOneYearCents: _asInt(json['realNetWorthOneYear']),
   );
 
   Map<String, dynamic> toJson() => {
@@ -999,6 +1230,16 @@ class Forecast {
     'hasSpendingData': hasSpendingData,
     'points': points.map((item) => item.toJson()).toList(),
     if (bankruptcyDate != null) 'bankruptcyDate': bankruptcyDate,
+    if (hasPortfolioMetrics) ...{
+      'assetTotal': assetTotalCents,
+      'accountAssetTotal': accountAssetTotalCents,
+      'digitalAssetTotal': digitalAssetTotalCents,
+      'liabilityTotal': liabilityTotalCents,
+      'debtRatio': debtRatio,
+      'allocation': allocation.map((item) => item.toJson()).toList(),
+      'inflationRate': inflationRate,
+      'realNetWorthOneYear': realNetWorthOneYearCents,
+    },
   };
 }
 
@@ -1241,6 +1482,10 @@ class OfflineEntry {
     this.originalCurrency,
     this.exchangeRateMicros = 1000000,
     this.originalTimezone = 'Asia/Shanghai',
+    this.source = '移动端记账',
+    this.recognitionText,
+    this.recognitionCompleteness,
+    this.recognitionCorrections = const {},
   });
 
   final String offlineId;
@@ -1266,6 +1511,10 @@ class OfflineEntry {
   final String? originalCurrency;
   final int exchangeRateMicros;
   final String originalTimezone;
+  final String source;
+  final String? recognitionText;
+  final int? recognitionCompleteness;
+  final Map<String, dynamic> recognitionCorrections;
 
   Map<String, dynamic> toJson() => {
     'offlineId': offlineId,
@@ -1294,6 +1543,12 @@ class OfflineEntry {
       'exchangeRate': exchangeRateMicros / 1000000,
     'originalTimezone': originalTimezone,
     'occurredAt': occurredAt,
+    'source': source,
+    if (recognitionText != null) 'recognitionText': recognitionText,
+    if (recognitionCompleteness != null)
+      'recognitionCompleteness': recognitionCompleteness,
+    if (recognitionCorrections.isNotEmpty)
+      'recognitionCorrections': recognitionCorrections,
   };
 
   factory OfflineEntry.fromJson(Map<String, dynamic> json) => OfflineEntry(
@@ -1329,6 +1584,12 @@ class OfflineEntry {
     exchangeRateMicros:
         (((json['exchangeRate'] as num?)?.toDouble() ?? 1) * 1000000).round(),
     originalTimezone: '${json['originalTimezone'] ?? 'Asia/Shanghai'}',
+    source: '${json['source'] ?? '移动端记账'}',
+    recognitionText: json['recognitionText']?.toString(),
+    recognitionCompleteness: json['recognitionCompleteness'] == null
+        ? null
+        : _asInt(json['recognitionCompleteness']),
+    recognitionCorrections: _asMap(json['recognitionCorrections']),
   );
 }
 

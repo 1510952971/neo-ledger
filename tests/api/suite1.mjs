@@ -11,6 +11,7 @@ const accountReorder = await import("../../app/api/accounts/reorder/route.ts");
 const categories = await import("../../app/api/categories/route.ts");
 const incomeCats = await import("../../app/api/income-categories/route.ts");
 const offline = await import("../../app/api/offline-sync/route.ts");
+const transactionQuery = await import("../../app/api/transactions/query/route.ts");
 const transactions = await import("../../app/api/transactions/route.ts");
 const transfers = await import("../../app/api/transfers/route.ts");
 const budgets = await import("../../app/api/category-budgets/route.ts");
@@ -20,6 +21,7 @@ const ecoSet = await import("../../app/api/economic-settings/route.ts");
 const rates = await import("../../app/api/exchange-rates/route.ts");
 const forecast = await import("../../app/api/forecast/route.ts");
 const notices = await import("../../app/api/notifications/route.ts");
+const syncRevision = await import("../../app/api/sync/revision/route.ts");
 const exportApi = await import("../../app/api/data/export/route.ts");
 const { MAX_ACCOUNT_COUNT } = await import("../../app/account-limits.ts");
 const { MAX_LEDGER_COUNT } = await import("../../app/ledger-limits.ts");
@@ -28,6 +30,19 @@ describe("账本");
 let r = await call(ledgers, "GET", "/api/ledgers");
 check("GET 默认账本", r.status === 200 && Array.isArray(r.json) && r.json.length >= 1, JSON.stringify(r.json).slice(0,120));
 const L = r.json[0].id;
+describe("轻量账本同步标记");
+r = await call(syncRevision, "GET", `/api/sync/revision?ledger=${L}`);
+const initialSyncRevision = r.json?.revision;
+check("同步标记接口只返回私有缓存数据", r.status === 200 && typeof initialSyncRevision === "string" && r.headers?.get("cache-control")?.includes("no-store"), `${r.status} ${r.text}`);
+await B.prepare("INSERT INTO category_budgets(ledger_id,category,amount) VALUES(?,?,?) ON CONFLICT(ledger_id,category) DO UPDATE SET amount=excluded.amount")
+  .bind(L, "同步探针测试", 12345).run();
+r = await call(syncRevision, "GET", `/api/sync/revision?ledger=${L}`);
+const afterBudgetSyncRevision = r.json?.revision;
+check("预算变化会更新轻量同步标记", afterBudgetSyncRevision !== initialSyncRevision, `${initialSyncRevision} -> ${afterBudgetSyncRevision}`);
+await B.prepare("INSERT INTO user_preferences(owner_id,theme) VALUES('local','dark') ON CONFLICT(owner_id) DO UPDATE SET theme=excluded.theme")
+  .run();
+r = await call(syncRevision, "GET", `/api/sync/revision?ledger=${L}`);
+check("用户偏好变化会更新跨账本同步标记", r.json?.revision !== afterBudgetSyncRevision, `${afterBudgetSyncRevision} -> ${r.json?.revision}`);
 r = await call(ledgers, "POST", "/api/ledgers", { body: { name: "测试账本", icon: "🧪" } });
 check("POST 新建账本", r.status === 200 || r.status === 201, r.text);
 const emptyLedgerId = r.json?.id;
@@ -140,12 +155,19 @@ check("非法收入分类颜色被拒", r.status === 400, `${r.status} ${r.text}
 
 describe("离线记账/流水");
 const mk = (i, type, amount) => ({ offlineId: `t-${i}`, ledgerId: L, accountId: acct1, amount, type, title: `测试${i}`, note: "项目聚餐", tags: ["工作", "报销"], reimbursable: true, discountAmount: 2.5, excludeFromBudget: true, mood: "刚需", category: "餐饮", incomeCategory: "工资", occurredAt: "2026-07-20T12:00", originalTimezone: "Asia/Shanghai" });
-r = await call(offline, "POST", "/api/offline-sync", { body: { items: [mk(1, "支出", 35.5), mk(2, "收入", 8888.88)] } });
+r = await call(offline, "POST", "/api/offline-sync", { body: { items: [
+  { ...mk(1, "支出", 35.5), source: "截图本地识别", recognitionText: "支付成功\n金额：¥ 35.50\n联系电话：13800138000", recognitionCompleteness: 93, recognitionCorrections: { amount: { recognized: 35.5, confirmed: 36 }, injected: { recognized: "secret", confirmed: "leak" } } },
+  mk(2, "收入", 8888.88),
+] } });
 check("POST 两笔离线账单", r.status === 200, r.text);
 let txs = await q("SELECT id,amount,type,title,note,tags_json,reimbursable,discount_amount,exclude_from_budget,updated_at FROM transactions ORDER BY id");
 check("流水落库2条", txs.length === 2, JSON.stringify(txs).slice(0,150));
 check("金额转分正确 35.5→3550", txs[0]?.amount === 3550, String(txs[0]?.amount));
 check("离线账单高级字段落库", txs[0]?.note === "项目聚餐" && txs[0]?.tags_json === '["工作","报销"]' && txs[0]?.reimbursable === 1 && txs[0]?.discount_amount === 250 && txs[0]?.exclude_from_budget === 1, JSON.stringify(txs[0]));
+const screenshotRecord = (await q("SELECT source,recognition_text,recognition_completeness,recognition_corrections_json FROM transactions WHERE offline_id='t-1'"))[0];
+check("截图识别仅保存服务端脱敏文本与字段修正", screenshotRecord?.source === "截图本地识别" && screenshotRecord.recognition_text.includes("[手机号已隐藏]") && !screenshotRecord.recognition_text.includes("13800138000") && screenshotRecord.recognition_completeness === 93 && JSON.stringify(JSON.parse(screenshotRecord.recognition_corrections_json)).includes('"amount"') && !screenshotRecord.recognition_corrections_json.includes("injected"), JSON.stringify(screenshotRecord));
+r = await call(transactionQuery, "GET", `/api/transactions/query?ledger=${L}&id=${txs[0]?.id}&limit=1`);
+check("流水查询向所有客户端返回脱敏识别元数据", r.status === 200 && r.json?.items?.[0]?.source === "截图本地识别" && r.json.items[0].recognitionCompleteness === 93 && r.json.items[0].recognitionCorrections?.amount?.confirmed === "36", JSON.stringify({ status: r.status, source: r.json?.items?.[0]?.source, completeness: r.json?.items?.[0]?.recognitionCompleteness, corrections: r.json?.items?.[0]?.recognitionCorrections }));
 r = await call(offline, "POST", "/api/offline-sync", { body: { items: [mk(1, "支出", 35.5)] } });
 txs = await q("SELECT COUNT(*) n FROM transactions");
 check("重复 offlineId 幂等不重复入账", txs[0].n === 2, JSON.stringify(txs));
@@ -272,8 +294,12 @@ r = await call(prefs, "PATCH", "/api/preferences", { body: { theme: "glacier" } 
 check("PATCH 主题", r.status === 200, r.text);
 r = await call(prefs, "PATCH", "/api/preferences", { body: { hideAmounts: true, hapticsEnabled: false, continuousEntry: true, homeModules: ["summary", "recent"] } });
 check("PATCH 移动端体验设置", r.status === 200, r.text);
+r = await call(prefs, "PATCH", "/api/preferences", { body: { mobileThemeMode: "system", highContrast: true, defaultCurrency: "JPY" } });
+check("PATCH 明暗、高对比度和默认币种", r.status === 200, r.text);
 r = await call(prefs, "GET", "/api/preferences");
-check("GET 移动端体验设置", r.status === 200 && r.json?.hideAmounts === true && r.json?.hapticsEnabled === false && r.json?.continuousEntry === true && JSON.stringify(r.json?.homeModules) === JSON.stringify(["summary", "recent"]), r.text);
+check("GET 移动端体验和显示设置", r.status === 200 && r.json?.hideAmounts === true && r.json?.hapticsEnabled === false && r.json?.continuousEntry === true && JSON.stringify(r.json?.homeModules) === JSON.stringify(["summary", "recent"]) && r.json?.mobileThemeMode === "system" && r.json?.highContrast === true && r.json?.defaultCurrency === "JPY", r.text);
+r = await call(prefs, "PATCH", "/api/preferences", { body: { defaultCurrency: "BTC" } });
+check("默认币种拒绝不支持的值", r.status === 400, r.text);
 r = await call(prefs, "PATCH", "/api/preferences", { body: {} });
 check("空偏好更新被拒", r.status === 400, r.text);
 r = await call(prefs, "PATCH", "/api/preferences", { body: { theme: "glacier", ownerId: "other" } });
@@ -290,6 +316,57 @@ check(
   r.status === 200 && r.json?.runwayDays === null && r.json?.dataStatus === "insufficient_data",
   r.text?.slice(0,180),
 );
+const portfolioAssetAccount = await call(accounts, "POST", "/api/accounts", {
+  body: {
+    ledgerId: emptyLedgerId,
+    name: "预测测试美元资产",
+    type: "资产",
+    balance: 100,
+    currency: "USD",
+    assetClass: "风险进攻",
+  },
+});
+const portfolioDebtAccount = await call(accounts, "POST", "/api/accounts", {
+  body: {
+    ledgerId: emptyLedgerId,
+    name: "预测测试日元负债",
+    type: "负债",
+    balance: 200,
+    currency: "JPY",
+  },
+});
+await B.prepare(
+  "INSERT INTO digital_assets(ledger_id,name,asset_type,currency,valuation_mode,manual_value,purchase_price,purchase_date,lifespan_months,residual_rate_bps,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+).bind(
+  emptyLedgerId,
+  "预测测试数字资产",
+  "数码设备",
+  "USD",
+  "手动估值",
+  80000,
+  100000,
+  "2020-01-01",
+  120,
+  0,
+  new Date().toISOString(),
+).run();
+r = await call(forecast, "GET", "/api/forecast?ledger=" + emptyLedgerId);
+check(
+  "共享预测计入汇率换算后的数字资产、负债率与结构",
+  r.status === 200 &&
+    r.json?.accountAssetTotal === 72000 &&
+    r.json?.digitalAssetTotal === 576000 &&
+    r.json?.assetTotal === 648000 &&
+    r.json?.liabilityTotal === 924 &&
+    r.json?.netWorth === 647076 &&
+    r.json?.debtRatio === 0.14 &&
+    r.json?.allocation?.find?.((item) => item.assetClass === "风险进攻")?.amount === 72000 &&
+    r.json?.realNetWorthOneYear > 0 &&
+    r.json?.points?.[0]?.balance === 647076,
+  r.text?.slice(0,300),
+);
+await B.prepare("DELETE FROM digital_assets WHERE ledger_id=?").bind(emptyLedgerId).run();
+await B.prepare("DELETE FROM accounts WHERE ledger_id=?").bind(emptyLedgerId).run();
 const existingLedgerCount = Number((await q("SELECT COUNT(*) n FROM ledgers WHERE owner_id='local'"))[0]?.n ?? 0);
 const guardedLedgerResponse = await call(ledgers, "POST", "/api/ledgers", { body: { name: "删除保护账本", icon: "🛡️" } });
 const guardedLedgerId = guardedLedgerResponse.json?.id;
@@ -322,14 +399,37 @@ check("备份测试创建停用账户", r.status === 200 && (await q("SELECT is_
 const backupTransactionId = (await q("SELECT id FROM transactions WHERE ledger_id=? ORDER BY id LIMIT 1", L))[0]?.id;
 await B.prepare("INSERT INTO transaction_reconciliation(transaction_id,ledger_id,status,note,reconciled_by,reconciled_at) VALUES(?,?,?,?,?,?)").bind(backupTransactionId, L, "reconciled", "备份回环核对", "local", "2026-07-20T14:00:00.000Z").run();
 await B.prepare("INSERT INTO automation_rules(id,owner_id,ledger_id,name,priority,enabled,conditions_json,actions_json) VALUES(?,?,?,?,?,?,?,?)").bind("backup-rule", "local", L, "备份咖啡规则", 10, 1, JSON.stringify({ merchantContains: "咖啡", accountId: acct1 }), JSON.stringify({ category: "餐饮", accountId: acct1 })).run();
+await B.prepare("INSERT INTO recurring_tasks(uuid,ledger_id,name,amount,type,account_id,cycle,category,category_dynamic,next_run_date,reminder_days,is_paused,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+  .bind("backup-recurring-task", L, "备份房租规则", 250000, "支出", acct1, "每月", "住房", "住房", "2026-10-01", 3, 1, "2026-09-24T00:00:00.000Z").run();
 r = await call(exportApi, "GET", "/api/data/export");
-check("GET JSON导出", r.status === 200 && r.json?.version === 23 && r.json?.transactions?.length === 2, `v=${r.json?.version} tx=${r.json?.transactions?.length}`);
-check("v23 导出保留分类层级", r.json?.expenseCategories?.some?.((item) => item.name === "猫粮" && item.parentId != null && item.parentCategorySyncId), JSON.stringify(r.json?.expenseCategories));
-check("v23 导出对账状态和自动化规则", r.json?.transactionReconciliation?.some?.((item) => item.note === "备份回环核对") && r.json?.automationRules?.some?.((item) => item.id === "backup-rule" && item.conditions?.accountId === acct1), JSON.stringify({ reconciliation: r.json?.transactionReconciliation, rules: r.json?.automationRules }));
+check("GET JSON导出", r.status === 200 && r.json?.version === 24 && r.json?.transactions?.length === 2, `v=${r.json?.version} tx=${r.json?.transactions?.length}`);
+check("v24 导出保留分类层级", r.json?.expenseCategories?.some?.((item) => item.name === "猫粮" && item.parentId != null && item.parentCategorySyncId), JSON.stringify(r.json?.expenseCategories));
+check("v24 导出对账状态和自动化规则", r.json?.transactionReconciliation?.some?.((item) => item.note === "备份回环核对") && r.json?.automationRules?.some?.((item) => item.id === "backup-rule" && item.conditions?.accountId === acct1), JSON.stringify({ reconciliation: r.json?.transactionReconciliation, rules: r.json?.automationRules }));
+check("v24 导出周期记账暂停状态和账户同步引用", r.json?.recurringTasks?.some?.((item) => item.name === "备份房租规则" && item.isPaused && item.accountSyncId), JSON.stringify(r.json?.recurringTasks));
 globalThis.__EXPORT__ = r.json;
 r = await call(exportApi, "GET", "/api/data/export?format=csv");
 check("GET CSV导出表头完整", r.status === 200 && r.text.includes("账本") && r.text.includes("消费情绪"), r.text?.slice(0,60));
 
 const fs = await import("node:fs");
 fs.writeFileSync(process.env.NL_SNAPSHOT, JSON.stringify(globalThis.__EXPORT__));
+
+describe("预算结转/月度重置");
+r = await call(ledgers, "POST", "/api/ledgers", { body: { name: "预算结转测试账本", icon: "🪙" } });
+const rolloverLedgerId = r.json?.id;
+r = await call(budgets, "PUT", "/api/category-budgets", { body: { ledgerId: rolloverLedgerId, category: "餐饮", amount: 1500, carryoverEnabled: true } });
+check("保存预算结转规则", r.status === 200, `${r.status} ${r.text}`);
+const rolloverBudgetUpdatedAt = (await q("SELECT updated_at updatedAt FROM category_budgets WHERE ledger_id=? AND category='餐饮'", rolloverLedgerId))[0]?.updatedAt;
+await B.prepare("UPDATE category_budgets SET updated_at='2026-06-01 00:00:00' WHERE ledger_id=? AND category='餐饮'").bind(rolloverLedgerId).run();
+const rolloverAccountResponse = await call(accounts, "POST", "/api/accounts", { body: { ledgerId: rolloverLedgerId, name: "结转测试账户", type: "资产", balance: 10000, currency: "CNY" } });
+const rolloverAccountId = rolloverAccountResponse.json?.id;
+check("创建预算结转测试账户", rolloverAccountResponse.status === 201 && rolloverAccountId, `${rolloverAccountResponse.status} ${rolloverAccountResponse.text}`);
+await B.batch([
+  B.prepare("INSERT INTO transactions(ledger_id,title,amount,type,category,account_id,currency,occurred_at) VALUES(?,?,?,'支出','餐饮',?,'CNY',?)").bind(rolloverLedgerId, "预算结转六月测试", 100000, rolloverAccountId, "2026-06-10T04:00:00.000Z"),
+  B.prepare("INSERT INTO transactions(ledger_id,title,amount,type,category,account_id,currency,occurred_at) VALUES(?,?,?,'支出','餐饮',?,'CNY',?)").bind(rolloverLedgerId, "预算结转七月测试", 200000, rolloverAccountId, "2026-07-10T04:00:00.000Z"),
+  B.prepare("INSERT INTO transactions(ledger_id,title,amount,type,category,account_id,currency,occurred_at) VALUES(?,?,?,'支出','餐饮',?,'CNY',?)").bind(rolloverLedgerId, "预算结转八月测试", 50000, rolloverAccountId, "2026-08-10T04:00:00.000Z"),
+]);
+r = await call(budgets, "GET", `/api/category-budgets?ledger=${rolloverLedgerId}&today=2026-09-24&offset=480`);
+const rolledFoodBudget = r.json?.find?.((item) => item.category === "餐饮");
+check("多月结余递推、超支月不结转并在新月重置", r.status === 200 && rolledFoodBudget?.carryoverAmount === 100000 && rolledFoodBudget?.availableAmount === 250000 && rolledFoodBudget?.carryoverEnabled === true, JSON.stringify(rolledFoodBudget));
+check("预算规则变更时间有记录", typeof rolloverBudgetUpdatedAt === "string" && rolloverBudgetUpdatedAt.length > 0, String(rolloverBudgetUpdatedAt));
 process.exit(summary("套件1 · 核心记账链路") ? 1 : 0);

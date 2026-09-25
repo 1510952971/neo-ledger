@@ -2,6 +2,135 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:neo_ledger/models.dart';
 
 void main() {
+  test('shared display preferences round trip with safe defaults', () {
+    final preferences = Preferences.fromJson({
+      'theme': 'glacier',
+      'mobileThemeMode': 'system',
+      'highContrast': true,
+      'defaultCurrency': 'JPY',
+    });
+    expect(preferences.theme, 'glacier');
+    expect(preferences.mobileThemeMode, 'system');
+    expect(preferences.highContrast, isTrue);
+    expect(preferences.defaultCurrency, 'JPY');
+    expect(
+      Preferences.fromJson({'defaultCurrency': 'INVALID'}).defaultCurrency,
+      'CNY',
+    );
+  });
+  test('session profile metadata survives JSON and avatar copy updates', () {
+    final user = SessionUser.fromJson({
+      'username': 'peng',
+      'displayName': '彭',
+      'email': 'peng@example.com',
+      'avatarUrl': 'data:image/png;base64,AA==',
+      'createdAt': '2025-01-02T03:04:05.000Z',
+      'passwordEnabled': true,
+      'linkedProviders': ['wechat'],
+    });
+
+    final decoded = SessionUser.fromJson(user.toJson());
+    expect(decoded.email, 'peng@example.com');
+    expect(decoded.createdAt, '2025-01-02T03:04:05.000Z');
+    expect(decoded.passwordEnabled, isTrue);
+    expect(decoded.linkedProviders, ['wechat']);
+    expect(decoded.copyWith(clearAvatar: true).avatarUrl, isNull);
+    expect(decoded.copyWith(displayName: '新昵称').email, decoded.email);
+  });
+
+  test('screenshot recognition source and correction metadata survive offline queue round trips', () {
+    const entry = OfflineEntry(
+      offlineId: 'native-123',
+      ledgerId: 1,
+      accountId: 2,
+      amount: 18.8,
+      type: '支出',
+      title: '便利店',
+      category: '餐饮',
+      occurredAt: '2026-09-23T10:00:00.000Z',
+      source: '截图本地识别',
+      recognitionText: '支付成功\n金额：¥ 18.80\n手机号：[手机号已隐藏]',
+      recognitionCompleteness: 95,
+      recognitionCorrections: {
+        'amount': {'recognized': 18.8, 'confirmed': 18.9},
+      },
+    );
+
+    final decoded = OfflineEntry.fromJson(entry.toJson());
+    expect(decoded.source, '截图本地识别');
+    expect(decoded.recognitionText, contains('[手机号已隐藏]'));
+    expect(decoded.recognitionCompleteness, 95);
+    expect(decoded.recognitionCorrections['amount']['confirmed'], 18.9);
+  });
+
+  test(
+    'category budgets preserve monthly carryover and effective allowance',
+    () {
+      final budget = CategoryBudget.fromJson({
+        'ledgerId': 3,
+        'category': '餐饮',
+        'amount': 150000,
+        'carryoverEnabled': true,
+        'carryoverAmount': 25000,
+        'availableAmount': 175000,
+      });
+
+      expect(budget.amountCents, 150000);
+      expect(budget.carryoverEnabled, isTrue);
+      expect(budget.carryoverAmountCents, 25000);
+      expect(budget.availableAmountCents, 175000);
+      expect(budget.toJson()['availableAmount'], 175000);
+    },
+  );
+
+  test(
+    'subscription pause state survives API and local snapshot round trips',
+    () {
+      final subscription = Subscription.fromJson({
+        'id': 12,
+        'ledgerId': 4,
+        'name': '云盘',
+        'amount': 1990,
+        'cycle': '每月',
+        'accountId': 7,
+        'category': '工具',
+        'nextChargeDate': '2026-09-30',
+        'isPaused': true,
+      });
+
+      expect(subscription.isPaused, isTrue);
+      expect(subscription.ledgerId, 4);
+      expect(Subscription.fromJson(subscription.toJson()).isPaused, isTrue);
+    },
+  );
+
+  test(
+    'recurring tasks preserve cadence, reminder and pause state in snapshots',
+    () {
+      final task = RecurringTask.fromJson({
+        'id': 31,
+        'ledgerId': 6,
+        'name': '每月房租',
+        'amount': 325000,
+        'type': '支出',
+        'accountId': 12,
+        'cycle': '每月',
+        'category': '住房',
+        'nextRunDate': '2026-10-01',
+        'reminderDays': 3,
+        'isPaused': true,
+      });
+
+      final restored = RecurringTask.fromJson(task.toJson());
+      expect(restored.ledgerId, 6);
+      expect(restored.amountCents, 325000);
+      expect(restored.cycle, '每月');
+      expect(restored.nextRunDate, '2026-10-01');
+      expect(restored.reminderDays, 3);
+      expect(restored.isPaused, isTrue);
+    },
+  );
+
   test('transfer history preserves both linked accounts and currency', () {
     final transfer = AccountTransfer.fromJson({
       'ledgerId': 3,

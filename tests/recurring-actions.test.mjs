@@ -5,6 +5,7 @@ import {
   removeInstallment,
   removeSubscription,
   saveSubscription,
+  setSubscriptionPaused,
 } from "../app/recurring-actions.ts";
 
 function requestStub(data = {}) {
@@ -62,6 +63,19 @@ test("subscription removal scopes both resource and ledger", async () => {
   assert.deepEqual(request.calls[0], {
     input: "/api/subscriptions?id=11&ledger=3",
     init: { method: "DELETE" },
+  });
+});
+
+test("subscription pause state uses the ledger-scoped API", async () => {
+  const request = requestStub({ ok: true });
+  await setSubscriptionPaused({ id: 11, ledgerId: 3, paused: true, request });
+  assert.deepEqual(request.calls[0], {
+    input: "/api/subscriptions",
+    init: {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: 11, ledgerId: 3, paused: true }),
+    },
   });
 });
 

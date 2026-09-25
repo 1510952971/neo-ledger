@@ -48,6 +48,7 @@ const categoryBudgetSchema = z
     ledgerId: positiveId,
     category: z.string().trim().min(1, "请选择分类").max(12, "分类名称最多 12 个字符"),
     amount: moneyYuan,
+    carryoverEnabled: z.boolean().optional(),
   })
   .strict();
 
@@ -63,6 +64,20 @@ const expenseCategoryCreateSchema = z.object(categoryFields("📦", "#8f91b8")).
 const expenseCategoryUpdateSchema = z.object({ id: positiveId, ...categoryFields("📦", "#8f91b8") }).strict();
 const incomeCategoryCreateSchema = z.object(categoryFields("💰", "#78a98c")).strict();
 const incomeCategoryUpdateSchema = z.object({ id: positiveId, ...categoryFields("💰", "#78a98c") }).strict();
+
+const tagName = z.string().trim().min(1, "标签不能为空").max(24, "标签最多 24 个字符");
+const tagRenameSchema = z.object({
+  ledgerId: positiveId,
+  from: tagName,
+  to: tagName,
+}).strict().refine((value) => value.from !== value.to, {
+  message: "新旧标签不能相同",
+  path: ["to"],
+});
+const tagDeleteSchema = z.object({
+  ledgerId: positiveId,
+  name: tagName,
+}).strict();
 
 const idempotencyKey = z
   .string()
@@ -107,6 +122,11 @@ const subscriptionFields = {
 };
 const subscriptionCreateSchema = z.object(subscriptionFields).strict();
 const subscriptionUpdateSchema = z.object({ id: positiveId, ...subscriptionFields }).strict();
+const subscriptionPauseSchema = z.object({
+  id: positiveId,
+  ledgerId: positiveId,
+  paused: z.boolean(),
+}).strict();
 
 const installmentSchema = z.object({
   ledgerId: positiveId,
@@ -131,6 +151,9 @@ const economicSettingsSchema = z.object({ ledgerId: positiveId, inflationRate: z
 const homeModule = z.enum(["summary", "weeklyTrend", "budget", "pending", "recent"]);
 const preferencesPatchSchema = z.object({
   theme: z.enum(["cream", "obsidian", "glacier", "peach"]).optional(),
+  mobileThemeMode: z.enum(["system", "light", "dark"]).optional(),
+  highContrast: z.boolean().optional(),
+  defaultCurrency: z.enum(["CNY", "USD", "JPY", "EUR"]).optional(),
   enabled: z.boolean().optional(),
   pin: z.string().regex(/^\d{4}$/, "请输入4位数字PIN").optional(),
   hideAmounts: z.boolean().optional(),
@@ -271,6 +294,9 @@ export async function readIncomeCategoryUpdateInput(request: Request) {
   return readInternalJson(request, incomeCategoryUpdateSchema);
 }
 
+export const readTagRenameInput = (request: Request) => readInternalJson(request, tagRenameSchema);
+export const readTagDeleteInput = (request: Request) => readInternalJson(request, tagDeleteSchema);
+
 export async function readAssetCreateInput(request: Request) {
   return readInternalJson(request, assetCreateSchema);
 }
@@ -289,6 +315,10 @@ export async function readSubscriptionCreateInput(request: Request) {
 
 export async function readSubscriptionUpdateInput(request: Request) {
   return readInternalJson(request, subscriptionUpdateSchema);
+}
+
+export async function readSubscriptionPauseInput(request: Request) {
+  return readInternalJson(request, subscriptionPauseSchema);
 }
 
 export const readInstallmentInput = (request: Request) => readInternalJson(request, installmentSchema);

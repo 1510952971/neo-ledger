@@ -13,6 +13,10 @@ export type TransactionEditSectionDraft = {
     reimbursable?: boolean;
     discountAmount?: number;
     excludeFromBudget?: boolean;
+    source?: string;
+    recognitionText?: string | null;
+    recognitionCompleteness?: number | null;
+    recognitionCorrections?: Record<string, { recognized: string | number; confirmed: string | number }>;
   };
   type: "支出" | "收入";
   accountId: number;
@@ -86,6 +90,12 @@ export function TransactionEditDialog({
           <label className="checkbox-field"><input name="reimbursable" type="checkbox" defaultChecked={draft.transaction.reimbursable === true} /><span>待报销</span></label>
           <label className="checkbox-field"><input name="excludeFromBudget" type="checkbox" defaultChecked={draft.transaction.excludeFromBudget === true} /><span>不计入预算</span></label>
         </div>
+        {(draft.transaction.recognitionText || draft.transaction.recognitionCompleteness != null || Object.keys(draft.transaction.recognitionCorrections ?? {}).length > 0) && <section className="transaction-edit-options" aria-label="截图识别记录">
+          <div><strong>来源</strong><p>{draft.transaction.source ?? "截图本地识别"}</p></div>
+          {draft.transaction.recognitionCompleteness != null && <div><strong>字段完整度</strong><p>{draft.transaction.recognitionCompleteness}%（非模型置信度）</p></div>}
+          {draft.transaction.recognitionText && <details><summary>查看脱敏识别文本</summary><pre>{draft.transaction.recognitionText}</pre></details>}
+          {Object.keys(draft.transaction.recognitionCorrections ?? {}).length > 0 && <div><strong>用户修正</strong>{Object.entries(draft.transaction.recognitionCorrections ?? {}).map(([field, value]) => <p key={field}>{field}：{value.recognized} → {value.confirmed}</p>)}</div>}
+        </section>}
         {error && <p className="form-error" role="alert">{error}</p>}
         <button className="submit-button" disabled={pending}>{pending ? "正在校正账户余额…" : "保存修改"}</button>
       </form>

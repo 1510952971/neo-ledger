@@ -52,6 +52,17 @@ test("AI server route keeps model calls bounded and schema-checked", () => {
   assert.match(route, /normalizeAiModelAnswer/u);
 });
 
+test("screenshot OCR AI endpoint is isolated from ledger context and requires consent", () => {
+  const route = readFileSync(new URL("../app/api/v1/ai/screenshot-recognition/route.ts", import.meta.url), "utf8");
+  assert.match(route, /normalizeScreenshotRecognitionAiRequest/u);
+  assert.match(route, /x-neo-ai-consent/u);
+  assert.match(route, /readJsonWithLimit/u);
+  assert.match(route, /recordAuditEvent/u);
+  assert.doesNotMatch(route, /ledgerId|claimAndRequireLedger|FROM transactions|FROM accounts/u);
+  assert.match(route, /inputChars/u);
+  assert.doesNotMatch(route, /metadata:\s*\{[^}]*\btext\s*:/u);
+});
+
 test("WebDAV sync state stays outside the page component", () => {
   assert.match(source, /useWebDavSyncState\(\)/u);
   assert.match(source, /useWebDavAutoSync\(/u);

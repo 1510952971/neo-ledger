@@ -164,10 +164,13 @@ export function useLedgerRefresh<
   const reloadCategories = useCallback(async () => {
     const request = requestRef.current;
     if (!request) return;
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const budgetQuery = `ledger=${ledgerId}&today=${today}&offset=${-now.getTimezoneOffset()}`;
     const [categories, budgets] = await Promise.all([
       readJson<Category[]>(`/api/categories?ledger=${ledgerId}`, request.controller.signal),
       readJson<CategoryBudget[]>(
-        `/api/category-budgets?ledger=${ledgerId}`,
+        `/api/category-budgets?${budgetQuery}`,
         request.controller.signal,
       ),
     ]);

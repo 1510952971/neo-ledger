@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:neo_ledger/mobile/core/mobile_route_registry.dart';
@@ -40,6 +41,28 @@ void main() {
     expect(
       registry.onGenerateRoute(const RouteSettings(name: '/not-registered')),
       isNull,
+    );
+  });
+
+  test('uses an iOS route that supports the platform back-swipe gesture', () {
+    final registry = MobileRouteRegistry({
+      '/test/detail': MobileRouteDefinition((_, _) => const SizedBox.shrink()),
+    }, platform: TargetPlatform.iOS);
+
+    expect(
+      registry.onGenerateRoute(const RouteSettings(name: '/test/detail')),
+      isA<CupertinoPageRoute<void>>(),
+    );
+  });
+
+  test('keeps Android on the Material route behavior', () {
+    final registry = MobileRouteRegistry({
+      '/test/detail': MobileRouteDefinition((_, _) => const SizedBox.shrink()),
+    }, platform: TargetPlatform.android);
+
+    expect(
+      registry.onGenerateRoute(const RouteSettings(name: '/test/detail')),
+      isA<MaterialPageRoute<void>>(),
     );
   });
 }

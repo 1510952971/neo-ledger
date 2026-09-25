@@ -11,6 +11,28 @@ export function dateKeyInZone(date = new Date(), timeZone = "Asia/Shanghai") {
   return `${value.year}-${value.month}-${value.day}`;
 }
 
+export function nextRecurringDate(dateKey, cycle) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(String(dateKey));
+  if (!match) throw new Error("周期日期无效");
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const current = new Date(Date.UTC(year, month - 1, day, 12));
+  if (current.toISOString().slice(0, 10) !== dateKey)
+    throw new Error("周期日期无效");
+  if (cycle === "每天" || cycle === "每周") {
+    current.setUTCDate(current.getUTCDate() + (cycle === "每天" ? 1 : 7));
+    return current.toISOString().slice(0, 10);
+  }
+  const monthDelta = cycle === "每月" ? 1 : cycle === "每季" ? 3 : cycle === "每年" ? 12 : 0;
+  if (!monthDelta) throw new Error("周期类型无效");
+  const monthIndex = year * 12 + month - 1 + monthDelta;
+  const targetYear = Math.floor(monthIndex / 12);
+  const targetMonth = (monthIndex % 12) + 1;
+  const lastDay = new Date(Date.UTC(targetYear, targetMonth, 0, 12)).getUTCDate();
+  return `${targetYear}-${String(targetMonth).padStart(2, "0")}-${String(Math.min(day, lastDay)).padStart(2, "0")}`;
+}
+
 function zonedParts(date, timeZone) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,

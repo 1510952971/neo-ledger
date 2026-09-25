@@ -28,8 +28,8 @@ class MobileEmptyState extends StatelessWidget {
         const SizedBox(height: 12),
         Text(
           title,
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: MobileColors.foreground,
             fontWeight: FontWeight.w800,
           ),
         ),
@@ -37,7 +37,7 @@ class MobileEmptyState extends StatelessWidget {
         Text(
           message,
           textAlign: TextAlign.center,
-          style: const TextStyle(
+          style: TextStyle(
             color: MobileColors.muted,
             fontSize: 12,
             height: 1.5,
@@ -67,7 +67,7 @@ class MobileInlineError extends StatelessWidget {
         Expanded(
           child: Text(
             message,
-            style: const TextStyle(
+            style: TextStyle(
               color: MobileColors.expense,
               fontSize: 12,
               height: 1.4,
@@ -93,9 +93,9 @@ class MobileLoadingView extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const CircularProgressIndicator(color: MobileColors.brand),
+          CircularProgressIndicator(color: MobileColors.brand),
           const SizedBox(height: 18),
-          Text(message, style: const TextStyle(color: MobileColors.muted)),
+          Text(message, style: TextStyle(color: MobileColors.muted)),
         ],
       ),
     ),
@@ -146,7 +146,7 @@ class MobileOfflineStatus extends StatelessWidget {
                 const SizedBox(height: 3),
                 Text(
                   message,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: MobileColors.muted,
                     fontSize: 12,
                     height: 1.4,

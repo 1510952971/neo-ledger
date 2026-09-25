@@ -12,6 +12,7 @@ import {
   getDb,
   getDbBinding,
   processDueInstallments,
+  processDueRecurringTasks,
   processDueSubscriptions,
 } from "../db";
 import {
@@ -29,6 +30,7 @@ import {
   savingsGoals,
   sideHustleDeductions,
   subscriptions,
+  recurringTasks,
   transactions,
 } from "../db/schema";
 import { getChatGPTUser, requireChatGPTUser } from "./chatgpt-auth";
@@ -490,6 +492,7 @@ export default async function Home({
     ? requestedLedger
     : (ledgerRows[0]?.id ?? 1);
   await processDueSubscriptions(ledgerId);
+  await processDueRecurringTasks(ledgerId);
   await processDueInstallments(ledgerId);
   const db = getDb();
   const [
@@ -499,6 +502,7 @@ export default async function Home({
     budgetRows,
     categoryBudgetRows,
     subscriptionRows,
+    recurringTaskRows,
     goalRows,
     preferenceRows,
     memberRows,
@@ -540,6 +544,12 @@ export default async function Home({
       .where(eq(subscriptions.ledgerId, ledgerId))
       .orderBy(subscriptions.nextChargeDate)
       .limit(MAX_SUBSCRIPTION_COUNT),
+    db
+      .select()
+      .from(recurringTasks)
+      .where(eq(recurringTasks.ledgerId, ledgerId))
+      .orderBy(recurringTasks.isPaused, recurringTasks.nextRunDate, recurringTasks.id)
+      .limit(200),
     db
       .select()
       .from(savingsGoals)
@@ -616,6 +626,10 @@ export default async function Home({
       subscriptions={subscriptionRows.map((row) => ({
         ...row,
         category: row.categoryDynamic ?? row.category,
+      }))}
+      recurringTasks={recurringTaskRows.map((row) => ({
+        ...row,
+        category: row.categoryDynamic,
       }))}
       ledgers={ledgerRows}
       currentLedgerId={ledgerId}

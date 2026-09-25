@@ -22,6 +22,7 @@ import {
   pendingTransactions,
   systemNotifications,
   subscriptions,
+  recurringTasks,
   transactions,
 } from "../../../../db/schema";
 import { recordAuditEvent, requestIdFromRequest } from "../../../audit-log";
@@ -100,6 +101,7 @@ export async function GET(request: Request) {
       countLedgerRows("budget_settings", "id"),
       countLedgerRows("category_budgets"),
       countLedgerRows("subscriptions"),
+      countLedgerRows("recurring_tasks"),
       countLedgerRows("savings_goals"),
       countLedgerRows("members"),
       countLedgerRows("installments"),
@@ -131,12 +133,13 @@ export async function GET(request: Request) {
   // prevents export queries from hitting D1/SQLite parameter limits.
   const ledgerScope = (column: AnyColumn) =>
     sql`${column} IN (SELECT id FROM ledgers WHERE owner_id=${ownerId})`;
-  const [a, t, b, c, s, g, m, i, h, d, p, n, f, e, ct, da, ec, ic] = await Promise.all([
+  const [a, t, b, c, s, rt, g, m, i, h, d, p, n, f, e, ct, da, ec, ic] = await Promise.all([
     db.select().from(accounts).where(ledgerScope(accounts.ledgerId)),
     db.select().from(transactions).where(ledgerScope(transactions.ledgerId)),
     db.select().from(budgetSettings).where(ledgerScope(budgetSettings.id)),
     db.select().from(categoryBudgets).where(ledgerScope(categoryBudgets.ledgerId)),
     db.select().from(subscriptions).where(ledgerScope(subscriptions.ledgerId)),
+    db.select().from(recurringTasks).where(ledgerScope(recurringTasks.ledgerId)),
     db.select().from(savingsGoals).where(ledgerScope(savingsGoals.ledgerId)),
     db.select().from(members).where(ledgerScope(members.ledgerId)),
     db.select().from(installments).where(ledgerScope(installments.ledgerId)),
@@ -270,7 +273,7 @@ export async function GET(request: Request) {
     return privateDownload(`\uFEFF${[header, ...rows].join("\n")}`, "text/csv; charset=utf-8", "neo-ledger.csv");
   }
     const jsonBody = JSON.stringify({
-      version: 23,
+      version: 24,
       installationId,
       exportedAt: new Date().toISOString(),
       ledgers: enrich("ledgers", ownedLedgers),
@@ -279,6 +282,7 @@ export async function GET(request: Request) {
       budgetSettings: enrich("budgetSettings", b.filter((row) => ownedIds.has(row.id)).map((row) => ({ ...row, ledgerId: row.id }))),
       categoryBudgets: enrich("categoryBudgets", keep(c)),
       subscriptions: enrich("subscriptions", keep(s)),
+      recurringTasks: enrich("recurringTasks", keep(rt)),
       savingsGoals: enrich("savingsGoals", keep(g)),
       members: enrich("members", keep(m)),
       installments: enrich("installments", keep(i)),
@@ -324,7 +328,7 @@ export async function GET(request: Request) {
           updatedAt: row.updatedAt,
         }; }),
     });
-    return privateDownload(jsonBody, "application/json; charset=utf-8", "neo-ledger-backup-v23.json");
+    return privateDownload(jsonBody, "application/json; charset=utf-8", "neo-ledger-backup-v24.json");
   } catch (error) {
     return accessErrorResponse(error, "导出失败", request);
   }

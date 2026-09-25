@@ -6,6 +6,9 @@ class ShortcutEntryDraft {
     required this.type,
     this.occurredAt,
     required this.source,
+    this.recognitionText,
+    this.recognitionCompleteness,
+    this.recognizedFields = const {},
   });
 
   final double amount;
@@ -14,6 +17,9 @@ class ShortcutEntryDraft {
   final String type;
   final DateTime? occurredAt;
   final String source;
+  final String? recognitionText;
+  final int? recognitionCompleteness;
+  final Map<String, dynamic> recognizedFields;
 }
 
 ShortcutEntryDraft? parseShortcutEntryUri(String raw) {

@@ -19,6 +19,7 @@ const sessionsApi = await import("../../app/api/security/sessions/route.ts");
 const auditApi = await import("../../app/api/security/audit/route.ts");
 const reconciliationApi = await import("../../app/api/transactions/reconciliation/route.ts");
 const bulkTransactionsApi = await import("../../app/api/transactions/bulk/route.ts");
+const tagsApi = await import("../../app/api/tags/route.ts");
 const rulesApi = await import("../../app/api/automation/rules/route.ts");
 const pendingApi = await import("../../app/api/pending-transactions/route.ts");
 const mfaApi = await import("../../app/api/auth/mfa/route.ts");
@@ -28,6 +29,7 @@ const transactionSummaryApi = await import("../../app/api/transactions/summary/r
 const transactionsApi = await import("../../app/api/transactions/route.ts");
 const transactionRestoreApi = await import("../../app/api/transactions/restore/route.ts");
 const aiChatApi = await import("../../app/api/v1/ai/chat/route.ts");
+const screenshotAiApi = await import("../../app/api/v1/ai/screenshot-recognition/route.ts");
 const { totpCodeAt } = await import("../../app/totp.ts");
 const passkeyChallenges = await import("../../app/passkey-challenge.ts");
 const restoreSnapshot = await import("../../app/restore-snapshot.ts");
@@ -81,8 +83,10 @@ const restoredNestedCategory = await q("SELECT child.name,child.parent_id parent
 check("分类恢复保留父子层级", restoredNestedCategory.some((item) => item.parentId != null && item.parentName === "宠物"), JSON.stringify(restoredNestedCategory));
 const restoredReconciliation = await q("SELECT r.status,r.note,t.title FROM transaction_reconciliation r JOIN transactions t ON t.id=r.transaction_id");
 const restoredRule = await q("SELECT id,owner_id AS ownerId,conditions_json AS conditionsJson,actions_json AS actionsJson FROM automation_rules WHERE id='backup-rule'");
-check("v23 恢复对账状态", restoredReconciliation.some((item) => item.status === "reconciled" && item.note === "备份回环核对"), JSON.stringify(restoredReconciliation));
-check("v23 恢复规则并重映射账户", restoredRule.length === 1 && JSON.parse(restoredRule[0].conditionsJson).accountId === JSON.parse(restoredRule[0].actionsJson).accountId, JSON.stringify(restoredRule));
+check("v24 恢复对账状态", restoredReconciliation.some((item) => item.status === "reconciled" && item.note === "备份回环核对"), JSON.stringify(restoredReconciliation));
+check("v24 恢复规则并重映射账户", restoredRule.length === 1 && JSON.parse(restoredRule[0].conditionsJson).accountId === JSON.parse(restoredRule[0].actionsJson).accountId, JSON.stringify(restoredRule));
+const restoredRecurringTask = (await q("SELECT r.name,r.amount,r.type,r.account_id accountId,r.cycle,r.next_run_date nextRunDate,r.reminder_days reminderDays,r.is_paused isPaused,a.name accountName FROM recurring_tasks r JOIN accounts a ON a.id=r.account_id"))[0];
+check("v24 恢复周期记账规则与重映射账户", restoredRecurringTask?.name === "备份房租规则" && restoredRecurringTask?.amount === 250000 && restoredRecurringTask?.type === "支出" && restoredRecurringTask?.accountName === "工资卡改" && restoredRecurringTask?.cycle === "每月" && restoredRecurringTask?.nextRunDate === "2026-10-01" && restoredRecurringTask?.reminderDays === 3 && restoredRecurringTask?.isPaused === 1, JSON.stringify(restoredRecurringTask));
 const acctNames = (await q("SELECT name FROM accounts ORDER BY id")).map(x => x.name);
 check("账户恢复(含改名后的工资卡改)", acctNames.includes("工资卡改") && acctNames.includes("信用卡"), JSON.stringify(acctNames));
 const archivedAccount = (await q("SELECT is_active active,sort_order sortOrder FROM accounts WHERE name='归档账户'"))[0];
@@ -197,6 +201,20 @@ r = await call(auth, "POST", "/api/auth", { body: { action: "login", username: "
 const loginResponse = r;
 const cookie2 = (r.headers?.get?.("set-cookie") || "").split(";")[0];
 check("重新登录成功", r.status === 200 && cookie2.includes("="), `${r.status}`);
+const screenshotAiNoConsent = await call(screenshotAiApi, "POST", "/api/v1/ai/screenshot-recognition", {
+  cookie: cookie2,
+  body: { consent: true, text: "支付成功 金额 ¥18.80" },
+});
+check(
+  "截图 AI 外发接口要求本次单独确认",
+  screenshotAiNoConsent.status === 428 && screenshotAiNoConsent.json?.code === "ai_consent_required" && screenshotAiNoConsent.headers?.get("cache-control")?.includes("no-store"),
+  `${screenshotAiNoConsent.status} ${screenshotAiNoConsent.text?.slice(0,120)}`,
+);
+const screenshotAiRejectsImage = await call(screenshotAiApi, "POST", "/api/v1/ai/screenshot-recognition", {
+  cookie: cookie2,
+  body: { consent: true, text: "支付成功 金额 ¥18.80", image: "should-not-be-sent" },
+});
+check("截图 AI 接口拒绝原图或额外上下文字段", screenshotAiRejectsImage.status === 400, `${screenshotAiRejectsImage.status} ${screenshotAiRejectsImage.text?.slice(0,120)}`);
 {
   const { env: workerEnv } = await import("cloudflare:workers");
   Object.assign(workerEnv, {
@@ -392,7 +410,7 @@ describe("账号头像");
 
   const schemaVersion = await q("SELECT value FROM app_meta WHERE key='schema_version'");
   const userColumns = await q("PRAGMA table_info(app_users)");
-  check("数据库迁移到 37", schemaVersion[0]?.value === "37", JSON.stringify(schemaVersion));
+  check("数据库迁移到 41", schemaVersion[0]?.value === "41", JSON.stringify(schemaVersion));
   const expectedIndexes = await q("SELECT name FROM sqlite_master WHERE type='index' AND name IN ('transactions_ledger_occurred_idx','accounts_ledger_id_idx','subscriptions_ledger_charge_idx','pending_transactions_ledger_status_idx')");
   check("核心账本查询索引已创建", expectedIndexes.length === 4, JSON.stringify(expectedIndexes));
   const planLedgerId = (await q("SELECT id FROM ledgers WHERE owner_id=? ORDER BY id LIMIT 1", "user:" + (await q("SELECT id FROM app_users WHERE username='pengtest'")).at(0)?.id))[0]?.id;
@@ -413,7 +431,11 @@ describe("账号头像");
   check("头像持久化到登录账号", avatarRows[0]?.avatarUrl === pngAvatar, JSON.stringify(avatarRows));
 
   r = await call(auth, "GET", "/api/auth", { cookie: cookie2 });
-  check("当前会话可读回头像", r.status === 200 && r.json?.user?.avatarUrl === pngAvatar, r.text?.slice(0,160));
+  check("当前会话可读回头像与资料元数据", r.status === 200 && r.json?.user?.avatarUrl === pngAvatar && r.json?.user?.createdAt && r.json?.user?.passwordEnabled === true && Array.isArray(r.json?.user?.linkedProviders), r.text?.slice(0,160));
+  r = await call(auth, "PATCH", "/api/auth", { cookie: cookie2, body: { displayName: "小彭的新昵称" } });
+  check("原生账号资料可安全更新昵称", r.status === 200 && r.json?.displayName === "小彭的新昵称", `${r.status} ${r.text?.slice(0,120)}`);
+  r = await call(auth, "PATCH", "/api/auth", { cookie: cookie2, body: { displayName: " " } });
+  check("空昵称更新被拒且不覆盖资料", r.status === 400 && (await q("SELECT display_name FROM app_users WHERE username='pengtest'")).at(0)?.display_name === "小彭的新昵称", `${r.status} ${r.text?.slice(0,120)}`);
   r = await call(auth, "POST", "/api/auth", { body: { action: "login", username: "pengtest", password: "Secret#12345" } });
   check("重新登录响应返回持久化头像", r.status === 200 && r.json?.user?.avatarUrl === pngAvatar, r.text?.slice(0,160));
 
@@ -765,6 +787,16 @@ if (workLedger && workTransactions.length) {
   r = await call(bulkTransactionsApi, "POST", "/api/transactions/bulk", { cookie: cookie2, body: { ledgerId: workLedger, transactionIds: [workTransactions[0].id], tags: ["工作", "报销"], reimbursable: true, excludeFromBudget: true } });
   const bulkMetadata = (await q("SELECT tags_json,reimbursable,exclude_from_budget FROM transactions WHERE id=?", workTransactions[0].id))[0];
   check("批量修改账单元数据", r.status === 200 && bulkMetadata?.tags_json === '["工作","报销"]' && bulkMetadata?.reimbursable === 1 && bulkMetadata?.exclude_from_budget === 1, `${r.status} ${JSON.stringify(bulkMetadata)}`);
+  r = await call(tagsApi, "GET", `/api/tags?ledger=${workLedger}`, { cookie: cookie2 });
+  check("标签词库按当前账本汇总", r.status === 200 && r.json?.tags?.some?.((tag) => tag.name === "工作" && tag.count >= 1) && r.headers?.get("cache-control")?.includes("no-store"), `${r.status} ${r.text?.slice(0,180)}`);
+  r = await call(tagsApi, "PATCH", "/api/tags", { cookie: cookie2, body: { ledgerId: workLedger, from: "工作", to: "项目" } });
+  const renamedTags = (await q("SELECT tags_json FROM transactions WHERE id=?", workTransactions[0].id))[0]?.tags_json;
+  check("标签重命名同步更新流水", r.status === 200 && r.json?.updated >= 1 && renamedTags === '["项目","报销"]', `${r.status} ${renamedTags}`);
+  r = await call(tagsApi, "DELETE", "/api/tags", { cookie: cookie2, body: { ledgerId: workLedger, name: "报销" } });
+  const removedTag = (await q("SELECT tags_json FROM transactions WHERE id=?", workTransactions[0].id))[0]?.tags_json;
+  check("移除标签不删除流水", r.status === 200 && r.json?.updated >= 1 && removedTag === '["项目"]' && (await q("SELECT id FROM transactions WHERE id=?", workTransactions[0].id)).length === 1, `${r.status} ${removedTag}`);
+  r = await call(tagsApi, "PATCH", "/api/tags", { cookie: cookie2, body: { ledgerId: workLedger, from: "项目", to: "项目" } });
+  check("标签重命名拒绝同名输入", r.status === 400, `${r.status} ${r.text?.slice(0,140)}`);
   r = await call(bulkTransactionsApi, "POST", "/api/transactions/bulk", { cookie: cookie2, body: { ledgerId: workLedger, transactionIds: [workTransactions[0].id, "bad"], mood: "刚需" } });
   check("批量修改不再静默过滤非法ID", r.status === 400 && r.json?.code === "request_failed", `${r.status} ${r.text?.slice(0,160)}`);
   r = await call(bulkTransactionsApi, "POST", "/api/transactions/bulk", { cookie: cookie2, body: { ledgerId: workLedger, transactionIds: [workTransactions[0].id], mood: "无效情绪" } });

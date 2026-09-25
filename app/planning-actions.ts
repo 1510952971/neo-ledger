@@ -27,7 +27,7 @@ export async function processPendingTransaction(
 }
 
 export async function saveCategoryBudget(
-  input: { ledgerId: number; category: string; amount: number },
+  input: { ledgerId: number; category: string; amount: number; carryoverEnabled?: boolean },
   request: RequestJson = fetchClientJson,
 ): Promise<PlanningActionResult> {
   const { response, data } = await request<{ error?: string }>("/api/category-budgets", {

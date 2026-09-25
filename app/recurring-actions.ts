@@ -48,6 +48,24 @@ export function removeSubscription(input: {
   );
 }
 
+export function setSubscriptionPaused(input: {
+  id: number;
+  ledgerId: number;
+  paused: boolean;
+  request?: RequestJson;
+}) {
+  const request = input.request ?? fetchClientJson;
+  return request<{ error?: string }>('/api/subscriptions', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: input.id,
+      ledgerId: input.ledgerId,
+      paused: input.paused,
+    }),
+  });
+}
+
 export function createInstallment(input: {
   ledgerId: number;
   name: unknown;

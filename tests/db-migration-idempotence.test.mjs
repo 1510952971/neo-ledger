@@ -31,13 +31,44 @@ function runMigrationProcess(databasePath, source) {
   );
 }
 
-test("schema 18-37 migrations are safe to resume after partial DDL", () => {
+test("schema 18-41 migrations are safe to resume after partial DDL", () => {
   const directory = mkdtempSync(path.join(tmpdir(), "neo-ledger-migration-"));
   const databasePath = path.join(directory, "migration.sqlite");
   try {
     runMigrationProcess(databasePath, `
       const db = await import(${JSON.stringify(dbModule)});
       await db.ensureDb();
+    `);
+    runMigrationProcess(databasePath, `
+      const db = await import(${JSON.stringify(dbModule)});
+      const binding = db.getDbBinding();
+      await binding.batch([
+        binding.prepare("ALTER TABLE transactions DROP COLUMN recognition_corrections_json"),
+        binding.prepare("UPDATE app_meta SET value='40' WHERE key='schema_version'")
+      ]);
+      await db.ensureDb();
+      const version = await binding.prepare("SELECT value FROM app_meta WHERE key='schema_version'").first();
+      const columns = await binding.prepare("PRAGMA table_info(transactions)").all();
+      if (version?.value !== '41' || !columns.results.some((item) => item.name === 'recognition_corrections_json')) process.exit(1);
+    `);
+    runMigrationProcess(databasePath, `
+      const db = await import(${JSON.stringify(dbModule)});
+      const binding = db.getDbBinding();
+      await binding.batch([
+        binding.prepare("ALTER TABLE subscriptions DROP COLUMN is_paused"),
+        binding.prepare("UPDATE app_meta SET value='38' WHERE key='schema_version'")
+      ]);
+      await db.ensureDb();
+      const version = await binding.prepare("SELECT value FROM app_meta WHERE key='schema_version'").first();
+      const columns = await binding.prepare("PRAGMA table_info(subscriptions)").all();
+      const paused = columns.results.find((item) => item.name === 'is_paused');
+      if (version?.value !== '41' || paused?.dflt_value !== '0') process.exit(1);
+      const taskColumns = await binding.prepare("PRAGMA table_info(recurring_tasks)").all();
+      if (!taskColumns.results.some((item) => item.name === 'reminder_days')) process.exit(1);
+      const transactionColumns = await binding.prepare("PRAGMA table_info(transactions)").all();
+      for (const name of ['source','recognition_text','recognition_completeness','recognition_corrections_json']) {
+        if (!transactionColumns.results.some((item) => item.name === name)) process.exit(1);
+      }
     `);
     runMigrationProcess(databasePath, `
       const db = await import(${JSON.stringify(dbModule)});
@@ -61,7 +92,7 @@ test("schema 18-37 migrations are safe to resume after partial DDL", () => {
       const index = await binding.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='accounts_ledger_active_order_idx'").first();
       const active = columns.results.find((item) => item.name === 'is_active');
       const order = columns.results.find((item) => item.name === 'sort_order');
-      if (version?.value !== '37' || active?.dflt_value !== '1' || !order || triggers.results.length !== 6 || !index) process.exit(1);
+      if (version?.value !== '41' || active?.dflt_value !== '1' || !order || triggers.results.length !== 6 || !index) process.exit(1);
     `);
     runMigrationProcess(databasePath, `
       const db = await import(${JSON.stringify(dbModule)});
@@ -70,7 +101,7 @@ test("schema 18-37 migrations are safe to resume after partial DDL", () => {
       await db.ensureDb();
       const version = await binding.prepare("SELECT value FROM app_meta WHERE key='schema_version'").first();
       const tables = await binding.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('user_passkeys','webauthn_challenges')").all();
-      if (version?.value !== '37' || tables.results.length !== 2) process.exit(1);
+      if (version?.value !== '41' || tables.results.length !== 2) process.exit(1);
     `);
     runMigrationProcess(databasePath, `
       const db = await import(${JSON.stringify(dbModule)});
@@ -78,7 +109,7 @@ test("schema 18-37 migrations are safe to resume after partial DDL", () => {
       await binding.prepare("UPDATE app_meta SET value='30' WHERE key='schema_version'").run();
       await db.ensureDb();
       const version = await binding.prepare("SELECT value FROM app_meta WHERE key='schema_version'").first();
-      if (version?.value !== '37') process.exit(1);
+      if (version?.value !== '41') process.exit(1);
     `);
     runMigrationProcess(databasePath, `
       const db = await import(${JSON.stringify(dbModule)});
@@ -86,7 +117,7 @@ test("schema 18-37 migrations are safe to resume after partial DDL", () => {
       await binding.prepare("UPDATE app_meta SET value='22' WHERE key='schema_version'").run();
       await db.ensureDb();
       const version = await binding.prepare("SELECT value FROM app_meta WHERE key='schema_version'").first();
-      if (version?.value !== '37') process.exit(1);
+      if (version?.value !== '41') process.exit(1);
     `);
     runMigrationProcess(databasePath, `
       const db = await import(${JSON.stringify(dbModule)});
@@ -94,7 +125,7 @@ test("schema 18-37 migrations are safe to resume after partial DDL", () => {
       await binding.prepare("UPDATE app_meta SET value='18' WHERE key='schema_version'").run();
       await db.ensureDb();
       const version = await binding.prepare("SELECT value FROM app_meta WHERE key='schema_version'").first();
-      if (version?.value !== '37') process.exit(1);
+      if (version?.value !== '41') process.exit(1);
     `);
     runMigrationProcess(databasePath, `
       const db = await import(${JSON.stringify(dbModule)});
@@ -106,7 +137,7 @@ test("schema 18-37 migrations are safe to resume after partial DDL", () => {
       const version = await binding.prepare("SELECT value FROM app_meta WHERE key='schema_version'").first();
       const oldTable = await binding.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='subscriptions_v17'").first();
       const copied = await binding.prepare("SELECT id FROM subscriptions WHERE id=999").first();
-      if (version?.value !== '37' || oldTable || !copied) process.exit(1);
+      if (version?.value !== '41' || oldTable || !copied) process.exit(1);
     `);
   } finally {
     rmSync(directory, { recursive: true, force: true });

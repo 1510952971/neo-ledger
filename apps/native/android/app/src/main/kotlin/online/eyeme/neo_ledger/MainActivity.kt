@@ -1,5 +1,6 @@
 package online.eyeme.neo_ledger
 
+import android.graphics.BitmapFactory
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -12,6 +13,9 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import online.eyeme.neoledger.companion.MainActivity as LegacyCompanionActivity
 import online.eyeme.neoledger.companion.NeoCompanionBridge
 
@@ -19,6 +23,7 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "online.eyeme.neo_ledger/companion"
         private const val STATUS_CHANNEL = "online.eyeme.neo_ledger/companion_status"
+        private const val SCREENSHOT_OCR_CHANNEL = "online.eyeme.neo_ledger/screenshot_ocr"
     }
 
     private var companionStatusSink: EventChannel.EventSink? = null
@@ -26,6 +31,54 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SCREENSHOT_OCR_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                if (call.method != "recognizeImage") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                val bytes = call.argument<ByteArray>("bytes")
+                if (bytes == null || bytes.isEmpty()) {
+                    result.error("INVALID_IMAGE", "图片内容为空", null)
+                    return@setMethodCallHandler
+                }
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                var sampleSize = 1
+                while (bounds.outWidth / sampleSize > 2560 ||
+                    bounds.outHeight / sampleSize > 2560
+                ) {
+                    sampleSize *= 2
+                }
+                val bitmap = BitmapFactory.decodeByteArray(
+                    bytes,
+                    0,
+                    bytes.size,
+                    BitmapFactory.Options().apply { inSampleSize = sampleSize },
+                )
+                if (bitmap == null) {
+                    result.error("INVALID_IMAGE", "无法读取所选图片", null)
+                    return@setMethodCallHandler
+                }
+                val recognizer = TextRecognition.getClient(
+                    ChineseTextRecognizerOptions.Builder().build(),
+                )
+                try {
+                    recognizer.process(InputImage.fromBitmap(bitmap, 0))
+                        .addOnSuccessListener { visionText -> result.success(visionText.text) }
+                        .addOnFailureListener { error ->
+                            result.error("OCR_FAILED", error.localizedMessage ?: "截图识别失败", null)
+                        }
+                        .addOnCompleteListener {
+                            recognizer.close()
+                            bitmap.recycle()
+                        }
+                } catch (error: Exception) {
+                    recognizer.close()
+                    bitmap.recycle()
+                    result.error("OCR_FAILED", error.localizedMessage ?: "截图识别失败", null)
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {

@@ -7,6 +7,7 @@ import {
   isSplitMode,
   transactionAccountDelta,
 } from "../../split-core.js";
+import { normalizeScreenshotRecognition } from "../../screenshot-recognition-core.js";
 
 function privateJson(body: unknown) {
   const headers = new Headers({
@@ -108,6 +109,7 @@ export async function POST(request: Request) {
       if (splitWithMemberId && (!partner || !isSplitMode(splitMode)))
         throw new Error("离线账单的分账搭子不存在或分账方式无效");
       const shared = type === "支出" && Boolean(partner);
+      const recognition = normalizeScreenshotRecognition(item);
       const me = shared
         ? await db.prepare("SELECT id FROM members WHERE ledger_id=? AND is_me=1").bind(ledgerId).first<{ id: number }>()
         : null;
@@ -115,7 +117,7 @@ export async function POST(request: Request) {
       const results = await db.batch([
         db
           .prepare(
-            "INSERT INTO transactions(ledger_id,title,note,tags_json,amount,type,mood,category,category_dynamic,income_category,income_category_dynamic,account_id,paid_by_member_id,split_with_member_id,split_mode,my_share_percent,currency,original_amount,original_currency,exchange_rate_micros,original_timezone,is_side_hustle,reimbursable,discount_amount,exclude_from_budget,occurred_at,offline_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO transactions(ledger_id,title,note,tags_json,amount,type,mood,category,category_dynamic,income_category,income_category_dynamic,account_id,paid_by_member_id,split_with_member_id,split_mode,my_share_percent,currency,original_amount,original_currency,exchange_rate_micros,original_timezone,is_side_hustle,reimbursable,discount_amount,exclude_from_budget,source,recognition_text,recognition_completeness,recognition_corrections_json,occurred_at,offline_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
           )
           .bind(
             ledgerId,
@@ -147,6 +149,10 @@ export async function POST(request: Request) {
             reimbursable ? 1 : 0,
             discountAmount,
             excludeFromBudget ? 1 : 0,
+            recognition.source,
+            recognition.recognitionText,
+            recognition.recognitionCompleteness,
+            recognition.recognitionCorrectionsJson,
             occurredAt,
             offlineId,
           ),

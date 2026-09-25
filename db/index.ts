@@ -2,7 +2,8 @@ import { env } from "cloudflare:workers";
 import { drizzle } from "drizzle-orm/d1";
 import * as schema from "./schema";
 import { evaluateTrackedAsset } from "../app/asset-core.js";
-import { dateKeyInZone, localDateTimeToUtc } from "../app/time-money.js";
+import { nextRecurringTaskDate } from "../app/recurring-task-core.js";
+import { dateKeyInZone, localDateTimeToUtc, nextRecurringDate } from "../app/time-money.js";
 import {
   ACCOUNT_TRANSFERS_APPLY_TRIGGER_SQL,
   ACCOUNT_TRANSFERS_APPLY_UPDATE_TRIGGER_SQL,
@@ -15,7 +16,7 @@ import {
   SCHEDULED_OCCURRENCES_TABLE_SQL,
 } from "./transfer-schema.js";
 
-export const DB_SCHEMA_VERSION = "37";
+export const DB_SCHEMA_VERSION = "41";
 const SCHEMA_VERSION = DB_SCHEMA_VERSION;
 let ensuredDbBinding: ReturnType<typeof getDbBinding> | null = null;
 
@@ -119,6 +120,79 @@ async function ensureTransactionRevisions(binding: ReturnType<typeof getDbBindin
   ]);
 }
 
+async function ensureLedgerSyncRevisions(binding: ReturnType<typeof getDbBinding>) {
+  const trackedTables = [
+    "accounts",
+    "transactions",
+    "account_transfers",
+    "scheduled_occurrences",
+    "digital_assets",
+    "subscriptions",
+    "recurring_tasks",
+    "installments",
+    "savings_goals",
+    "category_budgets",
+    "expense_categories",
+    "income_categories",
+    "pending_transactions",
+    "system_notifications",
+    "members",
+    "automation_rules",
+    "fire_settings",
+    "economic_settings",
+    "side_hustle_deductions",
+    "achievements",
+    "transaction_reconciliation",
+    "crdt_tombstones",
+    "sync_tombstones",
+  ];
+  const statements = [
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS ledger_sync_revisions(ledger_id INTEGER PRIMARY KEY,revision INTEGER NOT NULL DEFAULT 0)",
+    ),
+    binding.prepare(
+      "INSERT OR IGNORE INTO ledger_sync_revisions(ledger_id,revision) SELECT id,0 FROM ledgers",
+    ),
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS owner_sync_revisions(owner_id TEXT PRIMARY KEY,revision INTEGER NOT NULL DEFAULT 0)",
+    ),
+    binding.prepare(
+      "INSERT OR IGNORE INTO owner_sync_revisions(owner_id,revision) SELECT owner_id,0 FROM user_preferences",
+    ),
+  ];
+
+  const bump = (ledgerId: string) =>
+    `INSERT INTO ledger_sync_revisions(ledger_id,revision) VALUES(${ledgerId},1) ON CONFLICT(ledger_id) DO UPDATE SET revision=revision+1;`;
+  for (const table of trackedTables) {
+    statements.push(
+      binding.prepare(
+        `CREATE TRIGGER IF NOT EXISTS ${table}_sync_revision_insert AFTER INSERT ON ${table} BEGIN ${bump("NEW.ledger_id")} END`,
+      ),
+      binding.prepare(
+        `CREATE TRIGGER IF NOT EXISTS ${table}_sync_revision_update AFTER UPDATE ON ${table} WHEN OLD.ledger_id=NEW.ledger_id BEGIN ${bump("NEW.ledger_id")} END`,
+      ),
+      binding.prepare(
+        `CREATE TRIGGER IF NOT EXISTS ${table}_sync_revision_move AFTER UPDATE ON ${table} WHEN OLD.ledger_id<>NEW.ledger_id BEGIN ${bump("OLD.ledger_id")} ${bump("NEW.ledger_id")} END`,
+      ),
+      binding.prepare(
+        `CREATE TRIGGER IF NOT EXISTS ${table}_sync_revision_delete AFTER DELETE ON ${table} BEGIN ${bump("OLD.ledger_id")} END`,
+      ),
+    );
+  }
+  statements.push(
+    binding.prepare(
+      "CREATE TRIGGER IF NOT EXISTS user_preferences_sync_revision_insert AFTER INSERT ON user_preferences BEGIN INSERT INTO owner_sync_revisions(owner_id,revision) VALUES(NEW.owner_id,1) ON CONFLICT(owner_id) DO UPDATE SET revision=revision+1; END",
+    ),
+    binding.prepare(
+      "CREATE TRIGGER IF NOT EXISTS user_preferences_sync_revision_update AFTER UPDATE ON user_preferences BEGIN INSERT INTO owner_sync_revisions(owner_id,revision) VALUES(NEW.owner_id,1) ON CONFLICT(owner_id) DO UPDATE SET revision=revision+1; END",
+    ),
+    binding.prepare(
+      "CREATE TRIGGER IF NOT EXISTS user_preferences_sync_revision_delete AFTER DELETE ON user_preferences BEGIN INSERT INTO owner_sync_revisions(owner_id,revision) VALUES(OLD.owner_id,1) ON CONFLICT(owner_id) DO UPDATE SET revision=revision+1; END",
+    ),
+  );
+  await binding.batch(statements);
+}
+
 export async function ensureDb() {
   const binding = getDbBinding();
   if (ensuredDbBinding === binding) return;
@@ -131,6 +205,12 @@ export async function ensureDb() {
   // so old self-hosted databases can receive the safety net without a
   // destructive migration.
   await binding.batch([
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS mobile_idempotency_responses(owner_id TEXT NOT NULL,idempotency_key TEXT NOT NULL,request_hash TEXT NOT NULL,lease_until INTEGER NOT NULL,response_status INTEGER,response_headers TEXT,response_body TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,completed_at TEXT,PRIMARY KEY(owner_id,idempotency_key))",
+    ),
+    binding.prepare(
+      "CREATE INDEX IF NOT EXISTS mobile_idempotency_responses_created_idx ON mobile_idempotency_responses(created_at)",
+    ),
     binding.prepare(
       "CREATE TABLE IF NOT EXISTS restore_snapshots(id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,checksum TEXT NOT NULL,total_bytes INTEGER NOT NULL,chunk_count INTEGER NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
     ),
@@ -224,8 +304,56 @@ export async function ensureDb() {
     .first<{ value: string }>();
   if (version?.value === SCHEMA_VERSION) {
     await ensureTransactionRevisions(binding);
+    await ensureLedgerSyncRevisions(binding);
     ensuredDbBinding = binding;
     return;
+  }
+  if (version?.value === "40") {
+    await runIdempotentAlter(
+      binding,
+      "ALTER TABLE transactions ADD COLUMN source TEXT NOT NULL DEFAULT '账本'",
+    );
+    await runIdempotentAlter(
+      binding,
+      "ALTER TABLE transactions ADD COLUMN recognition_text TEXT",
+    );
+    await runIdempotentAlter(
+      binding,
+      "ALTER TABLE transactions ADD COLUMN recognition_completeness INTEGER",
+    );
+    await runIdempotentAlter(
+      binding,
+      "ALTER TABLE transactions ADD COLUMN recognition_corrections_json TEXT",
+    );
+    await binding.prepare("UPDATE app_meta SET value='41' WHERE key='schema_version'").run();
+    return ensureDb();
+  }
+  if (version?.value === "39") {
+    await runMigrationBatch(binding, [
+      binding.prepare("CREATE TABLE recurring_tasks(id INTEGER PRIMARY KEY AUTOINCREMENT,uuid TEXT NOT NULL UNIQUE,ledger_id INTEGER NOT NULL REFERENCES ledgers(id) ON DELETE CASCADE,name TEXT NOT NULL,amount INTEGER NOT NULL CHECK(amount>0),type TEXT NOT NULL CHECK(type IN ('支出','收入')),account_id INTEGER NOT NULL REFERENCES accounts(id),cycle TEXT NOT NULL CHECK(cycle IN ('每天','每周','每月','每季','每年')),category TEXT NOT NULL,category_dynamic TEXT NOT NULL,next_run_date TEXT NOT NULL,reminder_days INTEGER NOT NULL DEFAULT 1 CHECK(reminder_days BETWEEN 0 AND 30),is_paused INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+      binding.prepare("CREATE INDEX recurring_tasks_due_idx ON recurring_tasks(is_paused,next_run_date,id)"),
+      binding.prepare("CREATE INDEX recurring_tasks_ledger_idx ON recurring_tasks(ledger_id,is_paused,next_run_date,id)"),
+      binding.prepare("CREATE TRIGGER recurring_tasks_touch_updated AFTER UPDATE ON recurring_tasks WHEN NEW.updated_at=OLD.updated_at BEGIN UPDATE recurring_tasks SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=NEW.id; END"),
+      binding.prepare("UPDATE app_meta SET value='40' WHERE key='schema_version'"),
+    ]);
+    return ensureDb();
+  }
+  if (version?.value === "38") {
+    await runIdempotentAlter(
+      binding,
+      "ALTER TABLE subscriptions ADD COLUMN is_paused INTEGER NOT NULL DEFAULT 0",
+    );
+    await binding.prepare("UPDATE app_meta SET value='39' WHERE key='schema_version'").run();
+    return ensureDb();
+  }
+  if (version?.value === "37") {
+    await runMigrationBatch(binding, [
+      binding.prepare(
+        "ALTER TABLE category_budgets ADD COLUMN carryover_enabled INTEGER NOT NULL DEFAULT 0",
+      ),
+      binding.prepare("UPDATE app_meta SET value='38' WHERE key='schema_version'"),
+    ]);
+    return ensureDb();
   }
   if (version?.value === "35") {
     await runMigrationBatch(binding, [
@@ -575,7 +703,7 @@ export async function ensureDb() {
     }
     await binding
       .prepare(
-        "CREATE TABLE IF NOT EXISTS subscriptions(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,amount INTEGER NOT NULL,account_id INTEGER NOT NULL REFERENCES accounts(id),cycle TEXT NOT NULL CHECK(cycle IN ('每月','每季','每年')),category TEXT NOT NULL DEFAULT '娱乐',next_charge_date TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,ledger_id INTEGER NOT NULL DEFAULT 1,category_dynamic TEXT)",
+        "CREATE TABLE IF NOT EXISTS subscriptions(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,amount INTEGER NOT NULL,account_id INTEGER NOT NULL REFERENCES accounts(id),cycle TEXT NOT NULL CHECK(cycle IN ('每月','每季','每年')),category TEXT NOT NULL DEFAULT '娱乐',next_charge_date TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,ledger_id INTEGER NOT NULL DEFAULT 1,category_dynamic TEXT,is_paused INTEGER NOT NULL DEFAULT 0)",
       )
       .run();
     if (await tableExists(binding, "subscriptions_v17")) {
@@ -893,7 +1021,7 @@ export async function ensureDb() {
         `CREATE TABLE category_budgets (category TEXT PRIMARY KEY, amount INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
       ),
       binding.prepare(
-        `CREATE TABLE subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, amount INTEGER NOT NULL, account_id INTEGER NOT NULL REFERENCES accounts(id), cycle TEXT NOT NULL CHECK(cycle IN ('每月','每季','每年')), category TEXT NOT NULL DEFAULT '娱乐', next_charge_date TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+        `CREATE TABLE subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, amount INTEGER NOT NULL, account_id INTEGER NOT NULL REFERENCES accounts(id), cycle TEXT NOT NULL CHECK(cycle IN ('每月','每季','每年')), category TEXT NOT NULL DEFAULT '娱乐', next_charge_date TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, is_paused INTEGER NOT NULL DEFAULT 0)`,
       ),
       binding.prepare(
         "INSERT INTO category_budgets (category,amount) VALUES ('餐饮',0),('交通',0),('购物',0),('咖啡',30000),('娱乐',50000)",
@@ -968,7 +1096,7 @@ export async function ensureDb() {
       "CREATE TABLE category_budgets (category TEXT PRIMARY KEY, amount INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
     ),
     binding.prepare(
-      "CREATE TABLE subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, amount INTEGER NOT NULL, account_id INTEGER NOT NULL REFERENCES accounts(id), cycle TEXT NOT NULL CHECK(cycle IN ('每月','每季','每年')), category TEXT NOT NULL DEFAULT '娱乐', next_charge_date TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+      "CREATE TABLE subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, amount INTEGER NOT NULL, account_id INTEGER NOT NULL REFERENCES accounts(id), cycle TEXT NOT NULL CHECK(cycle IN ('每月','每季','每年')), category TEXT NOT NULL DEFAULT '娱乐', next_charge_date TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, is_paused INTEGER NOT NULL DEFAULT 0)",
     ),
     binding.prepare(
       "INSERT INTO budget_settings VALUES (1,500000,CURRENT_TIMESTAMP)",
@@ -995,7 +1123,7 @@ export async function processDueSubscriptions(ledgerId?: number) {
   const today = dateKeyInZone(new Date(), timezone);
   const due = await binding
     .prepare(
-      "SELECT * FROM subscriptions WHERE next_charge_date <= ? AND (? IS NULL OR ledger_id=?) ORDER BY next_charge_date",
+      "SELECT * FROM subscriptions WHERE is_paused=0 AND next_charge_date <= ? AND (? IS NULL OR ledger_id=?) ORDER BY next_charge_date",
     )
     .bind(today, ledgerId ?? null, ledgerId ?? null)
     .all<{
@@ -1016,11 +1144,7 @@ export async function processDueSubscriptions(ledgerId?: number) {
         .prepare("INSERT INTO scheduled_occurrences(occurrence_key,ledger_id,source_type,source_id) VALUES(?,(SELECT ledger_id FROM subscriptions WHERE id=?),'subscription',?) ON CONFLICT(occurrence_key) DO UPDATE SET status='处理中',created_at=CURRENT_TIMESTAMP,completed_at=NULL WHERE scheduled_occurrences.status='失败'")
         .bind(occurrenceKey, item.id, item.id)
         .run();
-      const next = new Date(`${chargeDate}T12:00:00Z`);
-      if (item.cycle === "每年") next.setUTCFullYear(next.getUTCFullYear() + 1);
-      else if (item.cycle === "每季") next.setUTCMonth(next.getUTCMonth() + 3);
-      else next.setUTCMonth(next.getUTCMonth() + 1);
-      const nextDate = next.toISOString().slice(0, 10);
+      const nextDate = nextRecurringDate(chargeDate, item.cycle);
       if (Number(claimed.meta.changes || 0) > 0) {
         try {
           await binding.batch([
@@ -1041,6 +1165,92 @@ export async function processDueSubscriptions(ledgerId?: number) {
       }
       chargeDate = nextDate;
     }
+  }
+}
+
+export async function processDueRecurringTasks(ledgerId?: number) {
+  await ensureDb();
+  const binding = getDbBinding();
+  const timezone = "Asia/Shanghai";
+  const today = dateKeyInZone(new Date(), timezone);
+  const due = await binding
+    .prepare("SELECT * FROM recurring_tasks WHERE is_paused=0 AND next_run_date<=? AND (? IS NULL OR ledger_id=?) ORDER BY next_run_date,id LIMIT 500")
+    .bind(today, ledgerId ?? null, ledgerId ?? null)
+    .all<{
+      id: number;
+      ledger_id: number;
+      name: string;
+      amount: number;
+      type: "支出" | "收入";
+      account_id: number;
+      cycle: string;
+      category: string;
+      category_dynamic: string;
+      next_run_date: string;
+    }>();
+  for (const item of due.results) {
+    let runDate = item.next_run_date;
+    let guard = 0;
+    while (runDate <= today && guard++ < 10_000) {
+      const occurrenceKey = `recurring-task:${item.id}:${runDate}`;
+      const claimed = await binding.prepare(
+        "INSERT INTO scheduled_occurrences(occurrence_key,ledger_id,source_type,source_id) VALUES(?,?,'recurring-task',?) ON CONFLICT(occurrence_key) DO UPDATE SET status='处理中',created_at=CURRENT_TIMESTAMP,completed_at=NULL WHERE scheduled_occurrences.status='失败'",
+      ).bind(occurrenceKey, item.ledger_id, item.id).run();
+      const nextDate = nextRecurringTaskDate(runDate, item.cycle);
+      if (Number(claimed.meta.changes || 0) > 0) {
+        const account = await binding.prepare(
+          "SELECT currency FROM accounts WHERE id=? AND ledger_id=? AND is_active=1 AND type='资产'",
+        ).bind(item.account_id, item.ledger_id).first<{ currency: string }>();
+        if (!account) {
+          const message = `${item.name}（${runDate}）：关联账户已停用或不存在`;
+          await binding.batch([
+            binding.prepare("UPDATE scheduled_occurrences SET status='失败' WHERE occurrence_key=?").bind(occurrenceKey),
+            binding.prepare("INSERT INTO system_notifications(ledger_id,title,message) SELECT ?, '周期记账未完成', ? WHERE NOT EXISTS(SELECT 1 FROM system_notifications WHERE ledger_id=? AND title='周期记账未完成' AND message=?)").bind(item.ledger_id, message, item.ledger_id, message),
+          ]);
+          break;
+        }
+        const delta = item.type === "收入" ? item.amount : -item.amount;
+        try {
+          await binding.batch([
+            binding.prepare("INSERT INTO transactions(ledger_id,title,amount,type,mood,category,category_dynamic,income_category,income_category_dynamic,account_id,currency,original_amount,original_currency,exchange_rate_micros,original_timezone,occurrence_key,occurred_at) VALUES(?,?,?,?,'刚需',?,?,?,?,?,?,?,?,1000000,?,?,?)")
+              .bind(item.ledger_id, `周期记账 · ${item.name}`, item.amount, item.type, item.type === "支出" ? item.category : null, item.type === "支出" ? item.category_dynamic : null, item.type === "收入" ? item.category : null, item.type === "收入" ? item.category_dynamic : null, item.account_id, account.currency, item.amount, account.currency, timezone, occurrenceKey, localDateTimeToUtc(`${runDate} 00:00:00`, timezone)),
+            binding.prepare("UPDATE accounts SET current_balance=current_balance+? WHERE id=? AND ledger_id=?").bind(delta, item.account_id, item.ledger_id),
+            binding.prepare("UPDATE recurring_tasks SET next_run_date=? WHERE id=? AND next_run_date=?").bind(nextDate, item.id, runDate),
+            binding.prepare("UPDATE scheduled_occurrences SET status='完成',completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE occurrence_key=?").bind(occurrenceKey),
+          ]);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "周期记账未完成";
+          await binding.batch([
+            binding.prepare("UPDATE scheduled_occurrences SET status='失败' WHERE occurrence_key=? AND status='处理中'").bind(occurrenceKey),
+            binding.prepare("INSERT INTO system_notifications(ledger_id,title,message) SELECT ?, '周期记账未完成', ? WHERE NOT EXISTS(SELECT 1 FROM system_notifications WHERE ledger_id=? AND title='周期记账未完成' AND message=? AND read=0)").bind(item.ledger_id, `${item.name}（${runDate}）：${message}`, item.ledger_id, `${item.name}（${runDate}）：${message}`),
+          ]);
+          break;
+        }
+      }
+      runDate = nextDate;
+    }
+  }
+  const horizon = new Date(`${today}T12:00:00Z`);
+  horizon.setUTCDate(horizon.getUTCDate() + 30);
+  const upcoming = await binding.prepare(
+    "SELECT id,ledger_id,name,next_run_date,reminder_days FROM recurring_tasks WHERE is_paused=0 AND reminder_days>0 AND next_run_date>? AND next_run_date<=? AND (? IS NULL OR ledger_id=?) ORDER BY next_run_date,id LIMIT 500",
+  ).bind(today, horizon.toISOString().slice(0, 10), ledgerId ?? null, ledgerId ?? null).all<{
+    id: number;
+    ledger_id: number;
+    name: string;
+    next_run_date: string;
+    reminder_days: number;
+  }>();
+  for (const item of upcoming.results) {
+    const reminderThreshold = new Date(`${today}T12:00:00Z`);
+    reminderThreshold.setUTCDate(reminderThreshold.getUTCDate() + item.reminder_days);
+    if (item.next_run_date > reminderThreshold.toISOString().slice(0, 10)) continue;
+    const key = `recurring-task-reminder:${item.id}:${item.next_run_date}`;
+    const message = `${item.name} 将于 ${item.next_run_date} 自动记账`;
+    await binding.batch([
+      binding.prepare("INSERT OR IGNORE INTO scheduled_occurrences(occurrence_key,ledger_id,source_type,source_id,status,completed_at) VALUES(?,?,'recurring-task-reminder',?,'完成',strftime('%Y-%m-%dT%H:%M:%fZ','now'))").bind(key, item.ledger_id, item.id),
+      binding.prepare("INSERT INTO system_notifications(ledger_id,title,message) SELECT ?, '周期记账提醒', ? WHERE changes()>0").bind(item.ledger_id, message),
+    ]);
   }
 }
 

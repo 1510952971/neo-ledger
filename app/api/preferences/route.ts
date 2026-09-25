@@ -102,6 +102,13 @@ export async function GET(request: Request) {
       : defaultHomeModules;
     return privateJson({
       theme: row?.theme ?? "cream",
+      mobileThemeMode: ["system", "light", "dark"].includes(String(settings.mobileThemeMode))
+        ? settings.mobileThemeMode
+        : "dark",
+      highContrast: settings.highContrast === true,
+      defaultCurrency: ["CNY", "USD", "JPY", "EUR"].includes(String(settings.defaultCurrency))
+        ? settings.defaultCurrency
+        : "CNY",
       lockEnabled: Boolean(row?.lockEnabled),
       hideAmounts: settings.hideAmounts === true,
       hapticsEnabled: settings.hapticsEnabled !== false,
@@ -153,6 +160,9 @@ export async function PATCH(request: Request) {
       continuousEntry: body.continuousEntry,
       expandedCategories: body.expandedCategories,
       homeModules: body.homeModules,
+      mobileThemeMode: body.mobileThemeMode,
+      highContrast: body.highContrast,
+      defaultCurrency: body.defaultCurrency,
     };
     if (Object.values(settingUpdates).some((value) => value !== undefined)) {
       const settings = readSettings(current?.settingsJson);

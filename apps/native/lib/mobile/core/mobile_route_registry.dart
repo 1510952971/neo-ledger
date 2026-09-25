@@ -1,3 +1,5 @@
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 abstract final class MobileRouteName {
@@ -28,20 +30,33 @@ class MobileRouteDefinition {
 
 /// Central route table for native mobile destinations.
 class MobileRouteRegistry {
-  MobileRouteRegistry(Map<String, MobileRouteDefinition> routes)
-    : routes = Map.unmodifiable(routes);
+  MobileRouteRegistry(
+    Map<String, MobileRouteDefinition> routes, {
+    TargetPlatform? platform,
+  }) : routes = Map.unmodifiable(routes),
+       platform = platform ?? defaultTargetPlatform;
 
   final Map<String, MobileRouteDefinition> routes;
+  final TargetPlatform platform;
 
   Route<dynamic>? onGenerateRoute(RouteSettings settings) {
     final name = settings.name;
     if (name == null) return null;
     final definition = routes[name];
     if (definition == null) return null;
+    Widget buildPage(BuildContext context) =>
+        definition.builder(context, settings.arguments);
+    if (platform == TargetPlatform.iOS) {
+      return CupertinoPageRoute<void>(
+        settings: settings,
+        fullscreenDialog: definition.fullscreenDialog,
+        builder: buildPage,
+      );
+    }
     return MaterialPageRoute<void>(
       settings: settings,
       fullscreenDialog: definition.fullscreenDialog,
-      builder: (context) => definition.builder(context, settings.arguments),
+      builder: buildPage,
     );
   }
 

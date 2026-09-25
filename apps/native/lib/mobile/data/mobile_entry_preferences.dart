@@ -5,22 +5,22 @@ import 'package:shared_preferences/shared_preferences.dart';
 class MobileEntryPreferences {
   const MobileEntryPreferences();
 
-  static const _recentKey = 'mobile.entry.recentCategories';
-  static const _accountPrefix = 'mobile.entry.account.';
+  static const recentCategoriesKey = 'mobile.entry.recentCategories';
+  static const accountPrefix = 'mobile.entry.account.';
   static const _hapticsKey = 'mobile.entry.haptics';
   static const _hideAmountsKey = 'mobile.home.hideAmounts';
-  static const _billSearchHistoryKey = 'mobile.bill.searchHistory';
-  static const _billFilterHistoryKey = 'mobile.bill.filterHistory';
-  static const _entryDraftKey = 'mobile.entry.draft';
+  static const recentBillSearchHistoryKey = 'mobile.bill.searchHistory';
+  static const recentBillFilterHistoryKey = 'mobile.bill.filterHistory';
+  static const entryDraftKey = 'mobile.entry.draft';
 
   Future<List<String>> recentCategories() async {
     final preferences = await SharedPreferences.getInstance();
-    return preferences.getStringList(_recentKey) ?? const [];
+    return preferences.getStringList(recentCategoriesKey) ?? const [];
   }
 
   Future<int?> accountForCategory(String category) async {
     final preferences = await SharedPreferences.getInstance();
-    return preferences.getInt('$_accountPrefix$category');
+    return preferences.getInt('$accountPrefix$category');
   }
 
   Future<void> remember({
@@ -28,13 +28,13 @@ class MobileEntryPreferences {
     required int accountId,
   }) async {
     final preferences = await SharedPreferences.getInstance();
-    final recent = preferences.getStringList(_recentKey) ?? const [];
+    final recent = preferences.getStringList(recentCategoriesKey) ?? const [];
     final updated = [
       category,
       ...recent.where((item) => item != category),
     ].take(8).toList();
-    await preferences.setStringList(_recentKey, updated);
-    await preferences.setInt('$_accountPrefix$category', accountId);
+    await preferences.setStringList(recentCategoriesKey, updated);
+    await preferences.setInt('$accountPrefix$category', accountId);
   }
 
   Future<bool> hapticsEnabled() async {
@@ -59,16 +59,17 @@ class MobileEntryPreferences {
 
   Future<List<String>> recentBillSearches() async {
     final preferences = await SharedPreferences.getInstance();
-    return preferences.getStringList(_billSearchHistoryKey) ?? const [];
+    return preferences.getStringList(recentBillSearchHistoryKey) ?? const [];
   }
 
   Future<void> rememberBillSearch(String query) async {
     final normalized = query.trim();
     if (normalized.isEmpty) return;
     final preferences = await SharedPreferences.getInstance();
-    final recent = preferences.getStringList(_billSearchHistoryKey) ?? const [];
+    final recent =
+        preferences.getStringList(recentBillSearchHistoryKey) ?? const [];
     await preferences.setStringList(
-      _billSearchHistoryKey,
+      recentBillSearchHistoryKey,
       [
         normalized,
         ...recent.where((item) => item != normalized),
@@ -78,7 +79,8 @@ class MobileEntryPreferences {
 
   Future<List<Map<String, dynamic>>> recentBillFilters() async {
     final preferences = await SharedPreferences.getInstance();
-    final raw = preferences.getStringList(_billFilterHistoryKey) ?? const [];
+    final raw =
+        preferences.getStringList(recentBillFilterHistoryKey) ?? const [];
     final filters = <Map<String, dynamic>>[];
     for (final encoded in raw) {
       try {
@@ -102,16 +104,17 @@ class MobileEntryPreferences {
     if (label is! String || label.trim().isEmpty) return;
     final preferences = await SharedPreferences.getInstance();
     final encoded = jsonEncode(filter);
-    final recent = preferences.getStringList(_billFilterHistoryKey) ?? const [];
+    final recent =
+        preferences.getStringList(recentBillFilterHistoryKey) ?? const [];
     await preferences.setStringList(
-      _billFilterHistoryKey,
+      recentBillFilterHistoryKey,
       [encoded, ...recent.where((item) => item != encoded)].take(6).toList(),
     );
   }
 
   Future<Map<String, dynamic>?> entryDraft() async {
     final preferences = await SharedPreferences.getInstance();
-    final encoded = preferences.getString(_entryDraftKey);
+    final encoded = preferences.getString(entryDraftKey);
     if (encoded == null || encoded.trim().isEmpty) return null;
     try {
       final decoded = jsonDecode(encoded);
@@ -127,11 +130,11 @@ class MobileEntryPreferences {
 
   Future<void> saveEntryDraft(Map<String, dynamic> draft) async {
     final preferences = await SharedPreferences.getInstance();
-    await preferences.setString(_entryDraftKey, jsonEncode(draft));
+    await preferences.setString(entryDraftKey, jsonEncode(draft));
   }
 
   Future<void> clearEntryDraft() async {
     final preferences = await SharedPreferences.getInstance();
-    await preferences.remove(_entryDraftKey);
+    await preferences.remove(entryDraftKey);
   }
 }

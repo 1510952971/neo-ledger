@@ -201,6 +201,10 @@ export const transactions = sqliteTable("transactions", {
   excludeFromBudget: integer("exclude_from_budget", { mode: "boolean" })
     .notNull()
     .default(false),
+  source: text("source").notNull().default("账本"),
+  recognitionText: text("recognition_text"),
+  recognitionCompleteness: integer("recognition_completeness"),
+  recognitionCorrectionsJson: text("recognition_corrections_json"),
   offlineId: text("offline_id"),
   crdtId: text("crdt_id"),
   updatedAt: text("updated_at")
@@ -322,6 +326,9 @@ export const categoryBudgets = sqliteTable(
       enum: ["餐饮", "交通", "购物", "咖啡", "娱乐"],
     }).notNull(),
     amount: integer("amount").notNull().default(0),
+    carryoverEnabled: integer("carryover_enabled", { mode: "boolean" })
+      .notNull()
+      .default(false),
     updatedAt: text("updated_at")
       .notNull()
       .default(sql`CURRENT_TIMESTAMP`),
@@ -343,11 +350,30 @@ export const subscriptions = sqliteTable("subscriptions", {
     .default("娱乐"),
   categoryDynamic: text("category_dynamic"),
   nextChargeDate: text("next_charge_date").notNull(),
+  isPaused: integer("is_paused", { mode: "boolean" }).notNull().default(false),
   uuid: text("uuid").notNull(),
   updatedAt: text("updated_at").notNull(),
   createdAt: text("created_at")
     .notNull()
     .default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const recurringTasks = sqliteTable("recurring_tasks", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  uuid: text("uuid").notNull().unique(),
+  ledgerId: integer("ledger_id").notNull().references(() => ledgers.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  amount: integer("amount").notNull(),
+  type: text("type", { enum: ["支出", "收入"] }).notNull(),
+  accountId: integer("account_id").notNull().references(() => accounts.id),
+  cycle: text("cycle", { enum: ["每天", "每周", "每月", "每季", "每年"] }).notNull(),
+  category: text("category").notNull(),
+  categoryDynamic: text("category_dynamic").notNull(),
+  nextRunDate: text("next_run_date").notNull(),
+  reminderDays: integer("reminder_days").notNull().default(1),
+  isPaused: integer("is_paused", { mode: "boolean" }).notNull().default(false),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
 export const savingsGoals = sqliteTable("savings_goals", {

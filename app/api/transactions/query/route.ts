@@ -36,6 +36,10 @@ type TransactionRow = {
   reimbursable: number;
   discountAmount: number;
   excludeFromBudget: number;
+  source: string;
+  recognitionText: string | null;
+  recognitionCompleteness: number | null;
+  recognitionCorrectionsJson: string | null;
   offlineId: string | null;
   crdtId: string | null;
   updatedAt: string;
@@ -199,7 +203,10 @@ export async function GET(request: Request) {
           t.exchange_rate_micros exchangeRateMicros,t.original_timezone originalTimezone,
           t.installment_id installmentId,t.installment_number installmentNumber,
           t.is_side_hustle isSideHustle,t.reimbursable,t.discount_amount discountAmount,
-          t.exclude_from_budget excludeFromBudget,t.offline_id offlineId,t.crdt_id crdtId,
+          t.exclude_from_budget excludeFromBudget,t.source,t.recognition_text recognitionText,
+          t.recognition_completeness recognitionCompleteness,
+          t.recognition_corrections_json recognitionCorrectionsJson,
+          t.offline_id offlineId,t.crdt_id crdtId,
           t.updated_at updatedAt,t.occurred_at occurredAt,t.created_at createdAt,
           a.name accountName
         FROM transactions t JOIN accounts a ON a.id=t.account_id
@@ -232,6 +239,14 @@ export async function GET(request: Request) {
       category: row.categoryDynamic ?? row.category,
       incomeCategory: row.incomeCategoryDynamic ?? row.incomeCategory,
       isSideHustle: Boolean(row.isSideHustle),
+      recognitionCorrections: (() => {
+        try {
+          const value = JSON.parse(row.recognitionCorrectionsJson || "{}");
+          return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+        } catch {
+          return {};
+        }
+      })(),
     }));
     const last = rows.results.at(-1);
     return privateJson({

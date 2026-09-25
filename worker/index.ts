@@ -2,6 +2,18 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 import { evaluateDeploymentSecurity } from "../app/deployment-security";
+import { runScheduledLedgerJobs } from "../app/scheduled-ledger-jobs.js";
+import {
+  d1IdempotencyRepository,
+  runIdempotentMobileWrite,
+} from "../app/mobile-idempotency.js";
+import { sessionUserFromRequest } from "../app/auth";
+import {
+  ensureDb,
+  processDueInstallments,
+  processDueRecurringTasks,
+  processDueSubscriptions,
+} from "../db";
 
 interface Env {
   ASSETS: Fetcher;
@@ -30,6 +42,24 @@ interface ExecutionContext {
 // const imageConfig: ImageConfig = { dangerouslyAllowSVG: true };
 
 const worker = {
+  async scheduled(
+    _controller: { cron: string; scheduledTime: number },
+    _env: Env,
+    _ctx: ExecutionContext,
+  ): Promise<void> {
+    await runScheduledLedgerJobs({
+      ensureDb,
+      processDueSubscriptions,
+      processDueRecurringTasks,
+      processDueInstallments,
+      cleanupMobileIdempotency: async () => {
+        await getIdempotencyDb(_env).prepare(
+          "DELETE FROM mobile_idempotency_responses WHERE created_at<strftime('%Y-%m-%dT%H:%M:%fZ','now','-30 days')",
+        ).run();
+      },
+    });
+  },
+
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const deployment = evaluateDeploymentSecurity(env as unknown as Record<string, unknown>, request.url);
@@ -54,7 +84,35 @@ const worker = {
       }, allowedWidths);
     }
 
-    const response = await handler.fetch(request, env, ctx);
+    const execute = () => handler.fetch(request, env, ctx);
+    let response: Response;
+    const isExcludedIdempotencyPath =
+      (url.pathname === "/api/auth" && request.method.toUpperCase() !== "PATCH") ||
+      url.pathname.startsWith("/api/auth/") ||
+      url.pathname === "/api/data/restore" ||
+      url.pathname === "/api/security/webauthn" ||
+      url.pathname.startsWith("/api/security/webauthn/") ||
+      (url.pathname === "/api/preferences" && request.method.toUpperCase() === "POST");
+    if (
+      url.pathname.startsWith("/api/") &&
+      !["GET", "HEAD", "OPTIONS"].includes(request.method.toUpperCase()) &&
+      !isExcludedIdempotencyPath &&
+      request.headers.has("idempotency-key")
+    ) {
+      const session = await sessionUserFromRequest(request);
+      if (session) {
+        response = await runIdempotentMobileWrite({
+          request,
+          ownerId: session.ownerId,
+          repository: d1IdempotencyRepository(env.DB),
+          execute,
+        });
+      } else {
+        response = await execute();
+      }
+    } else {
+      response = await execute();
+    }
     if (String(env.DEPLOYMENT_MODE || "local") === "cloud") {
       const hardened = new Response(response.body, response);
       hardened.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
@@ -63,5 +121,9 @@ const worker = {
     return response;
   },
 };
+
+function getIdempotencyDb(env: Env) {
+  return env.DB;
+}
 
 export default worker;
