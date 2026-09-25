@@ -21,7 +21,7 @@ npm install
 npm run dev
 ```
 
-打开 `http://localhost:3000`。`npm run dev` 会同时启动主程序和仅监听本机的更新服务。
+本地开发时打开 `http://localhost:3000`；正式使用和跨设备登录请统一打开 `https://ledger.eyeme.online`。`npm run dev` 会同时启动主程序和仅监听本机的更新服务，本地数据库与云端生产数据彼此独立。
 
 ## 一键启动（macOS）
 
