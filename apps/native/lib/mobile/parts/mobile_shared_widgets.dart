@@ -665,6 +665,105 @@ class _SettingsRow extends StatelessWidget {
   }
 }
 
+/// A compact, collapsible settings section for the mobile information
+/// architecture.  Long lists of flat rows make important capabilities hard
+/// to discover and force users to scroll past unrelated controls.
+class _MobileCollapsibleSection extends StatefulWidget {
+  const _MobileCollapsibleSection({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.child,
+    this.initiallyExpanded = true,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Widget child;
+  final bool initiallyExpanded;
+
+  @override
+  State<_MobileCollapsibleSection> createState() =>
+      _MobileCollapsibleSectionState();
+}
+
+class _MobileCollapsibleSectionState extends State<_MobileCollapsibleSection> {
+  late bool expanded = widget.initiallyExpanded;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: _mobileBoxDecoration(),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          InkWell(
+            onTap: () => setState(() => expanded = !expanded),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 14, 14),
+              child: Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: _mobileBrand.withValues(alpha: .13),
+                      borderRadius: BorderRadius.circular(13),
+                    ),
+                    child: Icon(widget.icon, color: _mobileBrand, size: 21),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.title,
+                          style: TextStyle(
+                            color: _mobileText,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          widget.subtitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: _mobileMuted, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    expanded
+                        ? Icons.keyboard_arrow_up_rounded
+                        : Icons.keyboard_arrow_down_rounded,
+                    color: _mobileMuted,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          AnimatedSize(
+            duration: MobileMotion.standard,
+            curve: Curves.easeOutCubic,
+            child: expanded
+                ? Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                    child: widget.child,
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _QuickAction extends StatelessWidget {
   const _QuickAction({
     required this.icon,

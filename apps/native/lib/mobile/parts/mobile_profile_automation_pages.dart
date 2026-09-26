@@ -50,209 +50,283 @@ class MobileProfilePage extends StatelessWidget {
               builder: (_) => ProfileAccountSheet(controller: controller),
             ),
           ),
-          _SettingsRow(
-            icon: '🎨',
-            title: '主题与外观',
-            subtitle:
-                '${_mobileThemeLabel(controller.preferences.theme)} · ${_mobileThemeModeLabel(controller.preferences.mobileThemeMode)}',
-            onTap: () => showModalBottomSheet<void>(
-              context: context,
-              isScrollControlled: true,
-              showDragHandle: true,
-              backgroundColor: _mobileSurface,
-              builder: (_) => MobileAppearanceSheet(controller: controller),
-            ),
-          ),
-          _SettingsRow(
-            icon: '🏆',
-            title: '成就徽章',
-            subtitle:
-                '${MobileAchievementSheet.unlockedCount(controller)}/6 已解锁 · 记录你的记账成长',
-            onTap: () => showModalBottomSheet<void>(
-              context: context,
-              isScrollControlled: true,
-              showDragHandle: true,
-              backgroundColor: _mobileSurface,
-              builder: (_) => MobileAchievementSheet(controller: controller),
-            ),
-          ),
-          const SizedBox(height: 22),
-          _SectionHeader(
-            title: '我的账本',
-            action: '${controller.ledgers.length} 个',
-          ),
-          const SizedBox(height: 10),
-          ...controller.ledgers.map(
-            (ledger) => _SettingsRow(
-              icon: ledger.icon,
-              title: ledger.name,
-              subtitle: ledger.id == controller.selectedLedger?.id
-                  ? '当前使用中'
-                  : '切换账本',
-              onTap: () async {
-                final index = controller.ledgers.indexOf(ledger);
-                if (index >= 0) await controller.selectLedger(index);
-              },
-            ),
-          ),
-          const SizedBox(height: 16),
-          _SectionHeader(title: '应用', action: 'v$nativeVersion'),
-          const SizedBox(height: 10),
-          _SettingsRow(
-            icon: '☁️',
-            title: '同步状态',
-            subtitle: controller.totalPendingCount == 0
-                ? '已与云端同步'
-                : '${controller.totalPendingCount} 笔待同步',
-          ),
-          _SettingsRow(
-            icon: '🧩',
-            title: '高级功能',
-            subtitle: '预算、订阅、分期与储蓄目标',
-            onTap: () => MobileRouteRegistry.push<void>(
-              context,
-              MobileRouteName.planning,
-            ),
-          ),
-          _SettingsRow(
-            icon: '🧭',
-            title: '全部功能',
-            subtitle: '账单、资产、分析、规划、自动记账与导入',
-            onTap: () => _showMobileFeatureHub(context, controller),
-          ),
-          _SettingsRow(
-            icon: '💳',
-            title: '账户与资产',
-            subtitle:
-                '${controller.accounts.length} 个账户 · ${controller.assets.length} 项资产',
-            onTap: () => MobileRouteRegistry.push<void>(
-              context,
-              MobileRouteName.accounts,
-            ),
-          ),
-          _SettingsRow(
-            icon: '✨',
-            title: '记账体验',
-            subtitle: '触觉反馈、连续记账与快捷输入',
-            onTap: () => showModalBottomSheet<void>(
-              context: context,
-              showDragHandle: true,
-              backgroundColor: _mobileSurface,
-              builder: (_) => _MobileExperienceSettings(controller: controller),
-            ),
-          ),
-          _SettingsRow(
-            icon: '🧭',
-            title: '首页模块',
-            subtitle: '开启、关闭和排序首页卡片，设置会跨设备同步',
-            onTap: () => showModalBottomSheet<void>(
-              context: context,
-              isScrollControlled: true,
-              showDragHandle: true,
-              backgroundColor: _mobileSurface,
-              builder: (_) => _MobileHomeModuleSettings(controller: controller),
-            ),
-          ),
-          _SettingsRow(
-            icon: '🔒',
-            title: '隐私与安全',
-            subtitle: controller.preferences.lockEnabled
-                ? '已开启应用锁'
-                : '数据仅通过加密连接同步',
-            onTap: () => showModalBottomSheet<void>(
-              context: context,
-              isScrollControlled: true,
-              showDragHandle: true,
-              backgroundColor: _mobileSurface,
-              builder: (_) => SecuritySheet(controller: controller),
-            ),
-          ),
-          _SettingsRow(
-            icon: '📱',
-            title: '登录设备与安全审计',
-            subtitle: '查看登录会话、撤销陌生设备和近期安全事件',
-            onTap: () => showModalBottomSheet<void>(
-              context: context,
-              isScrollControlled: true,
-              showDragHandle: true,
-              backgroundColor: _mobileSurface,
-              builder: (_) => SecuritySessionsSheet(controller: controller),
-            ),
-          ),
-          _SettingsRow(
-            icon: '🛡️',
-            title: '二次验证',
-            subtitle: '配置验证器动态码与一次性恢复码',
-            onTap: () => showModalBottomSheet<void>(
-              context: context,
-              isScrollControlled: true,
-              showDragHandle: true,
-              backgroundColor: _mobileSurface,
-              builder: (_) => MobileMfaSettingsSheet(api: controller.api),
-            ),
-          ),
-          _SettingsRow(
-            icon: '🧾',
-            title: '隐私诊断',
-            subtitle: '查看并自行复制不含财务内容的 API 错误摘要',
-            onTap: () => showModalBottomSheet<void>(
-              context: context,
-              isScrollControlled: true,
-              showDragHandle: true,
-              builder: (_) => MobileDiagnosticsSheet(
-                appVersion: nativeVersion,
-                platform: Theme.of(context).platform.name,
-              ),
-            ),
-          ),
-          _SettingsRow(
-            icon: '⚡️',
-            title: '自动记账与导入',
-            subtitle: 'Android 自动记账、自动化规则与账单导入',
-            onTap: () => MobileRouteRegistry.push<void>(
-              context,
-              MobileRouteName.automation,
-            ),
-          ),
-          _SettingsRow(
-            icon: '🗂️',
-            title: '分类管理',
-            subtitle: '维护支出与收入分类，历史流水保持不变',
-            onTap: () => showModalBottomSheet<void>(
-              context: context,
-              isScrollControlled: true,
-              showDragHandle: true,
-              backgroundColor: _mobileSurface,
-              builder: (_) => CategoryManagerSheet(controller: controller),
-            ),
-          ),
-          _SettingsRow(
-            icon: '#️⃣',
-            title: '标签词库',
-            subtitle: '重命名或从当前账本流水中移除标签',
-            onTap: controller.selectedLedger == null
-                ? null
-                : () => showModalBottomSheet<void>(
+          _MobileCollapsibleSection(
+            icon: Icons.palette_outlined,
+            title: '外观与个性化',
+            subtitle: '主题、首页模块、记账体验和成就徽章',
+            child: Column(
+              children: [
+                _SettingsRow(
+                  icon: '🎨',
+                  title: '主题与外观',
+                  subtitle:
+                      '${_mobileThemeLabel(controller.preferences.theme)} · ${_mobileThemeModeLabel(controller.preferences.mobileThemeMode)}',
+                  onTap: () => showModalBottomSheet<void>(
                     context: context,
                     isScrollControlled: true,
                     showDragHandle: true,
                     backgroundColor: _mobileSurface,
-                    builder: (_) => MobileTagManagerSheet(
-                      api: controller.api,
-                      ledgerId: controller.selectedLedger!.id,
+                    builder: (_) =>
+                        MobileAppearanceSheet(controller: controller),
+                  ),
+                ),
+                _SettingsRow(
+                  icon: '🏆',
+                  title: '成就徽章',
+                  subtitle:
+                      '${MobileAchievementSheet.unlockedCount(controller)}/6 已解锁 · 记录你的记账成长',
+                  onTap: () => showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    showDragHandle: true,
+                    backgroundColor: _mobileSurface,
+                    builder: (_) =>
+                        MobileAchievementSheet(controller: controller),
+                  ),
+                ),
+                _SettingsRow(
+                  icon: '✨',
+                  title: '记账体验',
+                  subtitle: '触觉反馈、连续记账与快捷输入',
+                  onTap: () => showModalBottomSheet<void>(
+                    context: context,
+                    showDragHandle: true,
+                    backgroundColor: _mobileSurface,
+                    builder: (_) =>
+                        _MobileExperienceSettings(controller: controller),
+                  ),
+                ),
+                _SettingsRow(
+                  icon: '🧭',
+                  title: '首页模块',
+                  subtitle: '开启、关闭和排序首页卡片，设置会跨设备同步',
+                  onTap: () => showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    showDragHandle: true,
+                    backgroundColor: _mobileSurface,
+                    builder: (_) =>
+                        _MobileHomeModuleSettings(controller: controller),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _MobileCollapsibleSection(
+            icon: Icons.account_balance_wallet_outlined,
+            title: '账本与数据',
+            subtitle: '账本、账户资产、分类标签和备份恢复',
+            child: Column(
+              children: [
+                _SectionHeader(
+                  title: '我的账本',
+                  action: '${controller.ledgers.length} 个',
+                ),
+                const SizedBox(height: 8),
+                ...controller.ledgers.map(
+                  (ledger) => _SettingsRow(
+                    icon: ledger.icon,
+                    title: ledger.name,
+                    subtitle: ledger.id == controller.selectedLedger?.id
+                        ? '当前使用中'
+                        : '切换账本',
+                    onTap: () async {
+                      final index = controller.ledgers.indexOf(ledger);
+                      if (index >= 0) await controller.selectLedger(index);
+                    },
+                  ),
+                ),
+                _SettingsRow(
+                  icon: '💳',
+                  title: '账户与资产',
+                  subtitle:
+                      '${controller.accounts.length} 个账户 · ${controller.assets.length} 项资产',
+                  onTap: () => MobileRouteRegistry.push<void>(
+                    context,
+                    MobileRouteName.accounts,
+                  ),
+                ),
+                _SettingsRow(
+                  icon: '🗂️',
+                  title: '分类管理',
+                  subtitle: '维护支出与收入分类，历史流水保持不变',
+                  onTap: () => showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    showDragHandle: true,
+                    backgroundColor: _mobileSurface,
+                    builder: (_) =>
+                        CategoryManagerSheet(controller: controller),
+                  ),
+                ),
+                _SettingsRow(
+                  icon: '#️⃣',
+                  title: '标签词库',
+                  subtitle: '重命名或从当前账本流水中移除标签',
+                  onTap: controller.selectedLedger == null
+                      ? null
+                      : () => showModalBottomSheet<void>(
+                          context: context,
+                          isScrollControlled: true,
+                          showDragHandle: true,
+                          backgroundColor: _mobileSurface,
+                          builder: (_) => MobileTagManagerSheet(
+                            api: controller.api,
+                            ledgerId: controller.selectedLedger!.id,
+                          ),
+                        ),
+                ),
+                _SettingsRow(
+                  icon: '🛡️',
+                  title: '数据与备份',
+                  subtitle: '导出、恢复、预检和同步待处理流水',
+                  onTap: () => showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    showDragHandle: true,
+                    backgroundColor: _mobileSurface,
+                    builder: (_) => DataCenterSheet(controller: controller),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _MobileCollapsibleSection(
+            icon: Icons.sync_rounded,
+            title: '连接与同步',
+            subtitle: '服务地址、同步状态和待处理队列',
+            child: Column(
+              children: [
+                _SettingsRow(
+                  icon: '🔗',
+                  title: '连接与同步设置',
+                  subtitle: '统一 API 地址与当前设备同步状态',
+                  onTap: () => showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    showDragHandle: true,
+                    backgroundColor: _mobileSurface,
+                    builder: (_) =>
+                        MobileConnectionSyncSheet(controller: controller),
+                  ),
+                ),
+                _SettingsRow(
+                  icon: '☁️',
+                  title: '当前同步状态',
+                  subtitle: controller.totalPendingCount == 0
+                      ? '已与云端同步'
+                      : '${controller.totalPendingCount} 笔待同步或待确认',
+                ),
+              ],
+            ),
+          ),
+          _MobileCollapsibleSection(
+            icon: Icons.auto_awesome_outlined,
+            title: '自动化与导入',
+            subtitle: 'Android 自动记账、截图识别、规则和账单导入',
+            child: Column(
+              children: [
+                _SettingsRow(
+                  icon: '⚡️',
+                  title: '自动记账与导入',
+                  subtitle: '权限状态、截图识别、自动化规则与导入',
+                  onTap: () => MobileRouteRegistry.push<void>(
+                    context,
+                    MobileRouteName.automation,
+                  ),
+                ),
+                _SettingsRow(
+                  icon: '🧩',
+                  title: '规划与目标',
+                  subtitle: '预算、订阅、周期记账、分期和储蓄目标',
+                  onTap: () => MobileRouteRegistry.push<void>(
+                    context,
+                    MobileRouteName.planning,
+                  ),
+                ),
+                _SettingsRow(
+                  icon: '🧭',
+                  title: '全部功能',
+                  subtitle: '账单、资产、分析、规划和桌面端能力',
+                  onTap: () => _showMobileFeatureHub(context, controller),
+                ),
+              ],
+            ),
+          ),
+          _MobileCollapsibleSection(
+            icon: Icons.shield_outlined,
+            title: '隐私与安全',
+            subtitle: '隐私锁、登录设备、二次验证与诊断',
+            child: Column(
+              children: [
+                _SettingsRow(
+                  icon: '🔒',
+                  title: '隐私锁与安全设置',
+                  subtitle: controller.preferences.lockEnabled
+                      ? '已开启应用锁'
+                      : '配置账本隐私锁和 PIN',
+                  onTap: () => showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    showDragHandle: true,
+                    backgroundColor: _mobileSurface,
+                    builder: (_) => SecuritySheet(controller: controller),
+                  ),
+                ),
+                _SettingsRow(
+                  icon: '📱',
+                  title: '登录设备与安全审计',
+                  subtitle: '查看登录会话、撤销陌生设备和近期安全事件',
+                  onTap: () => showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    showDragHandle: true,
+                    backgroundColor: _mobileSurface,
+                    builder: (_) =>
+                        SecuritySessionsSheet(controller: controller),
+                  ),
+                ),
+                _SettingsRow(
+                  icon: '🛡️',
+                  title: '二次验证',
+                  subtitle: '配置验证器动态码与一次性恢复码',
+                  onTap: () => showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    showDragHandle: true,
+                    backgroundColor: _mobileSurface,
+                    builder: (_) => MobileMfaSettingsSheet(api: controller.api),
+                  ),
+                ),
+                _SettingsRow(
+                  icon: '🧾',
+                  title: '隐私诊断',
+                  subtitle: '查看并自行复制不含财务内容的 API 错误摘要',
+                  onTap: () => showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    showDragHandle: true,
+                    backgroundColor: _mobileSurface,
+                    builder: (_) => MobileDiagnosticsSheet(
+                      appVersion: nativeVersion,
+                      platform: Theme.of(context).platform.name,
                     ),
                   ),
+                ),
+              ],
+            ),
           ),
-          _SettingsRow(
-            icon: '🛡️',
-            title: '数据与备份',
-            subtitle: '导出、恢复、预检和同步待处理流水',
-            onTap: () => showModalBottomSheet<void>(
-              context: context,
-              isScrollControlled: true,
-              showDragHandle: true,
-              backgroundColor: _mobileSurface,
-              builder: (_) => DataCenterSheet(controller: controller),
+          _MobileCollapsibleSection(
+            icon: Icons.tune_rounded,
+            title: '应用',
+            subtitle: '应用更新与版本信息 · v$nativeVersion',
+            initiallyExpanded: false,
+            child: _SettingsRow(
+              icon: '⬇️',
+              title: '检查版本更新',
+              subtitle: '检查正式版并下载当前平台安装包',
+              onTap: () =>
+                  _checkMobileUpdate(context, controller, nativeVersion),
             ),
           ),
           const SizedBox(height: 18),
@@ -395,6 +469,206 @@ class MobileProfilePage extends StatelessWidget {
       }
     }
   }
+}
+
+Future<void> _checkMobileUpdate(
+  BuildContext context,
+  LedgerController controller,
+  String nativeVersion,
+) async {
+  final service = NeoLedgerUpdateService();
+  try {
+    final latest = await service.checkLatest();
+    if (!context.mounted) return;
+    if (latest == null || !latest.isNewerThan(nativeVersion)) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('当前已经是最新正式版 v$nativeVersion')));
+      return;
+    }
+
+    final platform = controller.isAndroid ? 'android' : 'ios';
+    final asset = latest.assetFor(platform);
+    final assetName = latest.assetNameFor(platform);
+    final uri = Uri.tryParse(asset ?? latest.releaseUrl);
+    if (controller.isAndroid &&
+        asset != null &&
+        assetName != null &&
+        assetName.toLowerCase().endsWith('.apk')) {
+      final result = await controller.installAndroidUpdate(
+        version: latest.version,
+        apkUrl: asset,
+        apkName: assetName,
+        checksumUrl: latest.checksumManifestUrl,
+      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${result['message'] ?? '已开始安装更新'}')),
+        );
+      }
+      return;
+    }
+    if (uri != null) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  } catch (error) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('检查更新失败：$error')));
+    }
+  } finally {
+    service.close();
+  }
+}
+
+class MobileConnectionSyncSheet extends StatefulWidget {
+  const MobileConnectionSyncSheet({required this.controller, super.key});
+
+  final LedgerController controller;
+
+  @override
+  State<MobileConnectionSyncSheet> createState() =>
+      _MobileConnectionSyncSheetState();
+}
+
+class _MobileConnectionSyncSheetState extends State<MobileConnectionSyncSheet> {
+  late final TextEditingController endpoint;
+  bool saving = false;
+  bool syncing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    endpoint = TextEditingController(text: widget.controller.api.baseUrl);
+  }
+
+  @override
+  void dispose() {
+    endpoint.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    setState(() => saving = true);
+    try {
+      await widget.controller.saveBaseUrl(endpoint.text);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('连接地址已保存')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('保存连接地址失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  Future<void> _sync() async {
+    setState(() => syncing = true);
+    try {
+      await widget.controller.syncQueue();
+      await widget.controller.refresh();
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('同步完成，数据已刷新')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('同步失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => syncing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(
+        20,
+        8,
+        20,
+        MediaQuery.viewInsetsOf(context).bottom + 28,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('连接与同步', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 8),
+          Text(
+            '手机、平板和桌面端使用同一个 API 地址。公网部署请使用设备可访问的 HTTPS 地址；localhost 只适用于当前设备。',
+            style: TextStyle(color: _mobileMuted, height: 1.45),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: endpoint,
+            keyboardType: TextInputType.url,
+            autocorrect: false,
+            decoration: const InputDecoration(
+              labelText: 'Neo Ledger 服务地址',
+              hintText: 'https://ledger.eyeme.online',
+              prefixIcon: Icon(Icons.link_rounded),
+            ),
+          ),
+          const SizedBox(height: 10),
+          FilledButton.icon(
+            onPressed: saving ? null : _save,
+            icon: saving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.save_outlined),
+            label: Text(saving ? '保存中…' : '保存连接地址'),
+          ),
+          const SizedBox(height: 18),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: _mobileBoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  _mobileBrand.withValues(alpha: .13),
+                  _mobilePurple.withValues(alpha: .10),
+                ],
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.controller.totalPendingCount == 0
+                      ? '当前设备已同步'
+                      : '${widget.controller.totalPendingCount} 笔待同步或待确认',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  '已登录：${widget.controller.authenticated ? '是' : '否'} · 当前账本：${widget.controller.selectedLedger?.name ?? '未选择'}',
+                  style: TextStyle(color: _mobileMuted, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: syncing ? null : _sync,
+            icon: syncing
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.sync_rounded),
+            label: Text(syncing ? '同步中…' : '立即同步并刷新'),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 Future<void> _showMobileFeatureHub(
@@ -669,6 +943,7 @@ class MobileAppearanceSheet extends StatefulWidget {
 class _MobileAppearanceSheetState extends State<MobileAppearanceSheet> {
   late String theme;
   late String mode;
+  late String defaultCurrency;
   late bool highContrast;
   bool saving = false;
 
@@ -677,6 +952,7 @@ class _MobileAppearanceSheetState extends State<MobileAppearanceSheet> {
     super.initState();
     theme = widget.controller.preferences.theme;
     mode = widget.controller.preferences.mobileThemeMode;
+    defaultCurrency = widget.controller.preferences.defaultCurrency;
     highContrast = widget.controller.preferences.highContrast;
   }
 
@@ -689,7 +965,7 @@ class _MobileAppearanceSheetState extends State<MobileAppearanceSheet> {
         lockEnabled: preferences.lockEnabled,
         mobileThemeMode: mode,
         highContrast: highContrast,
-        defaultCurrency: preferences.defaultCurrency,
+        defaultCurrency: defaultCurrency,
       );
       if (mounted) Navigator.pop(context);
     } catch (error) {
@@ -750,6 +1026,23 @@ class _MobileAppearanceSheetState extends State<MobileAppearanceSheet> {
             ],
             selected: {mode},
             onSelectionChanged: (value) => setState(() => mode = value.first),
+          ),
+          const SizedBox(height: 16),
+          DropdownButtonFormField<String>(
+            initialValue: defaultCurrency,
+            decoration: const InputDecoration(
+              labelText: '新账户默认币种',
+              border: OutlineInputBorder(),
+            ),
+            items: const [
+              DropdownMenuItem(value: 'CNY', child: Text('CNY · 人民币')),
+              DropdownMenuItem(value: 'USD', child: Text('USD · 美元')),
+              DropdownMenuItem(value: 'JPY', child: Text('JPY · 日元')),
+              DropdownMenuItem(value: 'EUR', child: Text('EUR · 欧元')),
+            ],
+            onChanged: (value) {
+              if (value != null) setState(() => defaultCurrency = value);
+            },
           ),
           SwitchListTile.adaptive(
             contentPadding: EdgeInsets.zero,
@@ -868,22 +1161,57 @@ class MobileAchievementSheet extends StatelessWidget {
                   ],
                 ),
               ),
-              child: Row(
+              child: Stack(
+                clipBehavior: Clip.none,
                 children: [
-                  Icon(
-                    Icons.emoji_events_rounded,
-                    color: _mobileBrand,
-                    size: 32,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      '已解锁 $unlocked/${badges.length} 个成就',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                      ),
+                  Positioned(
+                    right: 4,
+                    top: -7,
+                    child: Icon(
+                      Icons.auto_awesome_rounded,
+                      color: _mobileBrand.withValues(alpha: .7),
+                      size: 24,
                     ),
+                  ),
+                  Positioned(
+                    right: 34,
+                    bottom: -7,
+                    child: Icon(
+                      Icons.star_rounded,
+                      color: _mobilePurple.withValues(alpha: .8),
+                      size: 18,
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      Container(
+                        width: 54,
+                        height: 54,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: _mobileBrand.withValues(alpha: .16),
+                          border: Border.all(
+                            color: _mobileBrand.withValues(alpha: .45),
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.emoji_events_rounded,
+                          color: _mobileBrand,
+                          size: 32,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          '已解锁 $unlocked/${badges.length} 个成就',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -1454,10 +1782,22 @@ class _MobileAutomationPageState extends State<MobileAutomationPage> {
                     onPressed: actionBusy
                         ? null
                         : () => _openSheet(
+                            MobileConnectionSyncSheet(
+                              controller: widget.controller,
+                            ),
+                          ),
+                    icon: const Icon(Icons.sync_rounded),
+                    label: const Text('打开连接与同步'),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: actionBusy
+                        ? null
+                        : () => _openSheet(
                             SettingsSheet(controller: widget.controller),
                           ),
                     icon: const Icon(Icons.tune_rounded),
-                    label: const Text('打开自动记账配置'),
+                    label: const Text('Android 自动记账高级配置'),
                   ),
                   const SizedBox(height: 8),
                   OutlinedButton.icon(

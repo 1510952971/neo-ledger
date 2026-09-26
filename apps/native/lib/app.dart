@@ -35,7 +35,7 @@ const _brand = Color(0xffa5ff4f);
 const _surface = Color(0xff101116);
 const _surfaceAlt = Color(0xff1b1b23);
 const _muted = Color(0xffa4a8a1);
-const _nativeVersion = '1.4.3';
+const _nativeVersion = '1.4.4';
 const _shortcutChannel = MethodChannel('online.eyeme.neo_ledger/shortcuts');
 const _assetTypes = [
   '房产',
@@ -7725,14 +7725,26 @@ class _SettingsSheetState extends State<SettingsSheet> {
                   ),
                   const SizedBox(height: 10),
                   FilledButton.icon(
-                    onPressed: checkForUpdate == null
-                        ? null
-                        : () {
-                            Navigator.pop(context);
-                            checkForUpdate();
-                          },
+                    onPressed: () {
+                      Navigator.pop(context);
+                      if (checkForUpdate != null) {
+                        unawaited(checkForUpdate());
+                        return;
+                      }
+                      // SettingsSheet is also opened from mobile sub-pages that
+                      // do not own the desktop update callback. Keep this entry
+                      // usable instead of rendering a permanently disabled CTA.
+                      unawaited(
+                        launchUrl(
+                          Uri.parse(
+                            'https://github.com/1510952971/neo-ledger/releases',
+                          ),
+                          mode: LaunchMode.externalApplication,
+                        ),
+                      );
+                    },
                     icon: const Icon(Icons.refresh),
-                    label: const Text('检查新版并安装'),
+                    label: Text(checkForUpdate == null ? '打开更新页面' : '检查新版并安装'),
                   ),
                 ],
               ),
@@ -10040,10 +10052,6 @@ class SecuritySheet extends StatefulWidget {
 }
 
 class _SecuritySheetState extends State<SecuritySheet> {
-  late String theme;
-  late String mobileThemeMode;
-  late bool highContrast;
-  late String defaultCurrency;
   late bool lockEnabled;
   late final TextEditingController pin;
   bool saving = false;
@@ -10053,10 +10061,6 @@ class _SecuritySheetState extends State<SecuritySheet> {
   @override
   void initState() {
     super.initState();
-    theme = widget.controller.preferences.theme;
-    mobileThemeMode = widget.controller.preferences.mobileThemeMode;
-    highContrast = widget.controller.preferences.highContrast;
-    defaultCurrency = widget.controller.preferences.defaultCurrency;
     lockEnabled = widget.controller.preferences.lockEnabled;
     pin = TextEditingController();
   }
@@ -10071,11 +10075,8 @@ class _SecuritySheetState extends State<SecuritySheet> {
     setState(() => saving = true);
     try {
       await widget.controller.savePreferences(
-        theme: theme,
+        theme: widget.controller.preferences.theme,
         lockEnabled: lockEnabled,
-        mobileThemeMode: mobileThemeMode,
-        highContrast: highContrast,
-        defaultCurrency: defaultCurrency,
         pin: pin.text,
       );
       if (mounted) Navigator.pop(context, true);
@@ -10115,65 +10116,10 @@ class _SecuritySheetState extends State<SecuritySheet> {
             Text('隐私与安全', style: Theme.of(context).textTheme.headlineSmall),
             const SizedBox(height: 8),
             Text(
-              '这里配置服务端账本隐私锁和显示主题。移动端开启后，启动和从后台回到前台都会要求输入 PIN；生物识别仍需按平台单独接入。',
+              '这里仅配置账本隐私锁和 PIN。主题、明暗模式和可读性设置已移到“主题与外观”，避免安全设置和外观设置混在一起。移动端开启隐私锁后，启动和从后台回到前台都会要求输入 PIN；生物识别仍需按平台单独接入。',
               style: TextStyle(color: Colors.grey.shade500, height: 1.4),
             ),
             const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              initialValue: theme,
-              decoration: const InputDecoration(
-                labelText: '主题',
-                border: OutlineInputBorder(),
-              ),
-              items: const [
-                DropdownMenuItem(value: 'cream', child: Text('治愈奶卡')),
-                DropdownMenuItem(value: 'obsidian', child: Text('曜石极客')),
-                DropdownMenuItem(value: 'glacier', child: Text('冰川极简')),
-                DropdownMenuItem(value: 'peach', child: Text('蜜桃多巴胺')),
-              ],
-              onChanged: (value) {
-                if (value != null) setState(() => theme = value);
-              },
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: mobileThemeMode,
-              decoration: const InputDecoration(
-                labelText: '界面明暗',
-                border: OutlineInputBorder(),
-              ),
-              items: const [
-                DropdownMenuItem(value: 'system', child: Text('跟随系统')),
-                DropdownMenuItem(value: 'dark', child: Text('深色模式')),
-                DropdownMenuItem(value: 'light', child: Text('浅色模式')),
-              ],
-              onChanged: (value) {
-                if (value != null) setState(() => mobileThemeMode = value);
-              },
-            ),
-            DropdownButtonFormField<String>(
-              initialValue: defaultCurrency,
-              decoration: const InputDecoration(
-                labelText: '新账户默认币种',
-                border: OutlineInputBorder(),
-              ),
-              items: const [
-                DropdownMenuItem(value: 'CNY', child: Text('CNY · 人民币')),
-                DropdownMenuItem(value: 'USD', child: Text('USD · 美元')),
-                DropdownMenuItem(value: 'JPY', child: Text('JPY · 日元')),
-                DropdownMenuItem(value: 'EUR', child: Text('EUR · 欧元')),
-              ],
-              onChanged: (value) {
-                if (value != null) setState(() => defaultCurrency = value);
-              },
-            ),
-            SwitchListTile.adaptive(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('高对比度'),
-              subtitle: const Text('增强边界与文字对比，改善低视力阅读'),
-              value: highContrast,
-              onChanged: (value) => setState(() => highContrast = value),
-            ),
             SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
               title: const Text('开启账本隐私锁'),

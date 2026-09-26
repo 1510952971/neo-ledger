@@ -58,6 +58,7 @@ class _MobilePlanningPageState extends State<MobilePlanningPage> {
               icon: Icons.track_changes_outlined,
               actionLabel: '新增预算',
               onAction: () => _openBudget(),
+              initiallyExpanded: true,
               child: controller.budgets.isEmpty
                   ? const _CompactEmpty(message: '还没有分类预算')
                   : Column(
@@ -476,13 +477,14 @@ class _PlanningSummaryCard extends StatelessWidget {
   );
 }
 
-class _PlanningSection extends StatelessWidget {
+class _PlanningSection extends StatefulWidget {
   const _PlanningSection({
     required this.title,
     required this.icon,
     required this.actionLabel,
     required this.onAction,
     required this.child,
+    this.initiallyExpanded = false,
   });
 
   final String title;
@@ -490,27 +492,72 @@ class _PlanningSection extends StatelessWidget {
   final String actionLabel;
   final VoidCallback onAction;
   final Widget child;
+  final bool initiallyExpanded;
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Row(
-        children: [
-          Icon(icon, color: _mobileBrand, size: 20),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              title,
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+  State<_PlanningSection> createState() => _PlanningSectionState();
+}
+
+class _PlanningSectionState extends State<_PlanningSection> {
+  late bool expanded;
+
+  @override
+  void initState() {
+    super.initState();
+    expanded = widget.initiallyExpanded;
+  }
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(14, 4, 8, 8),
+    decoration: _mobileBoxDecoration(),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: () => setState(() => expanded = !expanded),
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              children: [
+                Icon(widget.icon, color: _mobileBrand, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    widget.title,
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: widget.onAction,
+                  child: Text(widget.actionLabel),
+                ),
+                Icon(
+                  expanded
+                      ? Icons.keyboard_arrow_up_rounded
+                      : Icons.keyboard_arrow_down_rounded,
+                  color: _mobileMuted,
+                ),
+              ],
             ),
           ),
-          TextButton(onPressed: onAction, child: Text(actionLabel)),
-        ],
-      ),
-      const SizedBox(height: 8),
-      child,
-    ],
+        ),
+        AnimatedSize(
+          duration: MobileMotion.standard,
+          curve: Curves.easeOutCubic,
+          child: expanded
+              ? Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: widget.child,
+                )
+              : const SizedBox.shrink(),
+        ),
+      ],
+    ),
   );
 }
 

@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'app.dart';
 import 'api_client.dart';
@@ -30,6 +31,7 @@ import 'features/profile/mobile_diagnostics_sheet.dart';
 import 'features/profile/mobile_tag_manager_sheet.dart';
 import 'models.dart';
 import 'shortcut_entry.dart';
+import 'update_service.dart';
 
 part 'mobile/parts/mobile_auth_pages.dart';
 part 'mobile/parts/mobile_home_page.dart';

@@ -173,6 +173,8 @@ class _MobileHomePageState extends State<MobileHomePage> {
               controller: controller,
               hideAmounts: _hideAmounts,
             ),
+            const SizedBox(height: 14),
+            const _MobileMoodCard(),
             if (controller.error != null ||
                 controller.totalPendingCount > 0) ...[
               const SizedBox(height: 12),
@@ -385,6 +387,97 @@ class _LedgerContextCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _MobileMoodCard extends StatelessWidget {
+  const _MobileMoodCard();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    clipBehavior: Clip.antiAlias,
+    padding: const EdgeInsets.fromLTRB(18, 16, 18, 17),
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(22),
+      gradient: const LinearGradient(
+        colors: [Color(0xff292633), Color(0xff4a3b63)],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      ),
+      boxShadow: const [
+        BoxShadow(
+          color: Color(0x18000000),
+          blurRadius: 16,
+          offset: Offset(0, 8),
+        ),
+      ],
+    ),
+    child: Stack(
+      children: [
+        Positioned(
+          right: -38,
+          top: -52,
+          child: Container(
+            width: 140,
+            height: 140,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white10, width: 1.2),
+            ),
+          ),
+        ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: const Color(0xffffd45c).withValues(alpha: .18),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.nightlight_round,
+                color: Color(0xffffd45c),
+                size: 30,
+              ),
+            ),
+            const SizedBox(width: 13),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "TONIGHT'S NOTE",
+                    style: TextStyle(
+                      color: Color(0xffbcb2ca),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.6,
+                    ),
+                  ),
+                  SizedBox(height: 6),
+                  Text(
+                    '今晚，先抱抱认真生活的自己',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  SizedBox(height: 5),
+                  Text(
+                    '每一笔记录，都是给未来自己的温柔提醒。',
+                    style: TextStyle(color: Color(0xffd1cbd8), fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
 }
 
 class _HomeBudgetCard extends StatelessWidget {
