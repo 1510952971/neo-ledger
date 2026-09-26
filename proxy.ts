@@ -178,7 +178,13 @@ export async function proxy(request: NextRequest) {
   if (!externalTokenRoute && !["GET", "HEAD", "OPTIONS"].includes(request.method)) {
     const fetchSite = request.headers.get("sec-fetch-site");
     const requestOrigin = request.headers.get("origin");
-    if (fetchSite === "cross-site" || (!isLocalHost(hostname) && requestOrigin !== origin))
+    // Native clients and server-to-server integrations legitimately omit the
+    // browser-only Origin header. Only validate it when the client supplied
+    // one; an explicit cross-site signal or mismatched origin remains blocked.
+    if (
+      fetchSite === "cross-site" ||
+      (requestOrigin && !isLocalHost(hostname) && requestOrigin !== origin)
+    )
       return errorResponse("已拒绝非同源请求", 403, "forbidden");
     if (requestOrigin && requestOrigin !== origin)
       return errorResponse("已拒绝非同源请求", 403, "forbidden");

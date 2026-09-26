@@ -940,6 +940,23 @@ describe("proxy 身份判定（回归：登录后不得被自己的账本挡住�
     publicPasskeyResponse.status !== 401,
     `status=${publicPasskeyResponse.status}`,
   );
+  const nativeAuth = new Request("https://public.example/api/auth", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      action: "login",
+      username: "native-origin-omitted",
+      password: "not-a-real-password",
+    }),
+  });
+  nativeAuth.cookies = { get: () => undefined };
+  nativeAuth.nextUrl = new URL(nativeAuth.url);
+  const nativeAuthResponse = await proxyMod.proxy(nativeAuth);
+  check(
+    "原生客户端未携带 Origin 时仍可访问登录接口",
+    nativeAuthResponse.status !== 403,
+    `status=${nativeAuthResponse.status}`,
+  );
   const externalWrite = new Request("https://public.example/api/v1/transactions", {
     method: "POST",
     headers: {
