@@ -72,6 +72,12 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(18, 12, 18, 110),
           children: [
+            _AccountsSummaryCard(
+              accounts: controller.accounts,
+              digitalAssets: controller.assets,
+              hideAmounts: hideAmounts,
+            ),
+            const SizedBox(height: 18),
             if (assetGroups.isEmpty)
               _AccountGroup(
                 title: '资产账户',
@@ -266,6 +272,121 @@ class _MobileAccountsPageState extends State<MobileAccountsPage> {
     );
     if (mounted) setState(() {});
   }
+}
+
+class _AccountsSummaryCard extends StatelessWidget {
+  const _AccountsSummaryCard({
+    required this.accounts,
+    required this.digitalAssets,
+    required this.hideAmounts,
+  });
+
+  final List<Account> accounts;
+  final List<DigitalAsset> digitalAssets;
+  final bool hideAmounts;
+
+  @override
+  Widget build(BuildContext context) {
+    final accountAssets = accounts
+        .where((item) => item.type == '资产')
+        .fold<int>(0, (sum, item) => sum + item.balanceCents);
+    final digitalAssetTotal = digitalAssets.fold<int>(
+      0,
+      (sum, item) => sum + (item.currentValueCents ?? item.valueCents),
+    );
+    final liabilities = accounts
+        .where((item) => item.type == '负债')
+        .fold<int>(0, (sum, item) => sum + item.balanceCents.abs());
+    final totalAssets = accountAssets + digitalAssetTotal;
+    final netWorth = totalAssets - liabilities;
+    final masked = hideAmounts ? '••••' : null;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+      decoration: _mobileBoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xff263a34), Color(0xff25253a)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.account_balance_rounded, color: _mobileBrand),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  '资产总览',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+              Text(
+                '${accounts.length + digitalAssets.length} 项',
+                style: TextStyle(color: _mobileMuted, fontSize: 12),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text('净资产', style: TextStyle(color: _mobileMuted, fontSize: 12)),
+          const SizedBox(height: 4),
+          Text(
+            masked ?? _mobileMoney(netWorth),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 28,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _AssetSummaryMetric(
+                  label: '总资产',
+                  value: masked ?? _mobileMoney(totalAssets),
+                  color: _mobileIncome,
+                ),
+              ),
+              Expanded(
+                child: _AssetSummaryMetric(
+                  label: '总负债',
+                  value: masked ?? _mobileMoney(liabilities),
+                  color: _mobileExpense,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AssetSummaryMetric extends StatelessWidget {
+  const _AssetSummaryMetric({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(label, style: TextStyle(color: _mobileMuted, fontSize: 12)),
+      const SizedBox(height: 3),
+      Text(
+        value,
+        style: TextStyle(color: color, fontWeight: FontWeight.w800),
+      ),
+    ],
+  );
 }
 
 class _AccountGroup extends StatelessWidget {

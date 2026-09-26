@@ -74,6 +74,19 @@ class _MobileHomePageState extends State<MobileHomePage> {
     );
   }
 
+  Future<void> _openFeatureHub() =>
+      _showMobileFeatureHub(context, widget.controller);
+
+  Future<void> _openAiAssistant() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (_) => AiSheet(controller: widget.controller),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
@@ -208,8 +221,25 @@ class _MobileHomePageState extends State<MobileHomePage> {
               const SizedBox(height: 14),
               _HomeWeeklyTrendCard(page: page, hideAmounts: _hideAmounts),
             ],
+            if (_homeHasPlanning(controller)) ...[
+              const SizedBox(height: 14),
+              _HomePlanningCard(
+                controller: controller,
+                hideAmounts: _hideAmounts,
+                onTap: () => MobileRouteRegistry.push<void>(
+                  context,
+                  MobileRouteName.planning,
+                ),
+              ),
+            ],
+            const SizedBox(height: 14),
+            _HomeAiCard(controller: controller, onTap: _openAiAssistant),
             const SizedBox(height: 20),
-            _SectionHeader(title: '快捷操作', action: '全部功能'),
+            _SectionHeader(
+              title: '快捷操作',
+              action: '全部功能',
+              onAction: _openFeatureHub,
+            ),
             const SizedBox(height: 12),
             Row(
               children: [
@@ -276,6 +306,12 @@ class _MobileHomePageState extends State<MobileHomePage> {
     );
   }
 }
+
+bool _homeHasPlanning(LedgerController controller) =>
+    controller.subscriptions.isNotEmpty ||
+    controller.recurringTasks.isNotEmpty ||
+    controller.installments.isNotEmpty ||
+    controller.savingsGoals.isNotEmpty;
 
 List<MobileDueItem> _homeDueItems(
   LedgerController controller, {
@@ -588,6 +624,186 @@ class _HomeWeeklyTrendCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _HomePlanningCard extends StatelessWidget {
+  const _HomePlanningCard({
+    required this.controller,
+    required this.hideAmounts,
+    required this.onTap,
+  });
+
+  final LedgerController controller;
+  final bool hideAmounts;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final recurringCount =
+        controller.subscriptions.length + controller.recurringTasks.length;
+    final totalPlanned = controller.subscriptions.fold<int>(
+      0,
+      (sum, item) => sum + item.amountCents,
+    );
+    final goalCount = controller.savingsGoals.length;
+    final installmentCount = controller.installments.length;
+    return Material(
+      color: _mobileSurface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: _mobileLine),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.event_note_rounded, color: _mobilePurple),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      '规划与目标',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  Icon(Icons.chevron_right_rounded, color: _mobileMuted),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: _PlanningMetric(
+                      label: '周期任务',
+                      value: '$recurringCount 个',
+                      color: _mobilePurple,
+                    ),
+                  ),
+                  Expanded(
+                    child: _PlanningMetric(
+                      label: '月度订阅',
+                      value: hideAmounts ? '••••' : _mobileMoney(totalPlanned),
+                      color: _mobileExpense,
+                    ),
+                  ),
+                  Expanded(
+                    child: _PlanningMetric(
+                      label: '储蓄目标',
+                      value: '${goalCount + installmentCount} 个',
+                      color: _mobileBrand,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                '包含订阅、周期记账、分期和储蓄目标，点击查看完整规划。',
+                style: TextStyle(color: _mobileMuted, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PlanningMetric extends StatelessWidget {
+  const _PlanningMetric({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(label, style: TextStyle(color: _mobileMuted, fontSize: 12)),
+      const SizedBox(height: 4),
+      Text(
+        value,
+        style: TextStyle(color: color, fontWeight: FontWeight.w800),
+      ),
+    ],
+  );
+}
+
+class _HomeAiCard extends StatelessWidget {
+  const _HomeAiCard({required this.controller, required this.onTap});
+
+  final LedgerController controller;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final answer = controller.lastAiReply?.answer.trim();
+    final hasAnswer = answer != null && answer.isNotEmpty;
+    return Material(
+      color: _mobileSurface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: _mobileLine),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xff5f52d9), Color(0xffe58bab)],
+                  ),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.auto_awesome_rounded,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'AI 财务助手',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      hasAnswer
+                          ? answer.replaceAll('\n', ' ')
+                          : '总结本月收支，帮你发现值得关注的变化',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: _mobileMuted, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: _mobileMuted),
+            ],
+          ),
+        ),
       ),
     );
   }

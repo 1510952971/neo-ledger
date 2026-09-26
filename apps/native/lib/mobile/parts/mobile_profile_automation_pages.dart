@@ -50,6 +50,32 @@ class MobileProfilePage extends StatelessWidget {
               builder: (_) => ProfileAccountSheet(controller: controller),
             ),
           ),
+          _SettingsRow(
+            icon: '🎨',
+            title: '主题与外观',
+            subtitle:
+                '${_mobileThemeLabel(controller.preferences.theme)} · ${_mobileThemeModeLabel(controller.preferences.mobileThemeMode)}',
+            onTap: () => showModalBottomSheet<void>(
+              context: context,
+              isScrollControlled: true,
+              showDragHandle: true,
+              backgroundColor: _mobileSurface,
+              builder: (_) => MobileAppearanceSheet(controller: controller),
+            ),
+          ),
+          _SettingsRow(
+            icon: '🏆',
+            title: '成就徽章',
+            subtitle:
+                '${MobileAchievementSheet.unlockedCount(controller)}/6 已解锁 · 记录你的记账成长',
+            onTap: () => showModalBottomSheet<void>(
+              context: context,
+              isScrollControlled: true,
+              showDragHandle: true,
+              backgroundColor: _mobileSurface,
+              builder: (_) => MobileAchievementSheet(controller: controller),
+            ),
+          ),
           const SizedBox(height: 22),
           _SectionHeader(
             title: '我的账本',
@@ -87,6 +113,12 @@ class MobileProfilePage extends StatelessWidget {
               context,
               MobileRouteName.planning,
             ),
+          ),
+          _SettingsRow(
+            icon: '🧭',
+            title: '全部功能',
+            subtitle: '账单、资产、分析、规划、自动记账与导入',
+            onTap: () => _showMobileFeatureHub(context, controller),
           ),
           _SettingsRow(
             icon: '💳',
@@ -363,6 +395,592 @@ class MobileProfilePage extends StatelessWidget {
       }
     }
   }
+}
+
+Future<void> _showMobileFeatureHub(
+  BuildContext context,
+  LedgerController controller,
+) async {
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    backgroundColor: _mobileSurface,
+    builder: (sheetContext) => MobileFeatureHubSheet(
+      controller: controller,
+      onOpenRoute: (route) {
+        Navigator.pop(sheetContext);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (context.mounted) {
+            unawaited(MobileRouteRegistry.push<void>(context, route));
+          }
+        });
+      },
+      onOpenSheet: (child) {
+        Navigator.pop(sheetContext);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!context.mounted) return;
+          unawaited(
+            showModalBottomSheet<void>(
+              context: context,
+              isScrollControlled: true,
+              showDragHandle: true,
+              backgroundColor: _mobileSurface,
+              builder: (_) => child,
+            ),
+          );
+        });
+      },
+    ),
+  );
+}
+
+String _mobileThemeLabel(String theme) => switch (theme) {
+  'glacier' => '冰川极简',
+  'peach' => '蜜桃多巴胺',
+  'obsidian' => '曜石极客',
+  _ => '治愈奶卡',
+};
+
+String _mobileThemeModeLabel(String mode) => switch (mode) {
+  'system' => '跟随系统',
+  'light' => '浅色模式',
+  _ => '深色模式',
+};
+
+class MobileFeatureHubSheet extends StatelessWidget {
+  const MobileFeatureHubSheet({
+    required this.controller,
+    required this.onOpenRoute,
+    required this.onOpenSheet,
+    super.key,
+  });
+
+  final LedgerController controller;
+  final ValueChanged<String> onOpenRoute;
+  final ValueChanged<Widget> onOpenSheet;
+
+  @override
+  Widget build(BuildContext context) {
+    final features =
+        <({IconData icon, String title, String subtitle, String route})>[
+          (
+            icon: Icons.receipt_long_rounded,
+            title: '个人账单',
+            subtitle: '${controller.transactions.total} 笔流水',
+            route: MobileRouteName.bills,
+          ),
+          (
+            icon: Icons.account_balance_wallet_rounded,
+            title: '个人资产',
+            subtitle:
+                '${controller.accounts.length} 个账户 · ${controller.assets.length} 项资产',
+            route: MobileRouteName.accounts,
+          ),
+          (
+            icon: Icons.insights_rounded,
+            title: '统计分析',
+            subtitle: '分类、趋势、储蓄率与 FIRE',
+            route: MobileRouteName.analysis,
+          ),
+          (
+            icon: Icons.event_note_rounded,
+            title: '管理规划',
+            subtitle: '预算、订阅、分期、储蓄目标',
+            route: MobileRouteName.planning,
+          ),
+          (
+            icon: Icons.auto_awesome_rounded,
+            title: '自动记账',
+            subtitle: '自动化规则与截图识别',
+            route: MobileRouteName.automation,
+          ),
+          (
+            icon: Icons.add_circle_outline_rounded,
+            title: '记一笔',
+            subtitle: '快速新增收入或支出',
+            route: MobileRouteName.entry,
+          ),
+        ];
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('全部功能', style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: 6),
+            Text(
+              '移动端与桌面端使用同一套账本数据，常用能力在这里集中入口。',
+              style: TextStyle(color: _mobileMuted),
+            ),
+            const SizedBox(height: 16),
+            GridView.count(
+              crossAxisCount: 2,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+              childAspectRatio: 1.45,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              children: [
+                for (final feature in features)
+                  _MobileFeatureTile(
+                    icon: feature.icon,
+                    title: feature.title,
+                    subtitle: feature.subtitle,
+                    onTap: () => onOpenRoute(feature.route),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            _SectionHeader(title: '桌面端常用能力', action: '同一账本'),
+            const SizedBox(height: 10),
+            _FeatureActionRow(
+              icon: Icons.auto_awesome_rounded,
+              title: 'AI 财务助手',
+              subtitle: '基于当前账本分析，不会自动改账',
+              onTap: () => onOpenSheet(AiSheet(controller: controller)),
+            ),
+            _FeatureActionRow(
+              icon: Icons.file_upload_outlined,
+              title: '账单导入',
+              subtitle: 'CSV、JSON、TXT，先预览再确认写入',
+              onTap: () => onOpenSheet(ImportSheet(controller: controller)),
+            ),
+            _FeatureActionRow(
+              icon: Icons.people_alt_outlined,
+              title: '分账与结算',
+              subtitle: '记录参与人往来，结算生成可追踪流水',
+              onTap: () => onOpenSheet(SettlementSheet(controller: controller)),
+            ),
+            _FeatureActionRow(
+              icon: Icons.local_fire_department_outlined,
+              title: 'FIRE 与通胀参数',
+              subtitle: '设置预测基准，分析页即时使用',
+              onTap: () =>
+                  onOpenSheet(FinanceSettingsSheet(controller: controller)),
+            ),
+            _FeatureActionRow(
+              icon: Icons.backup_outlined,
+              title: '数据与备份',
+              subtitle: '导出、恢复、预检与同步待处理流水',
+              onTap: () => onOpenSheet(DataCenterSheet(controller: controller)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FeatureActionRow extends StatelessWidget {
+  const _FeatureActionRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Material(
+      color: _mobileSurfaceRaised,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: _mobileLine),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: ListTile(
+          leading: Icon(icon, color: _mobileBrand),
+          title: Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+          subtitle: Text(subtitle),
+          trailing: Icon(Icons.chevron_right_rounded, color: _mobileMuted),
+        ),
+      ),
+    ),
+  );
+}
+
+class _MobileFeatureTile extends StatelessWidget {
+  const _MobileFeatureTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: _mobileSurfaceRaised,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(18),
+      side: BorderSide(color: _mobileLine),
+    ),
+    clipBehavior: Clip.antiAlias,
+    child: InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, color: _mobileBrand, size: 25),
+            const Spacer(),
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 3),
+            Text(
+              subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: _mobileMuted, fontSize: 11),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class MobileAppearanceSheet extends StatefulWidget {
+  const MobileAppearanceSheet({required this.controller, super.key});
+
+  final LedgerController controller;
+
+  @override
+  State<MobileAppearanceSheet> createState() => _MobileAppearanceSheetState();
+}
+
+class _MobileAppearanceSheetState extends State<MobileAppearanceSheet> {
+  late String theme;
+  late String mode;
+  late bool highContrast;
+  bool saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    theme = widget.controller.preferences.theme;
+    mode = widget.controller.preferences.mobileThemeMode;
+    highContrast = widget.controller.preferences.highContrast;
+  }
+
+  Future<void> _save() async {
+    setState(() => saving = true);
+    try {
+      final preferences = widget.controller.preferences;
+      await widget.controller.savePreferences(
+        theme: theme,
+        lockEnabled: preferences.lockEnabled,
+        mobileThemeMode: mode,
+        highContrast: highContrast,
+        defaultCurrency: preferences.defaultCurrency,
+      );
+      if (mounted) Navigator.pop(context);
+    } catch (error) {
+      if (mounted) {
+        setState(() => saving = false);
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('保存外观设置失败：$error')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(
+        20,
+        8,
+        20,
+        MediaQuery.viewInsetsOf(context).bottom + 24,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('主题与外观', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 6),
+          Text(
+            '主题会同步到你的其他设备，明暗模式只影响当前移动端显示方式。',
+            style: TextStyle(color: _mobileMuted, height: 1.4),
+          ),
+          const SizedBox(height: 18),
+          Text('主题风格', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final item in const [
+                ('cream', '治愈奶卡'),
+                ('glacier', '冰川极简'),
+                ('peach', '蜜桃多巴胺'),
+                ('obsidian', '曜石极客'),
+              ])
+                ChoiceChip(
+                  label: Text(item.$2),
+                  selected: theme == item.$1,
+                  onSelected: (_) => setState(() => theme = item.$1),
+                ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Text('明暗模式', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(value: 'system', label: Text('跟随系统')),
+              ButtonSegment(value: 'light', label: Text('浅色')),
+              ButtonSegment(value: 'dark', label: Text('深色')),
+            ],
+            selected: {mode},
+            onSelectionChanged: (value) => setState(() => mode = value.first),
+          ),
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('高对比度'),
+            subtitle: const Text('增强边界与文字对比度'),
+            value: highContrast,
+            onChanged: (value) => setState(() => highContrast = value),
+          ),
+          const SizedBox(height: 10),
+          FilledButton.icon(
+            onPressed: saving ? null : _save,
+            icon: saving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.check_rounded),
+            label: Text(saving ? '保存中…' : '保存外观设置'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class MobileAchievementSheet extends StatelessWidget {
+  const MobileAchievementSheet({required this.controller, super.key});
+
+  final LedgerController controller;
+
+  static int unlockedCount(LedgerController controller) =>
+      _badges(controller).where((badge) => badge.unlocked).length;
+
+  static List<_MobileAchievement> _badges(LedgerController controller) {
+    final activeDays = <String>{};
+    for (final item in controller.transactions.items) {
+      final date = DateTime.tryParse(item.occurredAt)?.toLocal();
+      if (date != null) {
+        activeDays.add('${date.year}-${date.month}-${date.day}');
+      }
+    }
+    final dayProgress = (activeDays.length / 7).clamp(0.0, 1.0).toDouble();
+    return [
+      _MobileAchievement(
+        icon: Icons.edit_note_rounded,
+        title: '第一笔账单',
+        subtitle: '记录第一笔真实流水',
+        unlocked: controller.transactions.total > 0,
+        progress: controller.transactions.total > 0 ? 1 : 0,
+      ),
+      _MobileAchievement(
+        icon: Icons.calendar_month_rounded,
+        title: '连续记账',
+        subtitle: '累计在 7 个不同日期记账',
+        unlocked: activeDays.length >= 7,
+        progress: dayProgress,
+      ),
+      _MobileAchievement(
+        icon: Icons.track_changes_rounded,
+        title: '预算规划师',
+        subtitle: '创建至少一个分类预算',
+        unlocked: controller.budgets.isNotEmpty,
+        progress: controller.budgets.isNotEmpty ? 1 : 0,
+      ),
+      _MobileAchievement(
+        icon: Icons.account_balance_wallet_rounded,
+        title: '资产管家',
+        subtitle: '维护两个或以上账户或资产',
+        unlocked: controller.accounts.length + controller.assets.length >= 2,
+        progress: ((controller.accounts.length + controller.assets.length) / 2)
+            .clamp(0.0, 1.0)
+            .toDouble(),
+      ),
+      _MobileAchievement(
+        icon: Icons.savings_rounded,
+        title: '储蓄目标',
+        subtitle: '创建一个储蓄目标',
+        unlocked: controller.savingsGoals.isNotEmpty,
+        progress: controller.savingsGoals.isNotEmpty ? 1 : 0,
+      ),
+      _MobileAchievement(
+        icon: Icons.library_books_rounded,
+        title: '多账本',
+        subtitle: '创建两个或以上账本',
+        unlocked: controller.ledgers.length >= 2,
+        progress: (controller.ledgers.length / 2).clamp(0.0, 1.0).toDouble(),
+      ),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final badges = _badges(controller);
+    final unlocked = badges.where((badge) => badge.unlocked).length;
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('成就徽章', style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: 6),
+            Text(
+              '根据当前账本数据自动计算，换设备登录后会保持一致。',
+              style: TextStyle(color: _mobileMuted),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: _mobileBoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    _mobilePurple.withAlpha(55),
+                    _mobileBrand.withAlpha(22),
+                  ],
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.emoji_events_rounded,
+                    color: _mobileBrand,
+                    size: 32,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      '已解锁 $unlocked/${badges.length} 个成就',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            ...badges.map(
+              (badge) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _MobileAchievementTile(badge: badge),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MobileAchievement {
+  const _MobileAchievement({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.unlocked,
+    required this.progress,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool unlocked;
+  final double progress;
+}
+
+class _MobileAchievementTile extends StatelessWidget {
+  const _MobileAchievementTile({required this.badge});
+
+  final _MobileAchievement badge;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: _mobileBoxDecoration(),
+    child: Row(
+      children: [
+        Container(
+          width: 44,
+          height: 44,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: (badge.unlocked ? _mobileBrand : _mobileMuted).withAlpha(30),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            badge.icon,
+            color: badge.unlocked ? _mobileBrand : _mobileMuted,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                badge.title,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                badge.subtitle,
+                style: TextStyle(color: _mobileMuted, fontSize: 12),
+              ),
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(5),
+                child: LinearProgressIndicator(
+                  minHeight: 5,
+                  value: badge.progress,
+                  backgroundColor: _mobileLine,
+                  valueColor: AlwaysStoppedAnimation(
+                    badge.unlocked ? _mobileBrand : _mobilePurple,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 10),
+        Icon(
+          badge.unlocked
+              ? Icons.check_circle_rounded
+              : Icons.lock_outline_rounded,
+          color: badge.unlocked ? _mobileBrand : _mobileMuted,
+        ),
+      ],
+    ),
+  );
 }
 
 class ProfileAccountSheet extends StatefulWidget {

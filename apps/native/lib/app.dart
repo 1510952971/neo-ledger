@@ -35,7 +35,7 @@ const _brand = Color(0xffa5ff4f);
 const _surface = Color(0xff101116);
 const _surfaceAlt = Color(0xff1b1b23);
 const _muted = Color(0xffa4a8a1);
-const _nativeVersion = '1.4.2';
+const _nativeVersion = '1.4.3';
 const _shortcutChannel = MethodChannel('online.eyeme.neo_ledger/shortcuts');
 const _assetTypes = [
   '房产',

@@ -330,11 +330,13 @@ class _CategoryChart extends StatelessWidget {
     required this.buckets,
     required this.maxAmount,
     required this.hideAmounts,
+    this.color,
   });
 
   final List<AnalysisBucket> buckets;
   final int maxAmount;
   final bool hideAmounts;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
@@ -363,7 +365,9 @@ class _CategoryChart extends StatelessWidget {
                       minHeight: 9,
                       value: ratio.clamp(0, 1),
                       backgroundColor: const Color(0x18ffffff),
-                      valueColor: AlwaysStoppedAnimation(_mobilePurple),
+                      valueColor: AlwaysStoppedAnimation(
+                        color ?? _mobilePurple,
+                      ),
                     ),
                   ),
                 ),
@@ -823,10 +827,11 @@ class _InsightCard extends StatelessWidget {
 }
 
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.title, this.action});
+  const _SectionHeader({required this.title, this.action, this.onAction});
 
   final String title;
   final String? action;
+  final VoidCallback? onAction;
 
   @override
   Widget build(BuildContext context) => Row(
@@ -841,7 +846,18 @@ class _SectionHeader extends StatelessWidget {
         ),
       ),
       if (action != null)
-        Text(action!, style: TextStyle(color: _mobileMuted, fontSize: 12)),
+        onAction == null
+            ? Text(action!, style: TextStyle(color: _mobileMuted, fontSize: 12))
+            : TextButton(
+                onPressed: onAction,
+                style: TextButton.styleFrom(
+                  foregroundColor: _mobileBrand,
+                  padding: EdgeInsets.zero,
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: Text(action!),
+              ),
     ],
   );
 }

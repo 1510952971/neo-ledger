@@ -1356,7 +1356,17 @@ class MobileAnalysisPage extends StatelessWidget {
     return _MobilePage(
       controller: controller,
       title: '分析',
-      trailing: Icon(Icons.tune_rounded, color: _mobileMuted),
+      trailing: IconButton(
+        tooltip: 'FIRE 与通胀参数',
+        onPressed: () => showModalBottomSheet<void>(
+          context: context,
+          isScrollControlled: true,
+          showDragHandle: true,
+          backgroundColor: _mobileSurface,
+          builder: (_) => FinanceSettingsSheet(controller: controller),
+        ),
+        icon: Icon(Icons.tune_rounded, color: _mobileMuted),
+      ),
       child: ListView(
         padding: const EdgeInsets.fromLTRB(18, 8, 18, 110),
         children: [
@@ -1388,6 +1398,13 @@ class MobileAnalysisPage extends StatelessWidget {
               ),
             ],
           ),
+          if (analysis?.topCategory != null) ...[
+            const SizedBox(height: 12),
+            _AnalysisTopCategoryCard(
+              bucket: analysis!.topCategory!,
+              hideAmounts: hideAmounts,
+            ),
+          ],
           if (controller.forecast?.hasPortfolioMetrics == true) ...[
             const SizedBox(height: 12),
             MobilePortfolioCard(
@@ -1410,6 +1427,29 @@ class MobileAnalysisPage extends StatelessWidget {
               maxAmount: maxAmount,
               hideAmounts: hideAmounts,
             ),
+          if (analysis?.incomeData.isNotEmpty == true) ...[
+            const SizedBox(height: 24),
+            _SectionHeader(title: '收入来源', action: '本月'),
+            const SizedBox(height: 10),
+            _CategoryChart(
+              buckets: analysis!.incomeData
+                  .where((item) => item.amountCents > 0)
+                  .take(6)
+                  .toList(),
+              maxAmount: analysis.incomeData.fold<int>(
+                1,
+                (max, item) => item.amountCents > max ? item.amountCents : max,
+              ),
+              hideAmounts: hideAmounts,
+              color: _mobileIncome,
+            ),
+          ],
+          if (analysis != null) ...[
+            const SizedBox(height: 24),
+            _SectionHeader(title: '消费行为', action: '收支画像'),
+            const SizedBox(height: 10),
+            _AnalysisBehaviorCard(summary: analysis, hideAmounts: hideAmounts),
+          ],
           if (analysis?.trend.isNotEmpty == true) ...[
             const SizedBox(height: 24),
             _SectionHeader(title: '收支趋势', action: '近期开销'),
@@ -1420,4 +1460,129 @@ class MobileAnalysisPage extends StatelessWidget {
       ),
     );
   }
+}
+
+class _AnalysisTopCategoryCard extends StatelessWidget {
+  const _AnalysisTopCategoryCard({
+    required this.bucket,
+    required this.hideAmounts,
+  });
+
+  final AnalysisBucket bucket;
+  final bool hideAmounts;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(16),
+    decoration: _mobileBoxDecoration(
+      gradient: LinearGradient(
+        colors: [_mobileExpense.withAlpha(34), _mobileSurface],
+      ),
+    ),
+    child: Row(
+      children: [
+        Container(
+          width: 42,
+          height: 42,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: _mobileExpense.withAlpha(32),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            Icons.local_fire_department_rounded,
+            color: _mobileExpense,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '最高支出分类',
+                style: TextStyle(color: _mobileMuted, fontSize: 12),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                bucket.name,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ],
+          ),
+        ),
+        Text(
+          hideAmounts ? '••••' : _mobileMoney(bucket.amountCents),
+          style: TextStyle(color: _mobileExpense, fontWeight: FontWeight.w800),
+        ),
+      ],
+    ),
+  );
+}
+
+class _AnalysisBehaviorCard extends StatelessWidget {
+  const _AnalysisBehaviorCard({
+    required this.summary,
+    required this.hideAmounts,
+  });
+
+  final AnalysisSummary summary;
+  final bool hideAmounts;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(16),
+    decoration: _mobileBoxDecoration(),
+    child: Wrap(
+      spacing: 20,
+      runSpacing: 14,
+      children: [
+        _AnalysisBehaviorValue(
+          label: '刚需支出',
+          value: hideAmounts ? '••••' : _mobileMoney(summary.needExpenseCents),
+          color: _mobileExpense,
+        ),
+        _AnalysisBehaviorValue(
+          label: '冲动支出',
+          value: hideAmounts ? '••••' : _mobileMoney(summary.impulseCents),
+          color: _mobilePurple,
+        ),
+        _AnalysisBehaviorValue(
+          label: '投资收入',
+          value: hideAmounts
+              ? '••••'
+              : _mobileMoney(summary.investmentIncomeCents),
+          color: _mobileIncome,
+        ),
+      ],
+    ),
+  );
+}
+
+class _AnalysisBehaviorValue extends StatelessWidget {
+  const _AnalysisBehaviorValue({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: 132,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(color: _mobileMuted, fontSize: 12)),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: TextStyle(color: color, fontWeight: FontWeight.w800),
+        ),
+      ],
+    ),
+  );
 }
