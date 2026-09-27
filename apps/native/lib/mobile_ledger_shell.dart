@@ -273,7 +273,9 @@ class _MobileLedgerShellState extends State<MobileLedgerShell>
                   )
                 else
                   AnimatedContainer(
-                    duration: const Duration(milliseconds: 220),
+                    duration: MediaQuery.disableAnimationsOf(context)
+                        ? Duration.zero
+                        : const Duration(milliseconds: 220),
                     curve: Curves.easeOutCubic,
                     width: _bottomBarExpanded ? 156 : 72,
                     decoration: BoxDecoration(
