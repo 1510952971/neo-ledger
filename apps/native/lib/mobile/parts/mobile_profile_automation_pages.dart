@@ -74,7 +74,7 @@ class MobileProfilePage extends StatelessWidget {
                   icon: '🏆',
                   title: '成就徽章',
                   subtitle:
-                      '${MobileAchievementSheet.unlockedCount(controller)}/6 已解锁 · 记录你的记账成长',
+                      '${MobileAchievementSheet.unlockedCount(controller)}/${MobileAchievementSheet.totalCount} 已解锁 · 与桌面端同步',
                   onTap: () => showModalBottomSheet<void>(
                     context: context,
                     isScrollControlled: true,
@@ -134,6 +134,19 @@ class MobileProfilePage extends StatelessWidget {
                       final index = controller.ledgers.indexOf(ledger);
                       if (index >= 0) await controller.selectLedger(index);
                     },
+                  ),
+                ),
+                _SettingsRow(
+                  icon: '➕',
+                  title: '新建账本',
+                  subtitle: '为家庭、旅行或不同目标创建独立账本',
+                  onTap: () => showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    useSafeArea: true,
+                    showDragHandle: true,
+                    backgroundColor: _mobileSurface,
+                    builder: (_) => LedgerSheet(controller: controller),
                   ),
                 ),
                 _SettingsRow(
@@ -698,6 +711,8 @@ Future<void> _showMobileFeatureHub(
             showModalBottomSheet<void>(
               context: context,
               isScrollControlled: true,
+              useRootNavigator: true,
+              useSafeArea: true,
               showDragHandle: true,
               backgroundColor: _mobileSurface,
               builder: (_) => child,
@@ -706,6 +721,21 @@ Future<void> _showMobileFeatureHub(
         });
       },
     ),
+  );
+}
+
+Future<void> _showMobileAiAssistant(
+  BuildContext context,
+  LedgerController controller,
+) async {
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useRootNavigator: true,
+    useSafeArea: true,
+    showDragHandle: true,
+    backgroundColor: _mobileSurface,
+    builder: (_) => AiSheet(controller: controller),
   );
 }
 
@@ -1074,10 +1104,206 @@ class MobileAchievementSheet extends StatelessWidget {
 
   final LedgerController controller;
 
+  static int get totalCount => _definitions.length;
+
   static int unlockedCount(LedgerController controller) =>
       _badges(controller).where((badge) => badge.unlocked).length;
 
-  static List<_MobileAchievement> _badges(LedgerController controller) {
+  static const _definitions = <_MobileAchievementDefinition>[
+    _MobileAchievementDefinition(
+      'first_spark',
+      '✍️',
+      '第一笔星火',
+      '完成账本中的第一笔记录',
+      '普通',
+    ),
+    _MobileAchievementDefinition(
+      'income_scout',
+      '🧧',
+      '开源侦察兵',
+      '记录人生第一笔收入',
+      '普通',
+    ),
+    _MobileAchievementDefinition(
+      'account_architect',
+      '🏦',
+      '账户建筑师',
+      '建立至少 3 个资金账户',
+      '普通',
+    ),
+    _MobileAchievementDefinition(
+      'seven_day_scribe',
+      '🗓️',
+      '七日记账官',
+      '近 30 天内有 7 天完成记账',
+      '普通',
+    ),
+    _MobileAchievementDefinition(
+      'positive_month',
+      '🌱',
+      '月度正循环',
+      '本月收入高于支出',
+      '普通',
+    ),
+    _MobileAchievementDefinition(
+      'dream_planter',
+      '🌟',
+      '心愿播种者',
+      '建立第一个心愿储蓄目标',
+      '普通',
+    ),
+    _MobileAchievementDefinition(
+      'coffee_knight',
+      '☕',
+      '咖啡断奶骑士',
+      '连续 7 天咖啡支出为 0',
+      '稀有',
+    ),
+    _MobileAchievementDefinition(
+      'ledger_regular',
+      '📚',
+      '账本常驻民',
+      '累计完成 50 笔收支记录',
+      '稀有',
+    ),
+    _MobileAchievementDefinition(
+      'century_club',
+      '💯',
+      '百笔俱乐部',
+      '累计完成 100 笔收支记录',
+      '稀有',
+    ),
+    _MobileAchievementDefinition(
+      'income_diversifier',
+      '🌈',
+      '收入多栖玩家',
+      '点亮至少 3 种收入来源',
+      '稀有',
+    ),
+    _MobileAchievementDefinition(
+      'budget_guardian',
+      '🧭',
+      '预算守门人',
+      '本月有消费且总支出未超预算',
+      '稀有',
+    ),
+    _MobileAchievementDefinition(
+      'mindful_week',
+      '🧘',
+      '清醒消费一周',
+      '近 7 天有记账且零冲动消费',
+      '稀有',
+    ),
+    _MobileAchievementDefinition(
+      'category_explorer',
+      '🗺️',
+      '消费地图家',
+      '记录过至少 5 个支出分类',
+      '稀有',
+    ),
+    _MobileAchievementDefinition(
+      'side_hustle_starter',
+      '💼',
+      '副业启航者',
+      '记录第一笔副业收入',
+      '稀有',
+    ),
+    _MobileAchievementDefinition(
+      'investor_awakened',
+      '📈',
+      '投资意识觉醒',
+      '建立第一个投资账户',
+      '稀有',
+    ),
+    _MobileAchievementDefinition(
+      'digital_curator',
+      '🏛️',
+      '资产典藏家',
+      '统一管理至少 3 件实物或虚拟资产',
+      '稀有',
+    ),
+    _MobileAchievementDefinition(
+      'frugal_week',
+      '🪶',
+      '轻盈消费周',
+      '近 7 天有记账且支出不超过 ¥100',
+      '稀有',
+    ),
+    _MobileAchievementDefinition(
+      'temptation_fighter',
+      '🛡️',
+      '抗住诱惑反击者',
+      '月过半且冲动消费为 0',
+      '史诗',
+    ),
+    _MobileAchievementDefinition(
+      'full_revive',
+      '🔥',
+      '满血复活',
+      '近 30 天每天都完成记账',
+      '史诗',
+    ),
+    _MobileAchievementDefinition(
+      'savings_pilot',
+      '🚀',
+      '储蓄率飞行员',
+      '本月储蓄率达到 20%',
+      '史诗',
+    ),
+    _MobileAchievementDefinition(
+      'super_saver',
+      '💎',
+      '半数收入守护者',
+      '本月储蓄率达到 50%',
+      '史诗',
+    ),
+    _MobileAchievementDefinition(
+      'debt_tamer',
+      '🕊️',
+      '负债驯服者',
+      '成功清偿至少一个负债账户',
+      '史诗',
+    ),
+    _MobileAchievementDefinition(
+      'wish_fulfilled',
+      '🎆',
+      '心愿兑现家',
+      '完成至少一个心愿储蓄目标',
+      '史诗',
+    ),
+    _MobileAchievementDefinition(
+      'ledger_legend',
+      '🏛️',
+      '账本编年史',
+      '累计完成 365 笔收支记录',
+      '史诗',
+    ),
+    _MobileAchievementDefinition(
+      'debt_free_hidden',
+      '🪽',
+      '无债之翼',
+      '将名下所有负债账户全部清零',
+      '隐藏',
+    ),
+    _MobileAchievementDefinition(
+      'dawn_bookkeeper',
+      '🌅',
+      '破晓记账人',
+      '在清晨 05:00–08:00 完成一笔记录',
+      '隐藏',
+    ),
+    _MobileAchievementDefinition(
+      'midnight_witness',
+      '🌌',
+      '午夜账本见证者',
+      '在午夜 00:00–05:00 完成一笔记录',
+      '隐藏',
+    ),
+  ];
+
+  static Set<String> _unlockedCodes(LedgerController controller) {
+    final remote = controller.achievements.map((item) => item.code).toSet();
+    if (remote.isNotEmpty) return remote;
     final activeDays = <String>{};
     for (final item in controller.transactions.items) {
       final date = DateTime.tryParse(item.occurredAt)?.toLocal();
@@ -1085,52 +1311,25 @@ class MobileAchievementSheet extends StatelessWidget {
         activeDays.add('${date.year}-${date.month}-${date.day}');
       }
     }
-    final dayProgress = (activeDays.length / 7).clamp(0.0, 1.0).toDouble();
+    return {
+      if (controller.transactions.total > 0) 'first_spark',
+      if (controller.transactions.items.any((item) => item.isIncome))
+        'income_scout',
+      if (controller.accounts.length >= 3) 'account_architect',
+      if (activeDays.length >= 7) 'seven_day_scribe',
+      if (controller.budgets.isNotEmpty) 'budget_guardian',
+      if (controller.savingsGoals.isNotEmpty) 'dream_planter',
+    };
+  }
+
+  static List<_MobileAchievement> _badges(LedgerController controller) {
+    final unlocked = _unlockedCodes(controller);
     return [
-      _MobileAchievement(
-        icon: Icons.edit_note_rounded,
-        title: '第一笔账单',
-        subtitle: '记录第一笔真实流水',
-        unlocked: controller.transactions.total > 0,
-        progress: controller.transactions.total > 0 ? 1 : 0,
-      ),
-      _MobileAchievement(
-        icon: Icons.calendar_month_rounded,
-        title: '连续记账',
-        subtitle: '累计在 7 个不同日期记账',
-        unlocked: activeDays.length >= 7,
-        progress: dayProgress,
-      ),
-      _MobileAchievement(
-        icon: Icons.track_changes_rounded,
-        title: '预算规划师',
-        subtitle: '创建至少一个分类预算',
-        unlocked: controller.budgets.isNotEmpty,
-        progress: controller.budgets.isNotEmpty ? 1 : 0,
-      ),
-      _MobileAchievement(
-        icon: Icons.account_balance_wallet_rounded,
-        title: '资产管家',
-        subtitle: '维护两个或以上账户或资产',
-        unlocked: controller.accounts.length + controller.assets.length >= 2,
-        progress: ((controller.accounts.length + controller.assets.length) / 2)
-            .clamp(0.0, 1.0)
-            .toDouble(),
-      ),
-      _MobileAchievement(
-        icon: Icons.savings_rounded,
-        title: '储蓄目标',
-        subtitle: '创建一个储蓄目标',
-        unlocked: controller.savingsGoals.isNotEmpty,
-        progress: controller.savingsGoals.isNotEmpty ? 1 : 0,
-      ),
-      _MobileAchievement(
-        icon: Icons.library_books_rounded,
-        title: '多账本',
-        subtitle: '创建两个或以上账本',
-        unlocked: controller.ledgers.length >= 2,
-        progress: (controller.ledgers.length / 2).clamp(0.0, 1.0).toDouble(),
-      ),
+      for (final definition in _definitions)
+        _MobileAchievement(
+          definition: definition,
+          unlocked: unlocked.contains(definition.code),
+        ),
     ];
   }
 
@@ -1140,14 +1339,14 @@ class MobileAchievementSheet extends StatelessWidget {
     final unlocked = badges.where((badge) => badge.unlocked).length;
     return SafeArea(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+        padding: const EdgeInsets.fromLTRB(18, 8, 18, 28),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text('成就徽章', style: Theme.of(context).textTheme.headlineSmall),
             const SizedBox(height: 6),
             Text(
-              '根据当前账本数据自动计算，换设备登录后会保持一致。',
+              '桌面端与手机端共用同一套 27 个成就、等级和解锁状态。',
               style: TextStyle(color: _mobileMuted),
             ),
             const SizedBox(height: 16),
@@ -1161,67 +1360,52 @@ class MobileAchievementSheet extends StatelessWidget {
                   ],
                 ),
               ),
-              child: Stack(
-                clipBehavior: Clip.none,
+              child: Row(
                 children: [
-                  Positioned(
-                    right: 4,
-                    top: -7,
-                    child: Icon(
-                      Icons.auto_awesome_rounded,
-                      color: _mobileBrand.withValues(alpha: .7),
-                      size: 24,
-                    ),
-                  ),
-                  Positioned(
-                    right: 34,
-                    bottom: -7,
-                    child: Icon(
-                      Icons.star_rounded,
-                      color: _mobilePurple.withValues(alpha: .8),
-                      size: 18,
-                    ),
-                  ),
-                  Row(
-                    children: [
-                      Container(
-                        width: 54,
-                        height: 54,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: _mobileBrand.withValues(alpha: .16),
-                          border: Border.all(
-                            color: _mobileBrand.withValues(alpha: .45),
-                          ),
-                        ),
-                        child: Icon(
-                          Icons.emoji_events_rounded,
-                          color: _mobileBrand,
-                          size: 32,
-                        ),
+                  Container(
+                    width: 58,
+                    height: 58,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        colors: [
+                          _mobileBrand.withValues(alpha: .25),
+                          _mobilePurple.withValues(alpha: .18),
+                        ],
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          '已解锁 $unlocked/${badges.length} 个成就',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
+                      border: Border.all(
+                        color: _mobileBrand.withValues(alpha: .55),
                       ),
-                    ],
+                    ),
+                    child: const Text('🏆', style: TextStyle(fontSize: 31)),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      '已解锁 $unlocked/${badges.length} 个成就',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 14),
-            ...badges.map(
-              (badge) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: _MobileAchievementTile(badge: badge),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 10,
+                childAspectRatio: .92,
               ),
+              itemCount: badges.length,
+              itemBuilder: (_, index) =>
+                  _MobileAchievementTile(badge: badges[index]),
             ),
           ],
         ),
@@ -1230,20 +1414,27 @@ class MobileAchievementSheet extends StatelessWidget {
   }
 }
 
-class _MobileAchievement {
-  const _MobileAchievement({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.unlocked,
-    required this.progress,
-  });
+class _MobileAchievementDefinition {
+  const _MobileAchievementDefinition(
+    this.code,
+    this.glyph,
+    this.title,
+    this.subtitle,
+    this.tier,
+  );
 
-  final IconData icon;
+  final String code;
+  final String glyph;
   final String title;
   final String subtitle;
+  final String tier;
+}
+
+class _MobileAchievement {
+  const _MobileAchievement({required this.definition, required this.unlocked});
+
+  final _MobileAchievementDefinition definition;
   final bool unlocked;
-  final double progress;
 }
 
 class _MobileAchievementTile extends StatelessWidget {
@@ -1251,60 +1442,103 @@ class _MobileAchievementTile extends StatelessWidget {
 
   final _MobileAchievement badge;
 
+  Color get _accent => switch (badge.definition.tier) {
+    '稀有' => const Color(0xff3f91d1),
+    '史诗' => const Color(0xff9b5bd5),
+    '隐藏' => const Color(0xffc34b70),
+    _ => const Color(0xffb99754),
+  };
+
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(14),
-    decoration: _mobileBoxDecoration(),
-    child: Row(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(
+        color: _accent.withValues(alpha: badge.unlocked ? .46 : .18),
+      ),
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          _accent.withValues(alpha: badge.unlocked ? .18 : .07),
+          _mobileSurfaceRaised,
+        ],
+      ),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          width: 44,
-          height: 44,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: (badge.unlocked ? _mobileBrand : _mobileMuted).withAlpha(30),
-            shape: BoxShape.circle,
-          ),
-          child: Icon(
-            badge.icon,
-            color: badge.unlocked ? _mobileBrand : _mobileMuted,
+        Row(
+          children: [
+            Text(
+              badge.definition.glyph,
+              style: TextStyle(
+                fontSize: 29,
+                color: badge.unlocked ? null : _mobileMuted,
+              ),
+            ),
+            const Spacer(),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              decoration: BoxDecoration(
+                color: _accent.withValues(alpha: badge.unlocked ? .22 : .10),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                badge.definition.tier,
+                style: TextStyle(
+                  color: _accent,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          badge.unlocked
+              ? badge.definition.title
+              : '未解锁 · ${badge.definition.title}',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            color: badge.unlocked ? _mobileText : _mobileMuted,
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(height: 4),
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                badge.title,
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                badge.subtitle,
-                style: TextStyle(color: _mobileMuted, fontSize: 12),
-              ),
-              const SizedBox(height: 8),
-              ClipRRect(
+          child: Text(
+            badge.definition.subtitle,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: _mobileMuted, fontSize: 11, height: 1.3),
+          ),
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: ClipRRect(
                 borderRadius: BorderRadius.circular(5),
                 child: LinearProgressIndicator(
                   minHeight: 5,
-                  value: badge.progress,
+                  value: badge.unlocked ? 1 : 0,
                   backgroundColor: _mobileLine,
-                  valueColor: AlwaysStoppedAnimation(
-                    badge.unlocked ? _mobileBrand : _mobilePurple,
-                  ),
+                  valueColor: AlwaysStoppedAnimation(_accent),
                 ),
               ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 10),
-        Icon(
-          badge.unlocked
-              ? Icons.check_circle_rounded
-              : Icons.lock_outline_rounded,
-          color: badge.unlocked ? _mobileBrand : _mobileMuted,
+            ),
+            const SizedBox(width: 7),
+            Icon(
+              badge.unlocked
+                  ? Icons.check_circle_rounded
+                  : Icons.lock_outline_rounded,
+              size: 17,
+              color: badge.unlocked ? _accent : _mobileMuted,
+            ),
+          ],
         ),
       ],
     ),

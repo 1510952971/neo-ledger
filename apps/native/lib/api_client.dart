@@ -431,6 +431,17 @@ class NeoLedgerApi {
     return AiReply.fromJson(data);
   }
 
+  Future<List<AchievementBadge>> fetchAchievements(int ledgerId) async {
+    final data = await getJson('/api/achievements?ledger=$ledgerId');
+    if (data is! List) throw const ApiException('成就响应格式无效');
+    return data
+        .whereType<Map>()
+        .map(
+          (item) => AchievementBadge.fromJson(Map<String, dynamic>.from(item)),
+        )
+        .toList(growable: false);
+  }
+
   Future<Map<String, dynamic>> recognizeScreenshotTextWithAi(
     String redactedText,
   ) async {

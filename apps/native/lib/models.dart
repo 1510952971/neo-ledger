@@ -505,6 +505,31 @@ class AiReply {
   };
 }
 
+class AchievementBadge {
+  const AchievementBadge({
+    required this.ledgerId,
+    required this.code,
+    required this.unlockedAt,
+  });
+
+  final int ledgerId;
+  final String code;
+  final String unlockedAt;
+
+  factory AchievementBadge.fromJson(Map<String, dynamic> json) =>
+      AchievementBadge(
+        ledgerId: _asInt(json['ledgerId'] ?? json['ledger_id']),
+        code: '${json['code'] ?? ''}',
+        unlockedAt: '${json['unlockedAt'] ?? json['unlocked_at'] ?? ''}',
+      );
+
+  Map<String, dynamic> toJson() => {
+    'ledgerId': ledgerId,
+    'code': code,
+    'unlockedAt': unlockedAt,
+  };
+}
+
 class TransactionItem {
   const TransactionItem({
     required this.id,

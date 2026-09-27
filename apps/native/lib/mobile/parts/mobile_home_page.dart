@@ -78,13 +78,7 @@ class _MobileHomePageState extends State<MobileHomePage> {
       _showMobileFeatureHub(context, widget.controller);
 
   Future<void> _openAiAssistant() async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      backgroundColor: _mobileSurface,
-      builder: (_) => AiSheet(controller: widget.controller),
-    );
+    await _showMobileAiAssistant(context, widget.controller);
   }
 
   @override

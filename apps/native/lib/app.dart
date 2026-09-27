@@ -35,7 +35,7 @@ const _brand = Color(0xffa5ff4f);
 const _surface = Color(0xff101116);
 const _surfaceAlt = Color(0xff1b1b23);
 const _muted = Color(0xffa4a8a1);
-const _nativeVersion = '1.4.4';
+const _nativeVersion = '1.4.5';
 const _shortcutChannel = MethodChannel('online.eyeme.neo_ledger/shortcuts');
 const _assetTypes = [
   '房产',
@@ -269,6 +269,7 @@ class LedgerController extends ChangeNotifier {
   List<Member> members = const [];
   List<Category> expenseCategories = const [];
   List<Category> incomeCategories = const [];
+  List<AchievementBadge> achievements = const [];
   Preferences preferences = const Preferences();
   AiReply? lastAiReply;
   Map<String, dynamic> p2pStatus = const {};
@@ -530,6 +531,10 @@ class LedgerController extends ChangeNotifier {
       ),
     ];
     preferences = const Preferences();
+    achievements = const [
+      AchievementBadge(ledgerId: 1, code: 'first_spark', unlockedAt: ''),
+      AchievementBadge(ledgerId: 1, code: 'income_scout', unlockedAt: ''),
+    ];
     lastAiReply = null;
     p2pStatus = const {
       'service': 'Neo Ledger P2P',
@@ -1896,6 +1901,7 @@ class LedgerController extends ChangeNotifier {
       _optional(() => api.fetchSecurityAudit()),
       _optional(() => api.fetchAnalysis(ledgerId, dimension: '日')),
       _optional(() => api.fetchRecurringTasks(ledgerId)),
+      _optional(() => api.fetchAchievements(ledgerId)),
     ]);
     if (values[0] is AnalysisSummary) analysis = values[0] as AnalysisSummary;
     if (values[21] is AnalysisSummary) {
@@ -1909,6 +1915,9 @@ class LedgerController extends ChangeNotifier {
     }
     if (values[22] is List<RecurringTask>) {
       recurringTasks = values[22] as List<RecurringTask>;
+    }
+    if (values[23] is List<AchievementBadge>) {
+      achievements = values[23] as List<AchievementBadge>;
     }
     if (values[3] is List<Installment>) {
       installments = values[3] as List<Installment>;
@@ -8051,10 +8060,26 @@ class _SettingRow extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: TextStyle(color: Colors.grey.shade500)),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
+          Expanded(
+            flex: 2,
+            child: Text(
+              label,
+              softWrap: true,
+              style: TextStyle(color: Colors.grey.shade500),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            flex: 3,
+            child: Text(
+              value,
+              softWrap: true,
+              textAlign: TextAlign.end,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
         ],
       ),
     );
@@ -10194,6 +10219,7 @@ class _AiSheetState extends State<AiSheet> {
   bool consentExternal = false;
   bool asking = false;
   AiReply? reply;
+  String? errorMessage;
 
   @override
   void initState() {
@@ -10208,7 +10234,11 @@ class _AiSheetState extends State<AiSheet> {
   }
 
   Future<void> _ask() async {
-    setState(() => asking = true);
+    FocusScope.of(context).unfocus();
+    setState(() {
+      asking = true;
+      errorMessage = null;
+    });
     try {
       final result = await widget.controller.askAi(
         message.text,
@@ -10217,8 +10247,7 @@ class _AiSheetState extends State<AiSheet> {
       if (mounted) setState(() => reply = result);
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('AI 请求失败：$error')));
+        setState(() => errorMessage = 'AI 请求失败：$error');
       }
     } finally {
       if (mounted) setState(() => asking = false);
@@ -10240,6 +10269,19 @@ class _AiSheetState extends State<AiSheet> {
               '仅基于当前账本回答分析问题，不会自动新增、修改或删除流水，也不会替你支付。外部模型调用只有在你明确同意后才启用。',
               style: TextStyle(color: Colors.grey.shade500, height: 1.4),
             ),
+            const SizedBox(height: 10),
+            Text(
+              widget.controller.selectedLedger == null
+                  ? '当前还没有可用账本，请先到“我的 → 账本与数据 → 新建账本”。'
+                  : '当前账本：${widget.controller.selectedLedger!.icon} ${widget.controller.selectedLedger!.name}',
+              style: TextStyle(
+                color: widget.controller.selectedLedger == null
+                    ? Colors.orange.shade700
+                    : Colors.grey.shade600,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
             const SizedBox(height: 16),
             TextField(
               controller: message,
@@ -10251,6 +10293,24 @@ class _AiSheetState extends State<AiSheet> {
                 alignLabelWithHint: true,
                 border: OutlineInputBorder(),
               ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                for (final prompt in const [
+                  '本月花得最多的分类是什么？',
+                  '帮我总结本月收支',
+                  '我最近的消费有什么变化？',
+                ])
+                  ActionChip(
+                    label: Text(prompt),
+                    onPressed: asking
+                        ? null
+                        : () => setState(() => message.text = prompt),
+                  ),
+              ],
             ),
             SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
@@ -10271,6 +10331,21 @@ class _AiSheetState extends State<AiSheet> {
                   : const Icon(Icons.auto_awesome),
               label: Text(asking ? '分析中…' : '开始分析'),
             ),
+            if (errorMessage != null) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red.withValues(alpha: .08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.red.withValues(alpha: .2)),
+                ),
+                child: Text(
+                  errorMessage!,
+                  style: TextStyle(color: Colors.red.shade700),
+                ),
+              ),
+            ],
             if (reply != null) ...[
               const SizedBox(height: 14),
               Card(
