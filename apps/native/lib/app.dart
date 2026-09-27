@@ -35,7 +35,7 @@ const _brand = Color(0xffa5ff4f);
 const _surface = Color(0xff101116);
 const _surfaceAlt = Color(0xff1b1b23);
 const _muted = Color(0xffa4a8a1);
-const _nativeVersion = '1.4.5';
+const _nativeVersion = '1.4.6';
 const _shortcutChannel = MethodChannel('online.eyeme.neo_ledger/shortcuts');
 const _assetTypes = [
   '房产',
@@ -4483,7 +4483,8 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
         );
         return;
       }
-      final asset = latest.assetFor(platform);
+      final asset =
+          latest.serviceAssetFor(platform) ?? latest.assetFor(platform);
       final assetName = latest.assetNameFor(platform);
       final canInstallAndroid =
           platform == 'android' &&
@@ -4614,12 +4615,29 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text('正在下载更新，完成后将弹出系统安装确认…')));
     try {
-      final result = await widget.controller.installAndroidUpdate(
-        version: latest.version,
-        apkUrl: apkUrl,
-        apkName: apkName,
-        checksumUrl: latest.checksumManifestUrl,
-      );
+      Map<String, dynamic> result;
+      try {
+        result = await widget.controller.installAndroidUpdate(
+          version: latest.version,
+          apkUrl: apkUrl,
+          apkName: apkName,
+          checksumUrl: latest.checksumManifestUrl,
+        );
+      } catch (serviceError) {
+        final githubUrl = latest.githubAssetFor('android');
+        if (githubUrl == null || githubUrl == apkUrl) rethrow;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('服务地址下载失败，正在切换 GitHub 备用地址…')),
+          );
+        }
+        result = await widget.controller.installAndroidUpdate(
+          version: latest.version,
+          apkUrl: githubUrl,
+          apkName: apkName,
+          checksumUrl: latest.githubChecksumManifestUrl,
+        );
+      }
       if (!mounted) return;
       final message = '${result['message'] ?? '更新处理完成'}';
       ScaffoldMessenger.of(context)
@@ -14027,9 +14045,22 @@ class NotificationSheet extends StatelessWidget {
                                     : Icons.notifications_active,
                                 color: item.read ? Colors.white70 : _brand,
                               ),
-                              title: Text(item.title),
+                              title: Text(
+                                item.title,
+                                style: TextStyle(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
                               subtitle: Text(
                                 '${item.message}\n${_date(item.createdAt)}',
+                                style: TextStyle(
+                                  color: Theme.of(context).colorScheme.onSurface
+                                      .withValues(alpha: .72),
+                                  height: 1.45,
+                                ),
                               ),
                               isThreeLine: true,
                             ),

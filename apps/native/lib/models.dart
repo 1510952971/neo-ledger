@@ -1295,7 +1295,7 @@ class NotificationItem {
       NotificationItem(
         id: _asInt(json['id']),
         title: '${json['title'] ?? '系统通知'}',
-        message: '${json['message'] ?? ''}',
+        message: humanizeNotificationMessage('${json['message'] ?? ''}'),
         read: json['read'] == true || json['read'] == 1,
         createdAt: '${json['createdAt'] ?? json['created_at'] ?? ''}',
       );
@@ -1307,6 +1307,21 @@ class NotificationItem {
     'read': read,
     'createdAt': createdAt,
   };
+}
+
+/// Converts implementation details into a useful, readable notification.
+/// Backend diagnostics remain available in the privacy diagnostics page, but
+/// raw SQLite/D1 errors should never be the primary copy in the inbox.
+String humanizeNotificationMessage(String value) {
+  final normalized = value.replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (normalized.contains('转出账户余额不足')) {
+    return '自动还款未完成：转出账户余额不足，请先补充转出账户余额后重试。';
+  }
+  if (normalized.contains('SQLITE_CONSTRAINT') ||
+      normalized.contains('D1_ERROR')) {
+    return '系统处理未完成：数据约束冲突，请稍后重试；如果重复出现，请联系管理员。';
+  }
+  return normalized.isEmpty ? '系统通知暂无详细内容。' : normalized;
 }
 
 class PendingTransaction {
@@ -1632,6 +1647,7 @@ class UpdateInfo {
     required this.notes,
     required this.assets,
     this.publishedAt,
+    this.serviceAssets = const {},
   });
 
   final String version;
@@ -1640,6 +1656,7 @@ class UpdateInfo {
   final String notes;
   final Map<String, String> assets;
   final String? publishedAt;
+  final Map<String, String> serviceAssets;
 
   factory UpdateInfo.fromGitHub(Map<String, dynamic> json) {
     final tag = '${json['tag_name'] ?? ''}';
@@ -1661,6 +1678,28 @@ class UpdateInfo {
           if (asset['name'] != null && asset['browser_download_url'] != null)
             '${asset['name']}': '${asset['browser_download_url']}',
       },
+    );
+  }
+
+  factory UpdateInfo.fromService(Map<String, dynamic> json) {
+    final rawGithub =
+        (json['githubAssets'] as Map?)?.map(
+          (key, value) => MapEntry('$key', '$value'),
+        ) ??
+        const <String, String>{};
+    final rawService =
+        (json['serviceAssets'] as Map?)?.map(
+          (key, value) => MapEntry('$key', '$value'),
+        ) ??
+        const <String, String>{};
+    return UpdateInfo(
+      version: '${json['latestVersion'] ?? ''}',
+      tagName: '${json['tag'] ?? ''}',
+      releaseUrl: '${json['releaseUrl'] ?? ''}',
+      notes: '${json['notes'] ?? ''}'.trim(),
+      publishedAt: json['publishedAt']?.toString(),
+      assets: rawGithub,
+      serviceAssets: rawService,
     );
   }
 
@@ -1706,9 +1745,67 @@ class UpdateInfo {
 
   String? assetFor(String platform) => _preferredAsset(platform)?.value;
 
+  String? serviceAssetFor(String platform) {
+    final entries = serviceAssets.entries
+        .where(
+          (entry) => entry.key.toLowerCase().contains(platform.toLowerCase()),
+        )
+        .toList();
+    if (entries.isEmpty) return null;
+    entries.sort(
+      (a, b) =>
+          _assetRank(platform, a.key).compareTo(_assetRank(platform, b.key)),
+    );
+    return entries.first.value;
+  }
+
+  String? githubAssetFor(String platform) => _preferredAsset(platform)?.value;
+
+  static int _assetRank(String platform, String name) {
+    final normalized = name.toLowerCase();
+    return switch (platform) {
+      'android' =>
+        normalized.endsWith('.apk')
+            ? 0
+            : normalized.endsWith('.aab')
+            ? 1
+            : 10,
+      'windows' =>
+        normalized.endsWith('.exe')
+            ? 0
+            : normalized.endsWith('.zip')
+            ? 1
+            : 10,
+      'macos' =>
+        normalized.endsWith('.dmg')
+            ? 0
+            : normalized.endsWith('.zip')
+            ? 1
+            : 10,
+      'web' => normalized.endsWith('.tar.gz') ? 0 : 10,
+      _ => 10,
+    };
+  }
+
   String? assetNameFor(String platform) => _preferredAsset(platform)?.key;
 
   String? get checksumManifestUrl {
+    for (final entry in serviceAssets.entries) {
+      final name = entry.key.toLowerCase();
+      if (name == 'sha256sums.txt' || name.endsWith('/sha256sums.txt')) {
+        return entry.value;
+      }
+    }
+    for (final entry in assets.entries) {
+      final name = entry.key.toLowerCase();
+      if (name == 'sha256sums.txt' || name.endsWith('/sha256sums.txt')) {
+        return entry.value;
+      }
+    }
+    return null;
+  }
+
+  String? get githubChecksumManifestUrl {
     for (final entry in assets.entries) {
       final name = entry.key.toLowerCase();
       if (name == 'sha256sums.txt' || name.endsWith('/sha256sums.txt')) {

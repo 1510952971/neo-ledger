@@ -16,12 +16,51 @@ class NeoLedgerUpdateService {
   final Duration _timeout;
 
   Future<UpdateInfo?> checkLatest() async {
-    final releases = await _fetchReleases();
-    return _selectRelease(
-      releases,
-      tagPattern: RegExp(r'^native-v\d+\.\d+\.\d+$'),
-      includePrerelease: false,
+    Object? serviceError;
+    try {
+      final service = await _fetchServiceRelease();
+      if (service != null) return service;
+    } catch (error) {
+      serviceError = error;
+    }
+    try {
+      final releases = await _fetchReleases();
+      return _selectRelease(
+        releases,
+        tagPattern: RegExp(r'^native-v\d+\.\d+\.\d+$'),
+        includePrerelease: false,
+      );
+    } catch (error) {
+      throw Exception(
+        '更新检查失败：服务地址${serviceError == null ? '不可用' : '连接失败'}，GitHub 也不可用（$error）',
+      );
+    }
+  }
+
+  Future<UpdateInfo?> _fetchServiceRelease() async {
+    final uri = Uri.parse(
+      'https://ledger.eyeme.online/api/native-update?ts=${DateTime.now().millisecondsSinceEpoch}',
     );
+    final response = await _client
+        .get(
+          uri,
+          headers: const {
+            'Accept': 'application/json',
+            'Cache-Control': 'no-cache, no-store',
+            'Pragma': 'no-cache',
+            'User-Agent': 'Neo-Ledger-Native',
+          },
+        )
+        .timeout(_timeout);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('服务地址更新检查失败（HTTP ${response.statusCode}）');
+    }
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('服务地址更新响应格式无效');
+    }
+    if (decoded['tag'] == null) return null;
+    return UpdateInfo.fromService(decoded);
   }
 
   /// Preview builds stay out of the stable update channel so a production

@@ -118,35 +118,19 @@ class MobileProfilePage extends StatelessWidget {
             subtitle: '账本、账户资产、分类标签和备份恢复',
             child: Column(
               children: [
-                _SectionHeader(
-                  title: '我的账本',
-                  action: '${controller.ledgers.length} 个',
-                ),
-                const SizedBox(height: 8),
-                ...controller.ledgers.map(
-                  (ledger) => _SettingsRow(
-                    icon: ledger.icon,
-                    title: ledger.name,
-                    subtitle: ledger.id == controller.selectedLedger?.id
-                        ? '当前使用中'
-                        : '切换账本',
-                    onTap: () async {
-                      final index = controller.ledgers.indexOf(ledger);
-                      if (index >= 0) await controller.selectLedger(index);
-                    },
-                  ),
-                ),
                 _SettingsRow(
-                  icon: '➕',
-                  title: '新建账本',
-                  subtitle: '为家庭、旅行或不同目标创建独立账本',
+                  icon: '📚',
+                  title: '我的账本',
+                  subtitle:
+                      '${controller.ledgers.length} 个账本 · 当前：${controller.selectedLedger?.name ?? '未选择'}',
                   onTap: () => showModalBottomSheet<void>(
                     context: context,
                     isScrollControlled: true,
                     useSafeArea: true,
                     showDragHandle: true,
                     backgroundColor: _mobileSurface,
-                    builder: (_) => LedgerSheet(controller: controller),
+                    builder: (_) =>
+                        MobileLedgerManagerSheet(controller: controller),
                   ),
                 ),
                 _SettingsRow(
@@ -334,12 +318,28 @@ class MobileProfilePage extends StatelessWidget {
             title: '应用',
             subtitle: '应用更新与版本信息 · v$nativeVersion',
             initiallyExpanded: false,
-            child: _SettingsRow(
-              icon: '⬇️',
-              title: '检查版本更新',
-              subtitle: '检查正式版并下载当前平台安装包',
-              onTap: () =>
-                  _checkMobileUpdate(context, controller, nativeVersion),
+            child: Column(
+              children: [
+                _SettingsRow(
+                  icon: '📖',
+                  title: '操作手册',
+                  subtitle: '按页面说明记账、管理账本、同步和更新',
+                  onTap: () => showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    showDragHandle: true,
+                    backgroundColor: _mobileSurface,
+                    builder: (_) => const MobileUserGuideSheet(),
+                  ),
+                ),
+                _SettingsRow(
+                  icon: '⬇️',
+                  title: '检查版本更新',
+                  subtitle: '服务地址优先，GitHub 自动备用下载',
+                  onTap: () =>
+                      _checkMobileUpdate(context, controller, nativeVersion),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 18),
@@ -484,6 +484,225 @@ class MobileProfilePage extends StatelessWidget {
   }
 }
 
+class MobileLedgerManagerSheet extends StatefulWidget {
+  const MobileLedgerManagerSheet({required this.controller, super.key});
+
+  final LedgerController controller;
+
+  @override
+  State<MobileLedgerManagerSheet> createState() =>
+      _MobileLedgerManagerSheetState();
+}
+
+class _MobileLedgerManagerSheetState extends State<MobileLedgerManagerSheet> {
+  bool busy = false;
+
+  Future<void> _openLedger([Ledger? existing]) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (_) => LedgerSheet(
+        controller: widget.controller,
+        existing: existing,
+        onDelete: existing == null ? null : () => _deleteLedger(existing),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _selectLedger(int index) async {
+    setState(() => busy = true);
+    try {
+      await widget.controller.selectLedger(index);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('已切换账本')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('切换账本失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> _deleteLedger(Ledger item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除账本？'),
+        content: Text('“${item.name}”及其账单、账户和规划数据将一起删除，此操作不可撤销。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    setState(() => busy = true);
+    try {
+      await widget.controller.deleteLedger(item);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('账本已删除')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('删除账本失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ledgers = widget.controller.ledgers;
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('我的账本', style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: 6),
+            Text(
+              '在这里统一切换、新建、编辑或删除账本；账本之间的流水、账户和规划数据相互隔离。',
+              style: TextStyle(color: _mobileMuted, height: 1.45),
+            ),
+            const SizedBox(height: 14),
+            for (var index = 0; index < ledgers.length; index++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Material(
+                  color: _mobileSurfaceRaised,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: BorderSide(color: _mobileLine),
+                  ),
+                  child: ListTile(
+                    enabled: !busy,
+                    leading: Text(
+                      ledgers[index].icon,
+                      style: const TextStyle(fontSize: 25),
+                    ),
+                    title: Text(
+                      ledgers[index].name,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    subtitle: Text(
+                      ledgers[index].id == widget.controller.selectedLedger?.id
+                          ? '当前使用中'
+                          : '点击切换账本',
+                    ),
+                    onTap: () => _selectLedger(index),
+                    trailing: IconButton(
+                      tooltip: '编辑账本',
+                      onPressed: busy
+                          ? null
+                          : () => _openLedger(ledgers[index]),
+                      icon: Icon(Icons.edit_outlined, color: _mobileMuted),
+                    ),
+                  ),
+                ),
+              ),
+            const SizedBox(height: 4),
+            FilledButton.icon(
+              onPressed: busy ? null : () => _openLedger(),
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('新建账本'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class MobileUserGuideSheet extends StatelessWidget {
+  const MobileUserGuideSheet({super.key});
+
+  static const sections = <({String title, String text})>[
+    (
+      title: '首页与记账',
+      text: '首页查看当前账本的结余、预算和待办。点击中间的“+”进入记一笔，选择收入、支出或转账，填写金额、账户、分类和时间后确认保存。',
+    ),
+    (
+      title: '我的账本',
+      text: '进入“我的 → 账本与数据 → 我的账本”可以切换、新建、编辑和删除账本。账本是数据隔离的第一层，家庭、旅行和个人记录建议分别建立账本。',
+    ),
+    (
+      title: '账单与分析',
+      text: '账单页按月份查看和搜索流水；分析页查看分类、趋势、预算和资产变化。点击图表或分类可以继续下钻到对应流水。',
+    ),
+    (
+      title: '规划与目标',
+      text: '在“全部功能 → 管理规划”维护预算、订阅、周期记账、分期和储蓄目标。周期任务到期后会生成待处理记录，先确认再计入账本。',
+    ),
+    (
+      title: '自动记账与导入',
+      text: 'Android 自动记账只读取已授权的通知和支付完成界面；截图识别与 CSV/JSON 导入都会先预览，检查金额和分类后再写入。',
+    ),
+    (
+      title: '连接、同步与备份',
+      text: '连接与同步中统一设置服务地址。公网统一使用 https://ledger.eyeme.online；数据与备份中可导出 JSON，升级或批量导入前建议先备份。',
+    ),
+    (
+      title: '隐私与更新',
+      text: '隐私与安全负责应用锁、登录设备、二次验证和诊断。版本更新会先检查服务地址，下载失败自动切换 GitHub 备用地址；Android 安装仍需系统确认。',
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('操作手册', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 6),
+          Text(
+            '移动端与桌面端共用同一账号和账本数据。下面按常用任务说明入口和注意事项。',
+            style: TextStyle(color: _mobileMuted, height: 1.45),
+          ),
+          const SizedBox(height: 14),
+          for (final section in sections)
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: const EdgeInsets.only(bottom: 10),
+              title: Text(
+                section.title,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    section.text,
+                    style: TextStyle(color: _mobileMuted, height: 1.55),
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
 Future<void> _checkMobileUpdate(
   BuildContext context,
   LedgerController controller,
@@ -500,19 +719,31 @@ Future<void> _checkMobileUpdate(
     }
 
     final platform = controller.isAndroid ? 'android' : 'ios';
-    final asset = latest.assetFor(platform);
+    final asset = latest.serviceAssetFor(platform) ?? latest.assetFor(platform);
     final assetName = latest.assetNameFor(platform);
     final uri = Uri.tryParse(asset ?? latest.releaseUrl);
     if (controller.isAndroid &&
         asset != null &&
         assetName != null &&
         assetName.toLowerCase().endsWith('.apk')) {
-      final result = await controller.installAndroidUpdate(
-        version: latest.version,
-        apkUrl: asset,
-        apkName: assetName,
-        checksumUrl: latest.checksumManifestUrl,
-      );
+      Map<String, dynamic> result;
+      try {
+        result = await controller.installAndroidUpdate(
+          version: latest.version,
+          apkUrl: asset,
+          apkName: assetName,
+          checksumUrl: latest.checksumManifestUrl,
+        );
+      } catch (_) {
+        final fallback = latest.githubAssetFor('android');
+        if (fallback == null || fallback == asset) rethrow;
+        result = await controller.installAndroidUpdate(
+          version: latest.version,
+          apkUrl: fallback,
+          apkName: assetName,
+          checksumUrl: latest.githubChecksumManifestUrl,
+        );
+      }
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('${result['message'] ?? '已开始安装更新'}')),

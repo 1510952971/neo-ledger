@@ -874,14 +874,25 @@ export function AuthPanel({
                 </div>
               )}
               <div className="passkey-management">
-                <strong>Passkey</strong>
-                <button type="button" onClick={() => void addPasskey()} disabled={pending}>添加当前设备</button>
-                <button type="button" onClick={() => void loadPasskeys()} disabled={pending}>刷新列表</button>
+                <div className="security-subsection-heading">
+                  <strong>Passkey</strong>
+                  <span>用设备生物识别或系统密钥安全登录</span>
+                </div>
+                <div className="security-action-row">
+                  <button type="button" onClick={() => void addPasskey()} disabled={pending}>添加当前设备</button>
+                  <button type="button" onClick={() => void loadPasskeys()} disabled={pending}>刷新列表</button>
+                </div>
                 {passkeys.length > 0 && <ul>{passkeys.map((item) => <li key={item.id}><span>{item.label} · {item.backedUp ? "已同步" : "仅此设备"}</span><button type="button" onClick={() => void removePasskey(item.id)} disabled={pending}>撤销</button></li>)}</ul>}
               </div>
               <div className="session-management">
-                <button type="button" onClick={() => void loadSessions()}>刷新设备会话</button>
-                <button type="button" onClick={() => void revokeOtherSessions()} disabled={pending}>注销其他设备</button>
+                <div className="security-subsection-heading">
+                  <strong>登录设备与会话</strong>
+                  <span>发现陌生设备时可立即撤销</span>
+                </div>
+                <div className="security-action-row">
+                  <button type="button" onClick={() => void loadSessions()}>刷新设备会话</button>
+                  <button type="button" onClick={() => void revokeOtherSessions()} disabled={pending}>注销其他设备</button>
+                </div>
                 {sessionList.length > 0 && <ul>{sessionList.map((item) => <li key={item.id}>{item.current ? "当前设备" : item.displayName} · 最近使用 {new Date(item.lastUsedAt).toLocaleString("zh-CN")}</li>)}</ul>}
               </div>
             </section>

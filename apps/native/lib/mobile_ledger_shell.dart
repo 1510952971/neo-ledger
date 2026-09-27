@@ -103,6 +103,7 @@ class MobileLedgerShell extends StatefulWidget {
 class _MobileLedgerShellState extends State<MobileLedgerShell>
     with WidgetsBindingObserver {
   int _tab = 0;
+  bool _bottomBarExpanded = true;
   bool _locked = false;
   bool _lockInitialized = false;
   bool _refreshInFlight = false;
@@ -295,32 +296,64 @@ class _MobileLedgerShellState extends State<MobileLedgerShell>
                 : FloatingActionButtonLocation.centerFloat,
             bottomNavigationBar: useRail
                 ? null
-                : NavigationBar(
-                    selectedIndex: _tab,
-                    onDestinationSelected: (index) =>
-                        setState(() => _tab = index),
-                    destinations: [
-                      NavigationDestination(
-                        icon: Icon(Icons.home_outlined),
-                        selectedIcon: Icon(Icons.home_rounded),
-                        label: strings.home,
+                : SafeArea(
+                    top: false,
+                    child: AnimatedSize(
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                      alignment: Alignment.bottomCenter,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: IconButton(
+                              tooltip: _bottomBarExpanded ? '收起底部栏' : '展开底部栏',
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () => setState(
+                                () => _bottomBarExpanded = !_bottomBarExpanded,
+                              ),
+                              icon: Icon(
+                                _bottomBarExpanded
+                                    ? Icons.keyboard_arrow_down_rounded
+                                    : Icons.keyboard_arrow_up_rounded,
+                                color: _mobileMuted,
+                              ),
+                            ),
+                          ),
+                          if (_bottomBarExpanded)
+                            NavigationBar(
+                              selectedIndex: _tab,
+                              onDestinationSelected: (index) =>
+                                  setState(() => _tab = index),
+                              destinations: [
+                                NavigationDestination(
+                                  icon: Icon(Icons.home_outlined),
+                                  selectedIcon: Icon(Icons.home_rounded),
+                                  label: strings.home,
+                                ),
+                                NavigationDestination(
+                                  icon: Icon(Icons.receipt_long_outlined),
+                                  selectedIcon: Icon(
+                                    Icons.receipt_long_rounded,
+                                  ),
+                                  label: strings.bills,
+                                ),
+                                NavigationDestination(
+                                  icon: Icon(Icons.insights_outlined),
+                                  selectedIcon: Icon(Icons.insights_rounded),
+                                  label: strings.analytics,
+                                ),
+                                NavigationDestination(
+                                  icon: Icon(Icons.person_outline_rounded),
+                                  selectedIcon: Icon(Icons.person_rounded),
+                                  label: strings.profile,
+                                ),
+                              ],
+                            ),
+                        ],
                       ),
-                      NavigationDestination(
-                        icon: Icon(Icons.receipt_long_outlined),
-                        selectedIcon: Icon(Icons.receipt_long_rounded),
-                        label: strings.bills,
-                      ),
-                      NavigationDestination(
-                        icon: Icon(Icons.insights_outlined),
-                        selectedIcon: Icon(Icons.insights_rounded),
-                        label: strings.analytics,
-                      ),
-                      NavigationDestination(
-                        icon: Icon(Icons.person_outline_rounded),
-                        selectedIcon: Icon(Icons.person_rounded),
-                        label: strings.profile,
-                      ),
-                    ],
+                    ),
                   ),
           );
         },

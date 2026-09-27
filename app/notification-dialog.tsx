@@ -1,6 +1,7 @@
 import type { RefObject } from "react";
 import type { PendingFlow, SystemNotice } from "./notification-actions";
 import { PendingTransactionSection } from "./pending-transaction-section";
+import { humanizeNotificationMessage } from "./notification-format";
 
 type Props = {
   open: boolean;
@@ -44,7 +45,7 @@ export function NotificationDialog({
           {notices.length ? notices.slice(0, 10).map((item) => (
             <article key={item.id}>
               <div><strong>{item.title}</strong><small>{item.createdAt}</small></div>
-              <p>{item.message}</p>
+              <p>{humanizeNotificationMessage(item.message)}</p>
             </article>
           )) : <p className="pipeline-empty">目前没有新的系统通知。</p>}
         </section>

@@ -486,9 +486,31 @@ jobs:
                 exit 1
               }
             done
-            sha256sum -c SHA256SUMS.txt
+              sha256sum -c SHA256SUMS.txt
           )
+          cat > release-assets/UPDATE_MIRRORS.json <<EOF
+          {
+            "schemaVersion": 1,
+            "tag": "$GITHUB_REF_NAME",
+            "github": "https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME",
+            "service": "https://ledger.eyeme.online/api/native-update",
+            "downloadProxy": "https://ledger.eyeme.online/api/native-update/download"
+          }
+          EOF
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "${GITHUB_REF_NAME}" release-assets/* --repo "${GITHUB_REPOSITORY}" --title "Neo Ledger ${GITHUB_REF_NAME#native-v}" --verify-tag --generate-notes
+      - name: Verify service update mirror
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          TAG="$VERSION"
+          APK="neo-ledger-android-${TAG#native-v}.apk"
+          curl --fail --silent --show-error --location --retry 8 --retry-all-errors --retry-delay 10 \
+            --max-time 30 "https://ledger.eyeme.online/api/native-update" \
+            | grep -F '"tag":"' >/dev/null
+          curl --fail --silent --show-error --location --retry 8 --retry-all-errors --retry-delay 10 \
+            --max-time 60 -o /dev/null \
+            "https://ledger.eyeme.online/api/native-update/download?tag=${TAG}&asset=${APK}"
