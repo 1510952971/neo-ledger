@@ -210,6 +210,12 @@ export function DataCenterDialog({
           <input name="pin" type="password" inputMode="numeric" maxLength={4} pattern="\d{4}" placeholder="设置4位数字 PIN（仅防窥屏）" />
           <button disabled={pending || privacyLock.pending}>保存隐私设置</button>
         </form>
+        <NativeUpdateSection
+          info={nativeUpdate.info}
+          checking={nativeUpdate.checking}
+          error={nativeUpdate.error}
+          onCheck={nativeUpdate.onCheck}
+        />
         <AppUpdateSection
           info={update.info}
           checking={update.checking}
@@ -217,12 +223,6 @@ export function DataCenterDialog({
           error={update.error}
           onCheck={update.onCheck}
           onApply={update.onApply}
-        />
-        <NativeUpdateSection
-          info={nativeUpdate.info}
-          checking={nativeUpdate.checking}
-          error={nativeUpdate.error}
-          onCheck={nativeUpdate.onCheck}
         />
         <BillImportSection
           pending={pending}

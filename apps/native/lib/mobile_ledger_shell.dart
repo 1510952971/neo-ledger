@@ -103,7 +103,10 @@ class MobileLedgerShell extends StatefulWidget {
 class _MobileLedgerShellState extends State<MobileLedgerShell>
     with WidgetsBindingObserver {
   int _tab = 0;
-  bool _bottomBarExpanded = true;
+  // On phones the primary navigation is a compact left rail.  Keep it
+  // collapsed by default so the content still gets the full width, while
+  // allowing users to expand it whenever they need the labels.
+  bool _bottomBarExpanded = false;
   bool _locked = false;
   bool _lockInitialized = false;
   bool _refreshInFlight = false;
@@ -234,6 +237,28 @@ class _MobileLedgerShellState extends State<MobileLedgerShell>
       child: LayoutBuilder(
         builder: (context, constraints) {
           final useRail = mobileUsesNavigationRail(constraints.maxWidth);
+          final destinations = [
+            NavigationRailDestination(
+              icon: Icon(Icons.home_outlined),
+              selectedIcon: Icon(Icons.home_rounded),
+              label: Text(strings.home),
+            ),
+            NavigationRailDestination(
+              icon: Icon(Icons.receipt_long_outlined),
+              selectedIcon: Icon(Icons.receipt_long_rounded),
+              label: Text(strings.bills),
+            ),
+            NavigationRailDestination(
+              icon: Icon(Icons.insights_outlined),
+              selectedIcon: Icon(Icons.insights_rounded),
+              label: Text(strings.analytics),
+            ),
+            NavigationRailDestination(
+              icon: Icon(Icons.person_outline_rounded),
+              selectedIcon: Icon(Icons.person_rounded),
+              label: Text(strings.profile),
+            ),
+          ];
           return Scaffold(
             backgroundColor: _mobileBg,
             body: Row(
@@ -244,28 +269,42 @@ class _MobileLedgerShellState extends State<MobileLedgerShell>
                     labelType: NavigationRailLabelType.all,
                     onDestinationSelected: (index) =>
                         setState(() => _tab = index),
-                    destinations: [
-                      NavigationRailDestination(
-                        icon: Icon(Icons.home_outlined),
-                        selectedIcon: Icon(Icons.home_rounded),
-                        label: Text(strings.home),
+                    destinations: destinations,
+                  )
+                else
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOutCubic,
+                    width: _bottomBarExpanded ? 156 : 72,
+                    decoration: BoxDecoration(
+                      color: _mobileSurfaceRaised,
+                      border: Border(right: BorderSide(color: _mobileLine)),
+                    ),
+                    child: SafeArea(
+                      right: false,
+                      child: NavigationRail(
+                        extended: _bottomBarExpanded,
+                        minWidth: 72,
+                        minExtendedWidth: 156,
+                        labelType: NavigationRailLabelType.none,
+                        leading: IconButton(
+                          tooltip: _bottomBarExpanded ? '收起侧边栏' : '展开侧边栏',
+                          onPressed: () => setState(
+                            () => _bottomBarExpanded = !_bottomBarExpanded,
+                          ),
+                          icon: Icon(
+                            _bottomBarExpanded
+                                ? Icons.keyboard_double_arrow_left_rounded
+                                : Icons.menu_rounded,
+                            color: _mobileMuted,
+                          ),
+                        ),
+                        selectedIndex: _tab,
+                        onDestinationSelected: (index) =>
+                            setState(() => _tab = index),
+                        destinations: destinations,
                       ),
-                      NavigationRailDestination(
-                        icon: Icon(Icons.receipt_long_outlined),
-                        selectedIcon: Icon(Icons.receipt_long_rounded),
-                        label: Text(strings.bills),
-                      ),
-                      NavigationRailDestination(
-                        icon: Icon(Icons.insights_outlined),
-                        selectedIcon: Icon(Icons.insights_rounded),
-                        label: Text(strings.analytics),
-                      ),
-                      NavigationRailDestination(
-                        icon: Icon(Icons.person_outline_rounded),
-                        selectedIcon: Icon(Icons.person_rounded),
-                        label: Text(strings.profile),
-                      ),
-                    ],
+                    ),
                   ),
                 Expanded(
                   child: Center(
@@ -291,70 +330,8 @@ class _MobileLedgerShellState extends State<MobileLedgerShell>
                 child: const Icon(Icons.add_rounded, size: 30),
               ),
             ),
-            floatingActionButtonLocation: useRail
-                ? FloatingActionButtonLocation.endFloat
-                : FloatingActionButtonLocation.centerFloat,
-            bottomNavigationBar: useRail
-                ? null
-                : SafeArea(
-                    top: false,
-                    child: AnimatedSize(
-                      duration: const Duration(milliseconds: 220),
-                      curve: Curves.easeOutCubic,
-                      alignment: Alignment.bottomCenter,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: IconButton(
-                              tooltip: _bottomBarExpanded ? '收起底部栏' : '展开底部栏',
-                              visualDensity: VisualDensity.compact,
-                              onPressed: () => setState(
-                                () => _bottomBarExpanded = !_bottomBarExpanded,
-                              ),
-                              icon: Icon(
-                                _bottomBarExpanded
-                                    ? Icons.keyboard_arrow_down_rounded
-                                    : Icons.keyboard_arrow_up_rounded,
-                                color: _mobileMuted,
-                              ),
-                            ),
-                          ),
-                          if (_bottomBarExpanded)
-                            NavigationBar(
-                              selectedIndex: _tab,
-                              onDestinationSelected: (index) =>
-                                  setState(() => _tab = index),
-                              destinations: [
-                                NavigationDestination(
-                                  icon: Icon(Icons.home_outlined),
-                                  selectedIcon: Icon(Icons.home_rounded),
-                                  label: strings.home,
-                                ),
-                                NavigationDestination(
-                                  icon: Icon(Icons.receipt_long_outlined),
-                                  selectedIcon: Icon(
-                                    Icons.receipt_long_rounded,
-                                  ),
-                                  label: strings.bills,
-                                ),
-                                NavigationDestination(
-                                  icon: Icon(Icons.insights_outlined),
-                                  selectedIcon: Icon(Icons.insights_rounded),
-                                  label: strings.analytics,
-                                ),
-                                NavigationDestination(
-                                  icon: Icon(Icons.person_outline_rounded),
-                                  selectedIcon: Icon(Icons.person_rounded),
-                                  label: strings.profile,
-                                ),
-                              ],
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
+            floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+            bottomNavigationBar: null,
           );
         },
       ),

@@ -900,31 +900,79 @@ class _MobileAddTransactionPageState extends State<MobileAddTransactionPage> {
       context: context,
       backgroundColor: _mobileSurface,
       showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: controller.activeAccounts
-              .map(
-                (account) => ListTile(
-                  leading: Text(
-                    account.icon,
-                    style: const TextStyle(fontSize: 24),
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) {
+        final bottomInset = MediaQuery.paddingOf(context).bottom;
+        return ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * .78,
+          ),
+          child: SafeArea(
+            top: true,
+            bottom: true,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(8, 2, 8, 8),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        '选择账户',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
                   ),
-                  title: Text(account.name),
-                  subtitle: Text(
-                    '${controller.preferences.hideAmounts ? '••••' : _mobileMoney(account.balanceCents)} · ${account.currency} · ${account.type}',
-                    style: TextStyle(color: _mobileMuted),
+                  Flexible(
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      padding: EdgeInsets.only(bottom: bottomInset + 16),
+                      itemCount: controller.activeAccounts.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 2),
+                      itemBuilder: (context, index) {
+                        final account = controller.activeAccounts[index];
+                        return ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          leading: Text(
+                            account.icon,
+                            style: const TextStyle(fontSize: 24),
+                          ),
+                          title: Text(
+                            account.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            '${controller.preferences.hideAmounts ? '••••' : _mobileMoney(account.balanceCents)} · ${account.currency} · ${account.type}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: _mobileMuted),
+                          ),
+                          trailing:
+                              account.id ==
+                                  (isDestination ? _toAccountId : _accountId)
+                              ? Icon(Icons.check_rounded, color: _mobileBrand)
+                              : null,
+                          onTap: () => Navigator.pop(context, account.id),
+                        );
+                      },
+                    ),
                   ),
-                  trailing:
-                      account.id == (isDestination ? _toAccountId : _accountId)
-                      ? Icon(Icons.check_rounded, color: _mobileBrand)
-                      : null,
-                  onTap: () => Navigator.pop(context, account.id),
-                ),
-              )
-              .toList(),
-        ),
-      ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
     if (id != null) {
       setState(() {

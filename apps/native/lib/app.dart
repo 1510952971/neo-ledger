@@ -35,7 +35,7 @@ const _brand = Color(0xffa5ff4f);
 const _surface = Color(0xff101116);
 const _surfaceAlt = Color(0xff1b1b23);
 const _muted = Color(0xffa4a8a1);
-const _nativeVersion = '1.4.6';
+const _nativeVersion = '1.4.7';
 const _shortcutChannel = MethodChannel('online.eyeme.neo_ledger/shortcuts');
 const _assetTypes = [
   '房产',
@@ -14034,35 +14034,78 @@ class NotificationSheet extends StatelessWidget {
                         separatorBuilder: (_, _) => const SizedBox(height: 8),
                         itemBuilder: (context, index) {
                           final item = items[index];
+                          final unread = !item.read;
+                          final darkCard = unread
+                              ? const Color(0xff29441f)
+                              : MobileColors.surfaceRaised;
+                          final cardText = unread
+                              ? const Color(0xfff5f8f1)
+                              : MobileColors.foreground;
+                          final cardMuted = unread
+                              ? const Color(0xffd8e8d0)
+                              : MobileColors.muted;
                           return Card(
-                            color: item.read
-                                ? _surfaceAlt
-                                : const Color(0xff304d25),
-                            child: ListTile(
-                              leading: Icon(
-                                item.read
-                                    ? Icons.notifications_none
-                                    : Icons.notifications_active,
-                                color: item.read ? Colors.white70 : _brand,
+                            color: darkCard,
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(
+                                14,
+                                12,
+                                14,
+                                12,
                               ),
-                              title: Text(
-                                item.title,
-                                style: TextStyle(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurface,
-                                  fontWeight: FontWeight.w700,
-                                ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Icon(
+                                      unread
+                                          ? Icons.notifications_active
+                                          : Icons.notifications_none,
+                                      color: unread
+                                          ? MobileColors.brand
+                                          : cardMuted,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          item.title,
+                                          softWrap: true,
+                                          style: TextStyle(
+                                            color: cardText,
+                                            fontWeight: FontWeight.w800,
+                                            height: 1.3,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          item.message,
+                                          softWrap: true,
+                                          style: TextStyle(
+                                            color: cardMuted,
+                                            height: 1.5,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 5),
+                                        Text(
+                                          _date(item.createdAt),
+                                          style: TextStyle(
+                                            color: cardMuted.withValues(
+                                              alpha: .82,
+                                            ),
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ),
-                              subtitle: Text(
-                                '${item.message}\n${_date(item.createdAt)}',
-                                style: TextStyle(
-                                  color: Theme.of(context).colorScheme.onSurface
-                                      .withValues(alpha: .72),
-                                  height: 1.45,
-                                ),
-                              ),
-                              isThreeLine: true,
                             ),
                           );
                         },
@@ -14094,7 +14137,11 @@ class _CountBadge extends StatelessWidget {
       alignment: Alignment.center,
       child: Text(
         count > 99 ? '99+' : '$count',
-        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+        ),
       ),
     );
   }

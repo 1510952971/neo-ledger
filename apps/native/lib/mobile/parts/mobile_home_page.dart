@@ -130,7 +130,9 @@ class _MobileHomePageState extends State<MobileHomePage> {
                       borderRadius: BorderRadius.circular(9),
                     ),
                     child: Text(
-                      '${controller.unreadNotificationCount}',
+                      controller.unreadNotificationCount > 99
+                          ? '99+'
+                          : '${controller.unreadNotificationCount}',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 10,
