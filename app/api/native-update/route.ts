@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { GITHUB_REPOSITORY } from "../../app-version";
-import { compareVersions, normalizeReleaseTag } from "../../update-rules.js";
+import { compareVersions } from "../../update-rules.js";
 
 type ReleaseAsset = {
   name?: string;
@@ -61,8 +61,9 @@ export async function GET(request: Request) {
         headers: { "Cache-Control": "no-store" },
       });
     }
-    const tag = normalizeReleaseTag(release.tag_name);
-    if (!tag) throw new Error("原生客户端发布标签无效");
+    const tag = String(release.tag_name ?? "");
+    if (!/^native-v\d+\.\d+\.\d+$/.test(tag))
+      throw new Error("原生客户端发布标签无效");
     const githubAssets = Object.fromEntries(
       (release.assets ?? [])
         .filter((asset) => asset.name && asset.browser_download_url)
@@ -74,9 +75,9 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         currentVersion: null,
-        latestVersion: tag.slice(1),
+        latestVersion: tag.slice("native-v".length),
         tag,
-        releaseName: release.name ?? `Neo Ledger ${tag.slice(1)}`,
+        releaseName: release.name ?? `Neo Ledger ${tag.slice("native-v".length)}`,
         notes: String(release.body ?? "").slice(0, 4000),
         publishedAt: release.published_at ?? null,
         releaseUrl: release.html_url ?? `https://github.com/${GITHUB_REPOSITORY}/releases`,

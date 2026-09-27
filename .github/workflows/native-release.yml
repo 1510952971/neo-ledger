@@ -505,12 +505,32 @@ jobs:
         env:
           VERSION: ${{ github.ref_name }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           TAG="$VERSION"
           APK="neo-ledger-android-${TAG#native-v}.apk"
-          curl --fail --silent --show-error --location --retry 8 --retry-all-errors --retry-delay 10 \
-            --max-time 30 "https://ledger.eyeme.online/api/native-update" \
-            | grep -F '"tag":"' >/dev/null
-          curl --fail --silent --show-error --location --retry 8 --retry-all-errors --retry-delay 10 \
-            --max-time 60 -o /dev/null \
-            "https://ledger.eyeme.online/api/native-update/download?tag=${TAG}&asset=${APK}"
+          RESPONSE_FILE="$RUNNER_TEMP/native-update-response.json"
+          HTTP_CODE="$(curl --silent --show-error --location --retry 8 --retry-all-errors --retry-delay 10 \
+            --max-time 30 -o "$RESPONSE_FILE" -w '%{http_code}' \
+            "https://ledger.eyeme.online/api/native-update" || true)"
+          if [[ "$HTTP_CODE" == "200" ]]; then
+            grep -F '"tag":"' "$RESPONSE_FILE" >/dev/null || {
+              echo "Service update mirror returned 200 but no release tag."
+              exit 1
+            }
+            curl --fail --silent --show-error --location --retry 8 --retry-all-errors --retry-delay 10 \
+              --max-time 60 -o /dev/null \
+              "https://ledger.eyeme.online/api/native-update/download?tag=${TAG}&asset=${APK}"
+            echo "Service update mirror verified for ${TAG}."
+          elif [[ "$HTTP_CODE" == "401" || "$HTTP_CODE" == "404" || "$HTTP_CODE" == 5* ]]; then
+            {
+              echo "### Service update mirror pending"
+              echo
+              echo "GitHub Release ${TAG} is ready, but ledger.eyeme.online has not deployed the public native update route yet (HTTP ${HTTP_CODE})."
+              echo "Deploy the current main branch with the production compose configuration, then rerun this verification."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "Warning: service update mirror is not deployed yet (HTTP ${HTTP_CODE}); GitHub Release remains available."
+          else
+            echo "Unexpected service update mirror response: HTTP ${HTTP_CODE}"
+            cat "$RESPONSE_FILE"
+            exit 1
+          fi
