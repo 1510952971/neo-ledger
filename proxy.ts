@@ -159,6 +159,8 @@ export async function proxy(request: NextRequest) {
   const externalTokenRoute =
     pathname === "/api/openapi.json" ||
     pathname === "/api/health" ||
+    pathname === "/api/native-update" ||
+    pathname.startsWith("/api/native-update/") ||
     pathname.startsWith("/api/v1/webhook/") ||
     pathname === "/api/v1/transactions" ||
     pathname.startsWith("/api/external/");
