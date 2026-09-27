@@ -7,7 +7,9 @@ import type { QuickSyncStatus } from "./quick-sync-state";
 import type { RestoreSnapshot, SyncConflictReport } from "./data-center-restore-state";
 import type { RestoreSummary } from "./restore-result-state";
 import type { AppUpdateInfo } from "./app-update-control";
+import type { NativeUpdateInfo } from "./native-update-control";
 import { AppUpdateSection } from "./app-update-section";
+import { NativeUpdateSection } from "./native-update-section";
 import { BillImportSection } from "./bill-import-section";
 import { NearbySyncSection } from "./nearby-sync-section";
 import { WebdavSyncSection } from "./webdav-sync-section";
@@ -124,6 +126,7 @@ export function DataCenterDialog({
   restore,
   privacyLock,
   update,
+  nativeUpdate,
   billImport,
   nearby,
   webdav,
@@ -143,6 +146,12 @@ export function DataCenterDialog({
     error: string;
     onCheck: () => void | Promise<unknown>;
     onApply: () => void | Promise<unknown>;
+  };
+  nativeUpdate: {
+    info: NativeUpdateInfo | null;
+    checking: boolean;
+    error: string;
+    onCheck: () => void | Promise<unknown>;
   };
   billImport: BillImportModel;
   nearby: NearbyModel;
@@ -208,6 +217,12 @@ export function DataCenterDialog({
           error={update.error}
           onCheck={update.onCheck}
           onApply={update.onApply}
+        />
+        <NativeUpdateSection
+          info={nativeUpdate.info}
+          checking={nativeUpdate.checking}
+          error={nativeUpdate.error}
+          onCheck={nativeUpdate.onCheck}
         />
         <BillImportSection
           pending={pending}

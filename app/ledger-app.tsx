@@ -110,6 +110,7 @@ import { useSavingsGoalManagerState } from "./savings-goal-manager-state";
 import { useAccountManagerState } from "./account-manager-state";
 import { formatAppDateTime, parseAppDate } from "./date-format";
 import { useAppUpdateControl, type AppUpdateInfo } from "./app-update-control";
+import { useNativeUpdateControl } from "./native-update-control";
 import { useQuickSyncState } from "./quick-sync-state";
 import {
   buildAndroidCompanionConfig,
@@ -718,6 +719,7 @@ export function LedgerApp({
   const dataCenterRestore = useDataCenterRestoreState({ active: dataOpen });
   const { restoreSnapshots, lastMergeReport, setLastMergeReport } = dataCenterRestore;
   const appUpdate = useAppUpdateControl();
+  const nativeUpdate = useNativeUpdateControl();
   const { info: updateInfo, checking: updateChecking, applying: updateApplying, error: updateError } = appUpdate;
   const planningState = usePlanningState({
     categoryBudgets,
@@ -4405,6 +4407,12 @@ export function LedgerApp({
           error: updateError,
           onCheck: appUpdate.check,
           onApply: applyAppUpdate,
+        }}
+        nativeUpdate={{
+          info: nativeUpdate.info,
+          checking: nativeUpdate.checking,
+          error: nativeUpdate.error,
+          onCheck: nativeUpdate.check,
         }}
         billImport={{
           status: billImportStatus,
