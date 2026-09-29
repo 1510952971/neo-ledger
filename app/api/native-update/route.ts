@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { NextResponse } from "next/server";
 import { GITHUB_REPOSITORY } from "../../app-version";
 import { compareVersions } from "../../update-rules.js";
@@ -48,6 +49,18 @@ async function latestNativeRelease() {
 
 function mirrorUrl(request: Request, tag: string, asset: string) {
   const url = new URL("/api/native-update/download", request.url);
+  const configuredOrigin = String(
+    (env as unknown as Record<string, unknown>).AUTH_PUBLIC_ORIGIN ?? "",
+  ).trim();
+  try {
+    const publicUrl = new URL(configuredOrigin);
+    if (publicUrl.protocol === "https:" && publicUrl.hostname === url.hostname) {
+      url.protocol = "https:";
+      url.port = publicUrl.port;
+    }
+  } catch {
+    if (request.headers.get("x-forwarded-proto") === "https") url.protocol = "https:";
+  }
   url.searchParams.set("tag", tag);
   url.searchParams.set("asset", asset);
   return url.toString();
