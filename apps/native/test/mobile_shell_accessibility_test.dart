@@ -25,11 +25,23 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.bySemanticsLabel(RegExp(r'^首页')), findsWidgets);
-      expect(find.bySemanticsLabel(RegExp(r'^账单')), findsOneWidget);
-      expect(find.bySemanticsLabel(RegExp(r'^分析')), findsOneWidget);
-      expect(find.bySemanticsLabel(RegExp(r'^我的')), findsOneWidget);
+      expect(find.byTooltip('展开侧边栏'), findsOneWidget);
+      expect(find.byType(Drawer), findsNothing);
       expect(find.bySemanticsLabel(RegExp('记一笔')), findsOneWidget);
+
+      await tester.tap(find.byTooltip('展开侧边栏'));
+      await tester.pumpAndSettle();
+      expect(find.byType(Drawer), findsOneWidget);
+      expect(find.text('首页'), findsOneWidget);
+      expect(find.text('账单'), findsOneWidget);
+      expect(find.text('分析'), findsOneWidget);
+      expect(find.text('我的'), findsOneWidget);
+
+      await tester.tap(find.text('我的'));
+      await tester.pumpAndSettle();
+      expect(find.byType(Drawer), findsNothing);
+      expect(find.text('外观与个性化'), findsOneWidget);
+      expect(find.text('主题与外观'), findsNothing);
     } finally {
       controller.dispose();
       semantics.dispose();

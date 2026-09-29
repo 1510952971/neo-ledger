@@ -6,11 +6,13 @@ class MobileHomePage extends StatefulWidget {
     required this.controller,
     required this.onAdd,
     required this.onTransfer,
+    this.onMenuPressed,
   });
 
   final LedgerController controller;
   final VoidCallback onAdd;
   final VoidCallback onTransfer;
+  final VoidCallback? onMenuPressed;
 
   @override
   State<MobileHomePage> createState() => _MobileHomePageState();
@@ -90,6 +92,7 @@ class _MobileHomePageState extends State<MobileHomePage> {
     return _MobilePage(
       controller: controller,
       title: '首页',
+      onMenuPressed: widget.onMenuPressed,
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [

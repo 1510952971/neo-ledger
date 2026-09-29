@@ -5,12 +5,14 @@ class _MobilePage extends StatelessWidget {
     required this.controller,
     required this.title,
     required this.child,
+    this.onMenuPressed,
     this.trailing,
   });
 
   final LedgerController controller;
   final String title;
   final Widget child;
+  final VoidCallback? onMenuPressed;
   final Widget? trailing;
 
   @override
@@ -18,7 +20,18 @@ class _MobilePage extends StatelessWidget {
     return Scaffold(
       backgroundColor: _mobileBg,
       appBar: AppBar(
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+        leading:
+            onMenuPressed == null ||
+                mobileUsesNavigationRail(MediaQuery.sizeOf(context).width)
+            ? null
+            : IconButton(
+                tooltip: '展开侧边栏',
+                icon: const Icon(Icons.menu_rounded),
+                onPressed: onMenuPressed,
+              ),
+        title: onMenuPressed == null
+            ? Text(title, style: const TextStyle(fontWeight: FontWeight.w800))
+            : null,
         actions: [
           if (controller.loading)
             const Padding(
@@ -466,44 +479,44 @@ class _ChartBar extends StatelessWidget {
 }
 
 class _ProfileHeader extends StatelessWidget {
-  const _ProfileHeader({required this.user, required this.onAvatarTap});
+  const _ProfileHeader({required this.user, required this.onTap});
 
   final SessionUser? user;
-  final VoidCallback onAvatarTap;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final name = user?.displayName ?? 'Neo Ledger 用户';
-    return Row(
-      children: [
-        InkWell(
-          onTap: onAvatarTap,
-          customBorder: const CircleBorder(),
-          child: _MobileAvatar(user: user, radius: 28),
-        ),
-        const SizedBox(width: 14),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                name,
-                style: TextStyle(
-                  color: _mobileText,
-                  fontSize: 19,
-                  fontWeight: FontWeight.w800,
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Row(
+        children: [
+          _MobileAvatar(user: user, radius: 28),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: TextStyle(
+                    color: _mobileText,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                user?.username ?? '本地演示账号',
-                style: TextStyle(color: _mobileMuted, fontSize: 13),
-              ),
-            ],
+                const SizedBox(height: 4),
+                Text(
+                  user?.username ?? '本地演示账号',
+                  style: TextStyle(color: _mobileMuted, fontSize: 13),
+                ),
+              ],
+            ),
           ),
-        ),
-        Icon(Icons.chevron_right_rounded, color: _mobileMuted),
-      ],
+          Icon(Icons.chevron_right_rounded, color: _mobileMuted),
+        ],
+      ),
     );
   }
 }
@@ -674,7 +687,7 @@ class _MobileCollapsibleSection extends StatefulWidget {
     required this.title,
     required this.subtitle,
     required this.child,
-    this.initiallyExpanded = true,
+    this.initiallyExpanded = false,
   });
 
   final IconData icon;

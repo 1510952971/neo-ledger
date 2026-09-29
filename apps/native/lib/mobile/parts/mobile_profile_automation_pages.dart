@@ -5,10 +5,12 @@ class MobileProfilePage extends StatelessWidget {
     super.key,
     required this.controller,
     required this.nativeVersion,
+    this.onMenuPressed,
   });
 
   final LedgerController controller;
   final String nativeVersion;
+  final VoidCallback? onMenuPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -26,10 +28,11 @@ class MobileProfilePage extends StatelessWidget {
     return _MobilePage(
       controller: controller,
       title: '我的',
+      onMenuPressed: onMenuPressed,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(18, 8, 18, 110),
         children: [
-          _ProfileHeader(user: user, onAvatarTap: () => _pickAvatar(context)),
+          _ProfileHeader(user: user, onTap: () => _openAccount(context)),
           const SizedBox(height: 16),
           _NetWorthCard(
             assetTotal: accountAssets + digitalAssetTotal,
@@ -38,18 +41,6 @@ class MobileProfilePage extends StatelessWidget {
             hideAmounts: controller.preferences.hideAmounts,
           ),
           const SizedBox(height: 14),
-          _SettingsRow(
-            icon: '👤',
-            title: '账号资料',
-            subtitle: '${user?.username ?? '未登录'} · ${user?.email ?? '尚未绑定邮箱'}',
-            onTap: () => showModalBottomSheet<void>(
-              context: context,
-              isScrollControlled: true,
-              showDragHandle: true,
-              backgroundColor: _mobileSurface,
-              builder: (_) => ProfileAccountSheet(controller: controller),
-            ),
-          ),
           _MobileCollapsibleSection(
             icon: Icons.palette_outlined,
             title: '外观与个性化',
@@ -363,6 +354,19 @@ class MobileProfilePage extends StatelessWidget {
     );
   }
 
+  void _openAccount(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _mobileSurface,
+      builder: (_) => ProfileAccountSheet(
+        controller: controller,
+        onEditAvatar: () => _pickAvatar(context),
+      ),
+    );
+  }
+
   Future<void> _pickAvatar(BuildContext context) async {
     final action = await showModalBottomSheet<String>(
       context: context,
@@ -637,7 +641,7 @@ class MobileUserGuideSheet extends StatelessWidget {
   static const sections = <({String title, String text})>[
     (
       title: '侧边栏与一级页面',
-      text: '手机端左侧是可收起的侧边栏：点击菜单图标展开名称，再点击首页、账单、分析或我的即可切换页面。侧边栏收起时仍可通过图标导航，绿色“+”始终用于快速记一笔。',
+      text: '点击左上角三横按钮打开覆盖页面的侧边栏，选择首页、账单、分析或我的后自动收起；关闭时页面保持完整宽度。绿色“+”始终用于快速记一笔。',
     ),
     (
       title: '首页',
@@ -649,7 +653,7 @@ class MobileUserGuideSheet extends StatelessWidget {
     ),
     (
       title: '账单',
-      text: '账单页按月份浏览收支，可搜索商户、备注和分类。点开流水可查看详情、编辑或删除；修改和删除会自动重新计算相关账户余额。',
+      text: '账单页按月份浏览收支，每页最多 20 笔，底部用上一页、下一页翻页；切换月份或搜索筛选会回到第一页。点开流水可查看详情、编辑或删除；修改和删除会自动重新计算相关账户余额。',
     ),
     (
       title: '分析',
@@ -1834,9 +1838,14 @@ class _MobileAchievementTile extends StatelessWidget {
 }
 
 class ProfileAccountSheet extends StatefulWidget {
-  const ProfileAccountSheet({required this.controller, super.key});
+  const ProfileAccountSheet({
+    required this.controller,
+    required this.onEditAvatar,
+    super.key,
+  });
 
   final LedgerController controller;
+  final VoidCallback onEditAvatar;
 
   @override
   State<ProfileAccountSheet> createState() => _ProfileAccountSheetState();
@@ -1962,6 +1971,12 @@ class _ProfileAccountSheetState extends State<ProfileAccountSheet> {
           children: [
             Text('账号资料', style: Theme.of(context).textTheme.headlineSmall),
             const SizedBox(height: 14),
+            _SettingsRow(
+              icon: '🖼️',
+              title: '头像',
+              subtitle: '从相册更换或删除头像',
+              onTap: widget.onEditAvatar,
+            ),
             _SettingsRow(
               icon: '📒',
               title: '当前账本',

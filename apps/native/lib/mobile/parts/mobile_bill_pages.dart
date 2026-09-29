@@ -1,9 +1,14 @@
 part of '../../mobile_ledger_shell.dart';
 
 class MobileBillsPage extends StatefulWidget {
-  const MobileBillsPage({super.key, required this.controller});
+  const MobileBillsPage({
+    super.key,
+    required this.controller,
+    this.onMenuPressed,
+  });
 
   final LedgerController controller;
+  final VoidCallback? onMenuPressed;
 
   @override
   State<MobileBillsPage> createState() => _MobileBillsPageState();
@@ -23,7 +28,9 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
   double? _maxAmount;
   DateTime? _dateFrom;
   DateTime? _dateTo;
-  bool _loadingMore = false;
+  static const _pageSize = 20;
+  final List<String?> _pageCursors = [null];
+  int _pageIndex = 0;
   bool _selectionMode = false;
   final _selectedIds = <int>{};
   List<String> _searchHistory = const [];
@@ -55,6 +62,7 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
     return _MobilePage(
       controller: controller,
       title: '账单',
+      onMenuPressed: widget.onMenuPressed,
       trailing: IconButton(
         tooltip: '回到本月',
         onPressed: _selectionMode ? _exitSelectionMode : _goToCurrentMonth,
@@ -249,18 +257,32 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
                   ),
                 const SizedBox(height: 8),
               ],
-            if (page.nextCursor != null) ...[
+            if (page.total > _pageSize) ...[
               const SizedBox(height: 4),
-              OutlinedButton.icon(
-                onPressed: _loading || _loadingMore ? null : _loadMore,
-                icon: _loadingMore
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.expand_more_rounded),
-                label: Text(_loadingMore ? '加载中…' : '加载更多历史账单'),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  TextButton.icon(
+                    onPressed: _loading || _pageIndex == 0
+                        ? null
+                        : () => _load(pageIndex: _pageIndex - 1),
+                    icon: const Icon(Icons.chevron_left_rounded),
+                    label: const Text('上一页'),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Text(
+                      '${_pageIndex + 1} / ${(page.total + _pageSize - 1) ~/ _pageSize}',
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: _loading || page.nextCursor == null
+                        ? null
+                        : () => _load(pageIndex: _pageIndex + 1),
+                    icon: const Icon(Icons.chevron_right_rounded),
+                    label: const Text('下一页'),
+                  ),
+                ],
               ),
             ],
           ],
@@ -538,30 +560,30 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
     }
   }
 
-  Future<void> _load({bool append = false}) async {
+  Future<void> _load({int pageIndex = 0}) async {
     final ledger = controller.selectedLedger;
     if (ledger == null) return;
     final fromDate = _dateFrom ?? _month;
     final last = DateTime(_month.year, _month.month + 1, 0);
     final toDate = _dateTo ?? last;
-    final previous = _page;
-    if (append && previous?.nextCursor == null) return;
+    if (pageIndex > _pageIndex && _page?.nextCursor == null) return;
+    final cursor = pageIndex > _pageIndex
+        ? _page?.nextCursor
+        : _pageCursors.length > pageIndex
+        ? _pageCursors[pageIndex]
+        : null;
     setState(() {
-      if (append) {
-        _loadingMore = true;
-      } else {
-        _loading = true;
-        _error = null;
-      }
+      _loading = true;
+      _error = null;
     });
     try {
       final page = await controller.api.fetchTransactions(
         ledger.id,
-        limit: 100,
+        limit: _pageSize,
         query: _search.text,
         from: DateFormat('yyyy-MM-dd').format(fromDate),
         to: DateFormat('yyyy-MM-dd').format(toDate),
-        cursor: append ? previous?.nextCursor : null,
+        cursor: cursor,
         timezoneOffsetMinutes: DateTime.now().timeZoneOffset.inMinutes,
         accountId: _accountFilter,
         type: _typeFilter,
@@ -571,15 +593,15 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
       );
       if (mounted) {
         setState(() {
-          _page = append && previous != null
-              ? TransactionPage(
-                  items: [...previous.items, ...page.items],
-                  total: page.total,
-                  incomeCents: page.incomeCents,
-                  expenseCents: page.expenseCents,
-                  nextCursor: page.nextCursor,
-                )
-              : page;
+          if (pageIndex == 0) {
+            _pageCursors
+              ..clear()
+              ..add(null);
+          } else if (_pageCursors.length <= pageIndex) {
+            _pageCursors.add(cursor);
+          }
+          _pageIndex = pageIndex;
+          _page = page;
         });
       }
     } catch (error) {
@@ -588,13 +610,10 @@ class _MobileBillsPageState extends State<MobileBillsPage> {
       if (mounted) {
         setState(() {
           _loading = false;
-          _loadingMore = false;
         });
       }
     }
   }
-
-  Future<void> _loadMore() => _load(append: true);
 
   Future<void> _loadSearchHistory() async {
     final history = await _searchPreferences.recentBillSearches();
@@ -1338,9 +1357,14 @@ class _DetailRow extends StatelessWidget {
 }
 
 class MobileAnalysisPage extends StatelessWidget {
-  const MobileAnalysisPage({super.key, required this.controller});
+  const MobileAnalysisPage({
+    super.key,
+    required this.controller,
+    this.onMenuPressed,
+  });
 
   final LedgerController controller;
+  final VoidCallback? onMenuPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -1356,6 +1380,7 @@ class MobileAnalysisPage extends StatelessWidget {
     return _MobilePage(
       controller: controller,
       title: '分析',
+      onMenuPressed: onMenuPressed,
       trailing: IconButton(
         tooltip: 'FIRE 与通胀参数',
         onPressed: () => showModalBottomSheet<void>(

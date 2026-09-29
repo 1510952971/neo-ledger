@@ -103,10 +103,8 @@ class MobileLedgerShell extends StatefulWidget {
 class _MobileLedgerShellState extends State<MobileLedgerShell>
     with WidgetsBindingObserver {
   int _tab = 0;
-  // On phones the primary navigation is a compact left rail.  Keep it
-  // collapsed by default so the content still gets the full width, while
-  // allowing users to expand it whenever they need the labels.
-  bool _bottomBarExpanded = false;
+  int _profileVisit = 0;
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
   bool _locked = false;
   bool _lockInitialized = false;
   bool _refreshInFlight = false;
@@ -221,12 +219,15 @@ class _MobileLedgerShellState extends State<MobileLedgerShell>
         controller: controller,
         onAdd: _openAdd,
         onTransfer: () => _openAdd(initialType: '转账'),
+        onMenuPressed: _openMenu,
       ),
-      MobileBillsPage(controller: controller),
-      MobileAnalysisPage(controller: controller),
+      MobileBillsPage(controller: controller, onMenuPressed: _openMenu),
+      MobileAnalysisPage(controller: controller, onMenuPressed: _openMenu),
       MobileProfilePage(
+        key: ValueKey('profile-$_profileVisit'),
         controller: controller,
         nativeVersion: widget.nativeVersion,
+        onMenuPressed: _openMenu,
       ),
     ];
     return PopScope<Object?>(
@@ -260,53 +261,64 @@ class _MobileLedgerShellState extends State<MobileLedgerShell>
             ),
           ];
           return Scaffold(
+            key: _scaffoldKey,
             backgroundColor: _mobileBg,
+            drawer: useRail
+                ? null
+                : Drawer(
+                    backgroundColor: _mobileSurfaceRaised,
+                    width: 264,
+                    child: SafeArea(
+                      child: Column(
+                        children: [
+                          ListTile(
+                            title: const Text('Neo Ledger'),
+                            trailing: IconButton(
+                              tooltip: '收起侧边栏',
+                              icon: const Icon(Icons.close_rounded),
+                              onPressed: () => Navigator.pop(context),
+                            ),
+                          ),
+                          const Divider(height: 1),
+                          for (
+                            var index = 0;
+                            index < destinations.length;
+                            index++
+                          )
+                            ListTile(
+                              leading: Icon(switch (index) {
+                                0 => Icons.home_rounded,
+                                1 => Icons.receipt_long_rounded,
+                                2 => Icons.insights_rounded,
+                                _ => Icons.person_rounded,
+                              }),
+                              title: Text(switch (index) {
+                                0 => strings.home,
+                                1 => strings.bills,
+                                2 => strings.analytics,
+                                _ => strings.profile,
+                              }),
+                              selected: _tab == index,
+                              selectedTileColor: _mobileBrand.withValues(
+                                alpha: .12,
+                              ),
+                              onTap: () {
+                                Navigator.pop(context);
+                                _selectTab(index);
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
             body: Row(
               children: [
                 if (useRail)
                   NavigationRail(
                     selectedIndex: _tab,
                     labelType: NavigationRailLabelType.all,
-                    onDestinationSelected: (index) =>
-                        setState(() => _tab = index),
+                    onDestinationSelected: _selectTab,
                     destinations: destinations,
-                  )
-                else
-                  AnimatedContainer(
-                    duration: MediaQuery.disableAnimationsOf(context)
-                        ? Duration.zero
-                        : const Duration(milliseconds: 220),
-                    curve: Curves.easeOutCubic,
-                    width: _bottomBarExpanded ? 156 : 72,
-                    decoration: BoxDecoration(
-                      color: _mobileSurfaceRaised,
-                      border: Border(right: BorderSide(color: _mobileLine)),
-                    ),
-                    child: SafeArea(
-                      right: false,
-                      child: NavigationRail(
-                        extended: _bottomBarExpanded,
-                        minWidth: 72,
-                        minExtendedWidth: 156,
-                        labelType: NavigationRailLabelType.none,
-                        leading: IconButton(
-                          tooltip: _bottomBarExpanded ? '收起侧边栏' : '展开侧边栏',
-                          onPressed: () => setState(
-                            () => _bottomBarExpanded = !_bottomBarExpanded,
-                          ),
-                          icon: Icon(
-                            _bottomBarExpanded
-                                ? Icons.keyboard_double_arrow_left_rounded
-                                : Icons.menu_rounded,
-                            color: _mobileMuted,
-                          ),
-                        ),
-                        selectedIndex: _tab,
-                        onDestinationSelected: (index) =>
-                            setState(() => _tab = index),
-                        destinations: destinations,
-                      ),
-                    ),
                   ),
                 Expanded(
                   child: Center(
@@ -346,6 +358,15 @@ class _MobileLedgerShellState extends State<MobileLedgerShell>
       MobileRouteName.entry,
       arguments: initialType,
     );
+  }
+
+  void _openMenu() => _scaffoldKey.currentState?.openDrawer();
+
+  void _selectTab(int index) {
+    setState(() {
+      if (index == 3 && _tab != 3) _profileVisit++;
+      _tab = index;
+    });
   }
 }
 
