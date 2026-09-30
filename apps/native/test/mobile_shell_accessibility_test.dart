@@ -36,6 +36,12 @@ void main() {
       expect(find.text('账单'), findsOneWidget);
       expect(find.text('分析'), findsOneWidget);
       expect(find.text('我的'), findsOneWidget);
+      expect(find.text('快捷入口'), findsOneWidget);
+      expect(find.text('我的账本'), findsOneWidget);
+      expect(find.text('个人资产'), findsOneWidget);
+      expect(find.text('管理规划'), findsOneWidget);
+      expect(find.text('主题与外观'), findsOneWidget);
+      expect(find.text('操作手册'), findsOneWidget);
 
       await tester.tap(find.text('我的'));
       await tester.pumpAndSettle();

@@ -55,6 +55,8 @@ Color get _mobileIncome => MobileColors.income;
 Color get _mobileExpense => MobileColors.expense;
 const _supportedMobileCurrencies = ['CNY', 'USD', 'JPY', 'EUR'];
 
+enum _MobileDrawerShortcut { ledgers, assets, planning, appearance, guide }
+
 Future<void> _confirmMobileLogout(
   BuildContext context,
   LedgerController controller,
@@ -307,6 +309,57 @@ class _MobileLedgerShellState extends State<MobileLedgerShell>
                                 _selectTab(index);
                               },
                             ),
+                          const Divider(height: 20),
+                          const Padding(
+                            padding: EdgeInsets.fromLTRB(20, 0, 20, 6),
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                '快捷入口',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: .6,
+                                  color: Colors.black54,
+                                ),
+                              ),
+                            ),
+                          ),
+                          _MobileDrawerShortcutTile(
+                            icon: Icons.menu_book_rounded,
+                            title: '我的账本',
+                            onTap: () => _openDrawerShortcut(
+                              _MobileDrawerShortcut.ledgers,
+                            ),
+                          ),
+                          _MobileDrawerShortcutTile(
+                            icon: Icons.account_balance_wallet_rounded,
+                            title: '个人资产',
+                            onTap: () => _openDrawerShortcut(
+                              _MobileDrawerShortcut.assets,
+                            ),
+                          ),
+                          _MobileDrawerShortcutTile(
+                            icon: Icons.event_note_rounded,
+                            title: '管理规划',
+                            onTap: () => _openDrawerShortcut(
+                              _MobileDrawerShortcut.planning,
+                            ),
+                          ),
+                          _MobileDrawerShortcutTile(
+                            icon: Icons.palette_outlined,
+                            title: '主题与外观',
+                            onTap: () => _openDrawerShortcut(
+                              _MobileDrawerShortcut.appearance,
+                            ),
+                          ),
+                          _MobileDrawerShortcutTile(
+                            icon: Icons.menu_book_outlined,
+                            title: '操作手册',
+                            onTap: () => _openDrawerShortcut(
+                              _MobileDrawerShortcut.guide,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -362,12 +415,74 @@ class _MobileLedgerShellState extends State<MobileLedgerShell>
 
   void _openMenu() => _scaffoldKey.currentState?.openDrawer();
 
+  void _openDrawerShortcut(_MobileDrawerShortcut shortcut) {
+    Navigator.of(context).pop();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      switch (shortcut) {
+        case _MobileDrawerShortcut.ledgers:
+          showModalBottomSheet<void>(
+            context: context,
+            isScrollControlled: true,
+            useSafeArea: true,
+            showDragHandle: true,
+            backgroundColor: _mobileSurface,
+            builder: (_) => MobileLedgerManagerSheet(controller: controller),
+          );
+        case _MobileDrawerShortcut.assets:
+          unawaited(
+            MobileRouteRegistry.push<void>(context, MobileRouteName.accounts),
+          );
+        case _MobileDrawerShortcut.planning:
+          unawaited(
+            MobileRouteRegistry.push<void>(context, MobileRouteName.planning),
+          );
+        case _MobileDrawerShortcut.appearance:
+          showModalBottomSheet<void>(
+            context: context,
+            isScrollControlled: true,
+            showDragHandle: true,
+            backgroundColor: _mobileSurface,
+            builder: (_) => MobileAppearanceSheet(controller: controller),
+          );
+        case _MobileDrawerShortcut.guide:
+          showModalBottomSheet<void>(
+            context: context,
+            isScrollControlled: true,
+            showDragHandle: true,
+            backgroundColor: _mobileSurface,
+            builder: (_) => const MobileUserGuideSheet(),
+          );
+      }
+    });
+  }
+
   void _selectTab(int index) {
     setState(() {
       if (index == 3 && _tab != 3) _profileVisit++;
       _tab = index;
     });
   }
+}
+
+class _MobileDrawerShortcutTile extends StatelessWidget {
+  const _MobileDrawerShortcutTile({
+    required this.icon,
+    required this.title,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+    dense: true,
+    leading: Icon(icon, color: _mobileMuted),
+    title: Text(title),
+    onTap: onTap,
+  );
 }
 
 BoxDecoration _mobileBoxDecoration({Gradient? gradient}) => BoxDecoration(
