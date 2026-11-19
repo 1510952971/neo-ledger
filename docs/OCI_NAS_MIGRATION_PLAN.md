@@ -32,11 +32,21 @@ OCI /opt/apps/neo-ledger/neo-ledger
 
 ## 验收门槛
 
-- [ ] `ledger.985251.xyz` DNS 指向 Cloudflare，Cloudflare 回源到 OCI。
-- [ ] Caddy 成功签发证书，`/api/health` 返回 `status=ok`。
-- [ ] OCI 容器使用 `/opt/apps/neo-ledger/data`，未挂载其他软件数据目录。
-- [ ] 电脑端、Android 端、网页版默认使用新地址。
+- [x] `ledger.985251.xyz` DNS 指向 Cloudflare，Cloudflare 回源到 OCI。
+- [x] Caddy 成功签发证书，`/api/health` 返回 `status=ok`。
+- [x] OCI Neo Ledger 数据位于独立的 `/opt/apps/neo-ledger/data` 目录。
+- [x] 电脑端、Android 端、网页版的默认生产地址已切到 `https://ledger.985251.xyz`。
 - [ ] 新建账号、账本、账户和流水可在设备间同步。
 - [ ] NAS 独立部署或备份任务成功，能恢复一份全新测试账本。
-- [ ] 更新服务同时提供软件服务地址和 GitHub 备用地址。
+- [x] 更新服务同时提供软件服务地址和 GitHub 备用地址；`native-v1.5.0` 已发布。
 - [ ] 连续观察 24 小时后再决定停用 AWS 旧服务。
+
+## 2026-11-19 执行记录
+
+- DNS A 记录 `ledger.985251.xyz` 指向 OCI `164.152.107.32`，使用 Cloudflare 代理。
+- 修复了 Caddy 单文件 bind mount 未更新的问题；重建 Caddy 后 Let’s Encrypt 证书签发成功。公网 `/api/health` 返回 `status=ok`，数据库、schema 与配置检查均正常。
+- 发布 `native-v1.5.0` 成功：Android APK/AAB、macOS DMG/ZIP、Windows EXE/ZIP 和 Web/NAS 包均已附加到 GitHub Release；两个更新镜像均报告可用。
+- 该版本本地验证通过：Node 测试 567 项与 API 集成 122/148/231 项，Flutter analyze 无问题，Flutter 测试 119 项通过。
+- 公网更新接口已返回最新 `1.5.0`，但当前 OCI `/api/health` 仍显示服务端应用版本 `1.1.0`。本机 SSH 公钥不在 OCI 实例授权列表中，尚未更新 OCI 应用容器。
+- NAS 已建立独立的 `/Docker/neo-ledger` 项目目录，Compose 使用 `native-v1.5.0` Git 构建上下文，数据与备份各自落在项目目录下。借助本机缓存的 `node:latest`，BuildKit 已成功取到基础镜像元数据和 Git tag；构建目前停在 `npm ci`，尚未生成或启动容器。需恢复 NAS 的 npm 包访问后再完成健康与恢复演练。
+- 设备间真实账号同步和 24 小时观察尚未验收。继续保留旧 AWS 服务；不要让 NAS 与 OCI 同时写同一账本。
