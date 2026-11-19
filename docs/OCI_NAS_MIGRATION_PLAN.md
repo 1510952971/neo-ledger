@@ -37,7 +37,9 @@ OCI /opt/apps/neo-ledger/neo-ledger
 - [x] OCI Neo Ledger 数据位于独立的 `/opt/apps/neo-ledger/data` 目录。
 - [x] 电脑端、Android 端、网页版的默认生产地址已切到 `https://ledger.985251.xyz`。
 - [ ] 新建账号、账本、账户和流水可在设备间同步。
-- [ ] NAS 独立部署或备份任务成功，能恢复一份全新测试账本。
+- [x] NAS Neo Ledger 独立容器已部署并运行。
+- [ ] NAS 备份恢复演练成功，能恢复一份全新测试账本。
+- [ ] NAS 局域网访问、真实账号同步和终端上传更新流程验收完成。
 - [x] 更新服务同时提供软件服务地址和 GitHub 备用地址；`native-v1.5.0` 已发布。
 - [ ] 连续观察 24 小时后再决定停用 AWS 旧服务。
 
@@ -47,6 +49,7 @@ OCI /opt/apps/neo-ledger/neo-ledger
 - 修复了 Caddy 单文件 bind mount 未更新的问题；重建 Caddy 后 Let’s Encrypt 证书签发成功。公网 `/api/health` 返回 `status=ok`，数据库、schema 与配置检查均正常。
 - 发布 `native-v1.5.0` 成功：Android APK/AAB、macOS DMG/ZIP、Windows EXE/ZIP 和 Web/NAS 包均已附加到 GitHub Release；两个更新镜像均报告可用。
 - 该版本本地验证通过：Node 测试 567 项与 API 集成 122/148/231 项，Flutter analyze 无问题，Flutter 测试 119 项通过。
-- 公网更新接口已返回最新 `1.5.0`，但当前 OCI `/api/health` 仍显示服务端应用版本 `1.1.0`。本机 SSH 公钥不在 OCI 实例授权列表中。OCI Run Command API 接受只读检查命令但实例代理一直未回报执行状态，随后已撤销该命令；应用容器仍未更新。
-- NAS 已建立独立的 `/Docker/neo-ledger` 项目目录，Compose 使用 `native-v1.5.0` Git 构建上下文，数据与备份各自落在项目目录下。借助本机缓存的 `node:latest`，BuildKit 已成功取到基础镜像元数据和 Git tag；本次构建停留在 `npm ci`，没有出现后续日志，尚未生成或启动容器。需检查 NAS 到 npm registry 的连接，再完成健康与恢复演练。
-- 设备间真实账号同步和 24 小时观察尚未验收。继续保留旧 AWS 服务；不要让 NAS 与 OCI 同时写同一账本。
+- OCI 容器已从 `native-v1.5.0` 源码重新构建，容器 `neo-ledger` 当前健康运行，镜像 ID 为 `sha256:acac5505a3ff5a32fe58f970e36476579a3ba7f4c9f73f48128c6faa3f044d1e`。在实例内部访问 `/api/health` 返回 `status=ok`，数据库、schema 与配置检查均正常。`/api/health` 的 `version=1.1.0` 是服务包版本字段；客户端更新接口则返回 `latestVersion=1.5.0`、`tag=native-v1.5.0`。更新前的 OCI 备份 `/opt/apps/neo-ledger/backup/neo-ledger-20261119T150825Z.tar.gz` 已生成并通过校验。
+- NAS 已建立独立项目目录 `/SATA-1-4T/Docker/neo-ledger`。`neo-ledger-nas` 容器当前运行，日志报告 Wrangler 监听 `0.0.0.0:3000`；Compose 使用 `native-v1.5.0` Git 构建上下文，数据和备份分别保存在项目目录。旧 BuildKit `npm ci` 记录是先前尝试，不代表当前容器仍卡在构建中。
+- 参考 [SafeVault NAS 部署指南](https://github.com/1510952971/safevault/blob/main/docs/NAS_DEPLOY.md) 的终端部署包上传、代码与持久目录分离方式，已新增 `deploy/nas/deploy.sh`。它通过 SSH/SCP 上传已提交源码到 NAS 的 `.releases/`，保留 `.env`、`data`、`backup`、`config` 和 `secrets`，随后构建、重启 Neo Ledger 容器并检查健康状态。Compose 路径已调整以让版本目录代码挂载项目根目录的数据。NAS 目前没有已确认可用的 SSH 主机别名/登录，终端流程尚未在 NAS 实际执行；需启用极空间 SSH 并配置可登录账号后运行脚本。
+- 设备间真实账号同步、NAS 局域网可达性、NAS 备份恢复演练和连续 24 小时观察尚未验收。继续保留旧 AWS 服务；不要让 NAS 与 OCI 同时写同一账本。
