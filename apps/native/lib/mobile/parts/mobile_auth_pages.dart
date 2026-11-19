@@ -235,7 +235,7 @@ class _MobileLoginPageState extends State<MobileLoginPage> {
             ),
             const SizedBox(height: 26),
             Text(
-              '登录地址已固定为 ledger.eyeme.online。首次使用请先在网页端注册账号。',
+              '登录地址为 ${Uri.parse(MobileApiSessionStore.defaultBaseUrl).host}。首次使用请先在网页端注册账号。',
               textAlign: TextAlign.center,
               style: TextStyle(color: _mobileMuted, fontSize: 12, height: 1.5),
             ),
@@ -254,7 +254,7 @@ class _MobileLoginPageState extends State<MobileLoginPage> {
       return;
     }
     await widget.controller.login(
-      url: 'https://ledger.eyeme.online',
+      url: MobileApiSessionStore.defaultBaseUrl,
       username: username,
       password: _password.text,
     );

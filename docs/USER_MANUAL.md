@@ -15,7 +15,7 @@
 | Android 平板 / iPad | 原生客户端 | 完整账本、平板响应式布局；平台能力按对应系统边界执行 |
 | NAS | Docker Compose | 24 小时账本服务、同步接口、远程访问基础 |
 
-重要限制：iOS 不允许第三方 App 读取微信或支付宝的通知，因此苹果端不能实现与 Android 完全相同的后台通知监听。苹果端使用快捷指令、共享入口或账单导入，数据仍进入同一个 Neo Ledger 账本。原生客户端的正式版本通过 `native-vX.Y.Z` 标签发布；普通 `vX.Y.Z` 只代表 Web 发布。移动端和桌面端会先访问 `https://ledger.eyeme.online/api/native-update`，安装包优先从服务地址下载，服务地址不可用时自动回退 GitHub；每次原生发布都会生成两条可验证的下载通道。
+重要限制：iOS 不允许第三方 App 读取微信或支付宝的通知，因此苹果端不能实现与 Android 完全相同的后台通知监听。苹果端使用快捷指令、共享入口或账单导入，数据仍进入同一个 Neo Ledger 账本。原生客户端的正式版本通过 `native-vX.Y.Z` 标签发布；普通 `vX.Y.Z` 只代表 Web 发布。移动端和桌面端会先访问 `https://ledger.985251.xyz/api/native-update`，安装包优先从服务地址下载，服务地址不可用时自动回退 GitHub；每次原生发布都会生成两条可验证的下载通道。
 
 ## 2. 第一次使用
 
@@ -25,11 +25,11 @@
 2. 双击 `start.command`。
 3. 第一次被系统拦截时，右键 `start.command`，选择“打开”，再确认一次。
 4. 启动器会检查 Node.js、安装依赖、处理被占用端口并打开浏览器。
-5. 发布版应用和跨设备使用请统一打开 `https://ledger.eyeme.online`。只有从源码运行 `start.command` 时才使用 `http://localhost:3000` 这类本地开发地址。
+5. 发布版应用和跨设备使用请统一打开 `https://ledger.985251.xyz`。只有从源码运行 `start.command` 时才使用 `http://localhost:3000` 这类本地开发地址。
 
 不要关闭启动终端窗口。关闭后，本机账本服务和手机局域网入口也会停止。
 
-注意：本地开发地址使用的是电脑上的本地数据库，本地注册的账号不会自动出现在云端生产环境。需要让电脑、手机和其他平台共用同一个账号时，请统一访问 `https://ledger.eyeme.online`。
+注意：本地开发地址使用的是电脑上的本地数据库，本地注册的账号不会自动出现在云端生产环境。需要让电脑、手机和其他平台共用同一个账号时，请统一访问 `https://ledger.985251.xyz`。
 
 ### 2.2 Windows / Linux 启动
 
@@ -40,11 +40,11 @@ npm install
 npm run dev
 ```
 
-源码本地开发时浏览器打开 `http://localhost:3000`；正式使用请打开 `https://ledger.eyeme.online`。需要让手机访问本地开发服务时，系统防火墙必须允许 Node.js 接收局域网连接。
+源码本地开发时浏览器打开 `http://localhost:3000`；正式使用请打开 `https://ledger.985251.xyz`。需要让手机访问本地开发服务时，系统防火墙必须允许 Node.js 接收局域网连接。
 
 ### 2.3 注册第一个账号
 
-1. 打开统一地址 `https://ledger.eyeme.online` 的登录页，选择注册；这样注册的账号才能在电脑、手机和其他平台之间通用。
+1. 打开统一地址 `https://ledger.985251.xyz` 的登录页，选择注册；这样注册的账号才能在电脑、手机和其他平台之间通用。
 2. 设置账户名和密码。
 3. 建议同时填写常用邮箱，以便以后找回密码。
 4. 邮箱发信服务已配置时，输入收到的 6 位验证码完成注册。
@@ -369,7 +369,7 @@ TZ=Asia/Shanghai
 LAN_ORIGIN=http://192.168.1.20:3000
 RESEND_API_KEY=
 MAIL_FROM=Neo Ledger <noreply@eyeme.online>
-AUTH_PUBLIC_ORIGIN=https://ledger.eyeme.online
+AUTH_PUBLIC_ORIGIN=https://ledger.985251.xyz
 OLLAMA_URL=http://NAS中的Ollama地址:11434
 OLLAMA_MODEL=llama3.1:8b
 # 可选安全开关：true 时禁止任何 Ollama 外发，即使 OLLAMA_URL 仍然存在
@@ -405,7 +405,7 @@ docker compose logs --tail=200 neo-ledger
 
 ### 10.6 HTTPS 和外网访问
 
-推荐为 NAS 配置独立子域名，例如 `ledger.eyeme.online`，通过 NAS 反向代理转发到容器 `3000` 端口，并申请有效 HTTPS 证书。
+推荐为 NAS 配置独立子域名，例如 `nas-ledger.985251.xyz`，通过 NAS 反向代理转发到容器 `3000` 端口，并申请有效 HTTPS 证书。
 
 安全要求：
 

@@ -641,7 +641,8 @@ class MobileUserGuideSheet extends StatelessWidget {
   static const sections = <({String title, String text})>[
     (
       title: '侧边栏与一级页面',
-      text: '点击左上角三横按钮打开覆盖页面的侧边栏，选择首页、账单、分析或我的后自动收起；关闭时页面保持完整宽度。绿色“+”始终用于快速记一笔。',
+      text:
+          '点击左上角三横按钮打开覆盖页面的侧边栏，选择首页、账单、分析或我的后自动收起；关闭时页面保持完整宽度。绿色“+”始终用于快速记一笔。',
     ),
     (
       title: '首页',
@@ -698,7 +699,8 @@ class MobileUserGuideSheet extends StatelessWidget {
     ),
     (
       title: '连接与同步',
-      text: '公网统一使用 https://ledger.eyeme.online；localhost 只代表当前设备。连接异常时先检查地址、登录状态和网络，移动端会保留离线队列并在恢复网络后重试。',
+      text:
+          '公网统一使用 ${MobileApiSessionStore.defaultBaseUrl}；localhost 只代表当前设备。连接异常时先检查地址、登录状态和网络，移动端会保留离线队列并在恢复网络后重试。',
     ),
     (
       title: '数据与备份',
@@ -914,7 +916,7 @@ class _MobileConnectionSyncSheetState extends State<MobileConnectionSyncSheet> {
             autocorrect: false,
             decoration: const InputDecoration(
               labelText: 'Neo Ledger 服务地址',
-              hintText: 'https://ledger.eyeme.online',
+              hintText: MobileApiSessionStore.defaultBaseUrl,
               prefixIcon: Icon(Icons.link_rounded),
             ),
           ),

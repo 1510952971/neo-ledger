@@ -17,6 +17,7 @@ import 'features/accounts/account_transfer_editor.dart';
 import 'l10n/generated/app_localizations.dart';
 import 'models.dart';
 import 'mobile/data/mobile_core_snapshot_store.dart';
+import 'mobile/data/mobile_api_session_store.dart';
 import 'mobile/data/mobile_offline_queue_store.dart';
 import 'mobile/data/mobile_local_cache_store.dart';
 import 'mobile/core/mobile_design.dart';
@@ -35,7 +36,7 @@ const _brand = Color(0xffa5ff4f);
 const _surface = Color(0xff101116);
 const _surfaceAlt = Color(0xff1b1b23);
 const _muted = Color(0xffa4a8a1);
-const _nativeVersion = '1.4.9';
+const _nativeVersion = '1.5.0';
 const _shortcutChannel = MethodChannel('online.eyeme.neo_ledger/shortcuts');
 const _assetTypes = [
   '房产',
@@ -3280,7 +3281,7 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final url = TextEditingController(text: 'https://ledger.eyeme.online');
+  final url = TextEditingController(text: MobileApiSessionStore.defaultBaseUrl);
   final username = TextEditingController();
   final email = TextEditingController();
   final displayName = TextEditingController();

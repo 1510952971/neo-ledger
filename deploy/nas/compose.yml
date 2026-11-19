@@ -1,0 +1,15 @@
+services:
+  neo-ledger:
+    build:
+      context: .
+    container_name: neo-ledger-nas
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/.wrangler
+      - ./backup:/app/backup
+      - ./config:/app/config:ro
+      - ./secrets:/app/secrets:ro

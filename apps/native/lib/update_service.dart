@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'models.dart';
+import 'mobile/data/neo_ledger_endpoints.dart';
 
 class NeoLedgerUpdateService {
   NeoLedgerUpdateService({
@@ -39,7 +40,9 @@ class NeoLedgerUpdateService {
 
   Future<UpdateInfo?> _fetchServiceRelease() async {
     final uri = Uri.parse(
-      'https://ledger.eyeme.online/api/native-update?ts=${DateTime.now().millisecondsSinceEpoch}',
+      NeoLedgerEndpoints.nativeUpdateUrl(
+        cacheBust: DateTime.now().millisecondsSinceEpoch,
+      ),
     );
     final response = await _client
         .get(

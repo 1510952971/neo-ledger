@@ -12,6 +12,7 @@ import 'api_client.dart';
 import 'l10n/generated/app_localizations.dart';
 import 'mobile/core/mobile_design.dart';
 import 'mobile/data/mobile_entry_preferences.dart';
+import 'mobile/data/mobile_api_session_store.dart';
 import 'mobile/data/mobile_screenshot_ocr.dart';
 import 'mobile/domain/amount_expression.dart';
 import 'mobile/domain/mobile_background_refresh_policy.dart';

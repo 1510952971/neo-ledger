@@ -1,0 +1,7 @@
+ledger.985251.xyz {
+    encode zstd gzip
+    request_body {
+        max_size 50MB
+    }
+    reverse_proxy neo-ledger:3000
+}

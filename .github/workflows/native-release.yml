@@ -46,8 +46,8 @@ jobs:
       - run: flutter test
       - name: Verify unified production server
         run: |
-          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 10 https://ledger.eyeme.online/api/health
-          curl --fail --silent --show-error --location --retry 5 --retry-all-errors --retry-delay 10 --output /dev/null https://ledger.eyeme.online/
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 10 https://ledger.985251.xyz/api/health
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors --retry-delay 10 --output /dev/null https://ledger.985251.xyz/
       - run: flutter build web --release
       - name: Package Web/NAS build
         run: |
@@ -493,8 +493,8 @@ jobs:
             "schemaVersion": 1,
             "tag": "$GITHUB_REF_NAME",
             "github": "https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME",
-            "service": "https://ledger.eyeme.online/api/native-update",
-            "downloadProxy": "https://ledger.eyeme.online/api/native-update/download"
+            "service": "https://ledger.985251.xyz/api/native-update",
+            "downloadProxy": "https://ledger.985251.xyz/api/native-update/download"
           }
           EOF
       - name: Publish GitHub Release
@@ -511,7 +511,7 @@ jobs:
           RESPONSE_FILE="$RUNNER_TEMP/native-update-response.json"
           HTTP_CODE="$(curl --silent --show-error --location --retry 8 --retry-all-errors --retry-delay 10 \
             --max-time 30 -o "$RESPONSE_FILE" -w '%{http_code}' \
-            "https://ledger.eyeme.online/api/native-update" || true)"
+            "https://ledger.985251.xyz/api/native-update" || true)"
           if [[ "$HTTP_CODE" == "200" ]]; then
             grep -F '"tag":"' "$RESPONSE_FILE" >/dev/null || {
               echo "Service update mirror returned 200 but no release tag."
@@ -519,13 +519,13 @@ jobs:
             }
             curl --fail --silent --show-error --location --retry 8 --retry-all-errors --retry-delay 10 \
               --max-time 60 -o /dev/null \
-              "https://ledger.eyeme.online/api/native-update/download?tag=${TAG}&asset=${APK}"
+              "https://ledger.985251.xyz/api/native-update/download?tag=${TAG}&asset=${APK}"
             echo "Service update mirror verified for ${TAG}."
           elif [[ "$HTTP_CODE" == "401" || "$HTTP_CODE" == "404" || "$HTTP_CODE" == 5* ]]; then
             {
               echo "### Service update mirror pending"
               echo
-              echo "GitHub Release ${TAG} is ready, but ledger.eyeme.online has not deployed the public native update route yet (HTTP ${HTTP_CODE})."
+              echo "GitHub Release ${TAG} is ready, but ledger.985251.xyz has not deployed the public native update route yet (HTTP ${HTTP_CODE})."
               echo "Deploy the current main branch with the production compose configuration, then rerun this verification."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "Warning: service update mirror is not deployed yet (HTTP ${HTTP_CODE}); GitHub Release remains available."

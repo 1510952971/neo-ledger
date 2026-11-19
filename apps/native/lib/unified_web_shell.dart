@@ -9,10 +9,11 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'app.dart';
+import 'mobile/data/neo_ledger_endpoints.dart';
 import 'update_service.dart';
 import 'windows_update_service.dart';
 
-const unifiedAppUrl = 'https://ledger.eyeme.online';
+const unifiedAppUrl = NeoLedgerEndpoints.defaultBaseUrl;
 
 class UnifiedWebShell extends StatefulWidget {
   const UnifiedWebShell({

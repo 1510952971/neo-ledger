@@ -1,0 +1,41 @@
+985251.xyz, www.985251.xyz {
+    encode gzip
+    reverse_proxy personal-site:80
+}
+
+sync.985251.xyz {
+    encode gzip
+    request_body {
+        max_size 10MB
+    }
+    reverse_proxy pocketbase:8080 {
+        transport http {
+            read_timeout 360s
+        }
+    }
+}
+
+safevault.985251.xyz {
+    encode gzip
+    request_body {
+        max_size 10MB
+    }
+    reverse_proxy safevault:8088 {
+        transport http {
+            read_timeout 360s
+        }
+    }
+}
+
+subnook.985251.xyz {
+    encode gzip
+    reverse_proxy subnook-web:80
+}
+
+ledger.985251.xyz {
+    encode zstd gzip
+    request_body {
+        max_size 50MB
+    }
+    reverse_proxy neo-ledger:3000
+}

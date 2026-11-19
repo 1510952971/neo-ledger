@@ -1,5 +1,7 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'neo_ledger_endpoints.dart';
+
 typedef MobileSessionRead = Future<String?> Function(String key);
 typedef MobileSessionWrite = Future<void> Function(String key, String value);
 typedef MobileSessionDelete = Future<void> Function(String key);
@@ -21,7 +23,7 @@ class MobileApiSessionStore {
     );
   }
 
-  static const defaultBaseUrl = 'https://ledger.eyeme.online';
+  static const defaultBaseUrl = NeoLedgerEndpoints.defaultBaseUrl;
   static const cookieStorageKey = 'neo_ledger_session_cookie';
   static const baseUrlStorageKey = 'neo_ledger_base_url';
   static const autoLogSecretStorageKey = 'neo_ledger_auto_log_secret';
@@ -44,12 +46,12 @@ class MobileApiSessionStore {
     final storedBaseUrl = await read(baseUrlStorageKey);
     // v1.3.3 used localhost as the implicit value. Migrate that value so an
     // upgraded production app does not try to connect to the phone itself.
-    _baseUrl =
+    final shouldUseDefault =
         storedBaseUrl == null ||
-            storedBaseUrl.isEmpty ||
-            storedBaseUrl == 'http://localhost:3000'
-        ? defaultBaseUrl
-        : storedBaseUrl;
+        storedBaseUrl.isEmpty ||
+        storedBaseUrl == 'http://localhost:3000' ||
+        storedBaseUrl == NeoLedgerEndpoints.legacyBaseUrl;
+    _baseUrl = shouldUseDefault ? defaultBaseUrl : storedBaseUrl;
     if (storedBaseUrl != _baseUrl) {
       await write(baseUrlStorageKey, _baseUrl);
     }

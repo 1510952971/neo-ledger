@@ -1,4 +1,4 @@
-const TARGET_ORIGIN = 'https://ledger.eyeme.online';
+const TARGET_ORIGIN = 'https://ledger.985251.xyz';
 
 export default {
   async fetch(request) {

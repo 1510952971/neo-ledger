@@ -1,4 +1,4 @@
-ledger.eyeme.online {
+ledger.985251.xyz {
     encode zstd gzip
     reverse_proxy 127.0.0.1:3000
 }

@@ -1,0 +1,23 @@
+services:
+  neo-ledger:
+    build:
+      context: ./app
+    container_name: neo-ledger
+    restart: unless-stopped
+    expose:
+      - "3000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/.wrangler
+      - ./backup:/app/backup
+      - ./config:/app/config:ro
+      - ./secrets:/app/secrets:ro
+    networks:
+      mycloud_default:
+        aliases:
+          - neo-ledger
+
+networks:
+  mycloud_default:
+    external: true
