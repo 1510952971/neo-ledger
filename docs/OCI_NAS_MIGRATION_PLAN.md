@@ -47,6 +47,6 @@ OCI /opt/apps/neo-ledger/neo-ledger
 - 修复了 Caddy 单文件 bind mount 未更新的问题；重建 Caddy 后 Let’s Encrypt 证书签发成功。公网 `/api/health` 返回 `status=ok`，数据库、schema 与配置检查均正常。
 - 发布 `native-v1.5.0` 成功：Android APK/AAB、macOS DMG/ZIP、Windows EXE/ZIP 和 Web/NAS 包均已附加到 GitHub Release；两个更新镜像均报告可用。
 - 该版本本地验证通过：Node 测试 567 项与 API 集成 122/148/231 项，Flutter analyze 无问题，Flutter 测试 119 项通过。
-- 公网更新接口已返回最新 `1.5.0`，但当前 OCI `/api/health` 仍显示服务端应用版本 `1.1.0`。本机 SSH 公钥不在 OCI 实例授权列表中，尚未更新 OCI 应用容器。
-- NAS 已建立独立的 `/Docker/neo-ledger` 项目目录，Compose 使用 `native-v1.5.0` Git 构建上下文，数据与备份各自落在项目目录下。借助本机缓存的 `node:latest`，BuildKit 已成功取到基础镜像元数据和 Git tag；构建目前停在 `npm ci`，尚未生成或启动容器。需恢复 NAS 的 npm 包访问后再完成健康与恢复演练。
+- 公网更新接口已返回最新 `1.5.0`，但当前 OCI `/api/health` 仍显示服务端应用版本 `1.1.0`。本机 SSH 公钥不在 OCI 实例授权列表中。OCI Run Command API 接受只读检查命令但实例代理一直未回报执行状态，随后已撤销该命令；应用容器仍未更新。
+- NAS 已建立独立的 `/Docker/neo-ledger` 项目目录，Compose 使用 `native-v1.5.0` Git 构建上下文，数据与备份各自落在项目目录下。借助本机缓存的 `node:latest`，BuildKit 已成功取到基础镜像元数据和 Git tag；本次构建停留在 `npm ci`，没有出现后续日志，尚未生成或启动容器。需检查 NAS 到 npm registry 的连接，再完成健康与恢复演练。
 - 设备间真实账号同步和 24 小时观察尚未验收。继续保留旧 AWS 服务；不要让 NAS 与 OCI 同时写同一账本。
