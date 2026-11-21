@@ -1,16 +1,37 @@
-# Neo Ledger 极空间部署包
+# Neo Ledger 极空间主站部署包
 
-此目录用于极空间 Docker/NAS 备用端。它与 OCI 主端使用独立的 `.env`、`data`、`backup`、`config` 和 `secrets`，因此它有独立的账号库和账本库。**NAS 与 OCI 的自动双向数据同步没有完成**；把同一版程序部署到两端、或在两端分别登录同一邮箱，都不会自动共享数据。
+用户已指定 **极空间 NAS 为主数据，OCI 为备份和恢复端**。NAS 与 OCI 账号库仍然独立；OCI 只接收 NAS 推来的加密数据库快照，不参与日常记账。手机、电脑和网页需连接同一个 NAS HTTPS 地址，才能共享 NAS 主账本。
 
-手机默认连接 `https://ledger.985251.xyz`。电脑网页若要和手机共享账号及账本，也必须连接这个同一服务地址并使用同一账号。NAS 页面连接的是 NAS 自己的数据库，只能查看 NAS 当前数据。不要把“手机登录成功”或“NAS 容器健康”当成数据互通验收。
+自动加密备份、OCI 接收器和恢复演练尚未在真实 NAS/OCI 上线验收。阶段和实施门槛见 [NAS 主数据与 OCI 灾备备份方案](../../docs/NAS_PRIMARY_OCI_BACKUP_PLAN.md)。在 NAS HTTPS 主入口及至少一次隔离恢复演练通过前，不切换客户端默认地址，不把 OCI 标记为已可恢复。现有 `nas.985251.xyz` 已用于 SafeVault，不可覆盖；`ledger.985251.xyz` 保持 OCI 入口。
 
 ## 部署规则
 
 1. 在 NAS 为 Neo Ledger 准备独立项目目录，放入 `.env`，创建 `data`、`backup`、`config`、`secrets` 子目录。`.env` 参照仓库根目录 `.env.example` 配置。
 2. 可用极空间文件管理器上传源码 ZIP，在 NAS 解压到项目目录的版本子目录，再从 Docker 项目详情执行重新构建。
 3. 也可在 SSH 已安全配置且 NAS 和部署电脑网络可达时，使用下面的 SSH/SCP 自动部署命令。
-4. NAS 端默认作为独立备用端和恢复端，不与 OCI 同时写入同一个账号或账本；应用级复制/双向合并在另行设计和验收前不得宣称可用。
-5. 优先使用 Neo Ledger 的加密备份/WebDAV 流程把 OCI 主端备份写入 NAS；需要切换时先停止 OCI 写入，再从 NAS 恢复并验收。
+4. NAS 是唯一写入端；OCI 只保存加密备份。禁止双主、直接复制运行中的 SQLite 文件或自动覆盖 NAS 主数据。
+5. 每日 NAS→OCI 备份与恢复需按 [NAS 主数据与 OCI 灾备备份方案](../../docs/NAS_PRIMARY_OCI_BACKUP_PLAN.md) 实现并通过隔离演练后，才能切换原生客户端默认地址。
+
+## 启用 NAS→OCI 加密备份
+
+1. 先在 OCI Neo Ledger `.env` 配置随机 `NEO_NAS_BACKUP_TOKEN`（至少 40 个 URL 安全字符），然后更新 OCI 应用使 `/api/nas-backup` 接收器生效。此 API 只允许该 Token 上传/下载加密密文。
+2. 在 NAS 项目根目录新建 `.neo-ledger-backup.env`，从 `deploy/nas/backup.env.example` 复制模板，填写与 OCI 完全相同的 Token，以及一条至少 20 字符的独立恢复口令。恢复口令另存密码管理器/离线位置，不要发到聊天或提交 Git。
+3. 新版本源码上传/解压后，在 NAS Docker Compose 项目将 `deploy/nas/compose.backup.yml` 作为第二份 Compose 文件，与 `deploy/nas/compose.yml` 一起启动 `neo-ledger-backup-agent`。等价终端命令（在源码 release 目录中执行）：
+
+   ```bash
+   docker compose -p neo-ledger \
+     -f deploy/nas/compose.yml \
+     -f deploy/nas/compose.backup.yml \
+     up -d --build neo-ledger-backup-agent
+   ```
+
+   它只读挂载现有 `data`，没有 Docker socket；NAS 主应用仍按原数据卷运行。首次上传会立即运行，此后默认每天一次；失败会留在日志里并在下一周期重试。NAS 本地最多留 35 个加密快照，OCI 接收端最多留 14 个成功密文快照。
+4. 查看 sidecar 日志中的 `OCI NAS backup succeeded`。用同一 Compose 配置执行 `docker compose -p neo-ledger -f deploy/nas/compose.yml -f deploy/nas/compose.backup.yml run --rm neo-ledger-backup-agent prepare-restore`，按恢复口令从 OCI 下载最新密文到隔离目录。它只生成 `backup/restore-candidate-*`，不会替换 NAS 数据。核验 manifest 的账号/账本数量、SQLite 完整性和最新上传摘要，再进行隔离实例恢复演练。
+5. 不能仅凭“容器正在运行”宣布备份可用。还需连续成功上传、验证 OCI 摘要、隔离解密与数据库打开成功；定期重复恢复演练。
+
+OCI 最近一次已提交快照状态可通过带 Token 的 `GET https://ledger.985251.xyz/api/nas-backup?status=1` 查询；它只返回快照 ID、时间、字节数和摘要，不包含业务数据。复制某次 sidecar 成功日志里的 `snapshot` ID 到 `NEO_BACKUP_SNAPSHOT_ID`，可以选择保留期内的历史恢复点；留空则默认取最新。
+
+恢复实操与回滚步骤见 [NAS 主数据与 OCI 灾备备份方案](../../docs/NAS_PRIMARY_OCI_BACKUP_PLAN.md)。严禁把候选库直接复制覆盖主数据目录；正式恢复必须先停写、停止主应用、保留完整停止态原目录并由用户确认具体快照。
 
 ## 极空间文件上传部署与更新
 

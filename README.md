@@ -21,7 +21,7 @@ npm install
 npm run dev
 ```
 
-本地开发时打开 `http://localhost:3000`；正式使用和跨设备登录请统一打开 `https://ledger.985251.xyz`。`npm run dev` 会同时启动主程序和仅监听本机的更新服务，本地数据库与云端生产数据彼此独立。
+本地开发时打开 `http://localhost:3000`。当前正式数据架构以极空间 NAS 为主库、OCI 为加密备份端；NAS 主站独立 HTTPS 入口和 OCI 自动备份接收器尚在分阶段接入，二者完成验收前不要切换客户端默认地址。阶段与门槛见 [NAS 主数据与 OCI 灾备备份方案](docs/NAS_PRIMARY_OCI_BACKUP_PLAN.md)。`npm run dev` 会同时启动主程序和仅监听本机的更新服务，本地数据库彼此独立。
 
 ## 一键启动（macOS）
 
@@ -84,7 +84,7 @@ Android 手机和平板的完整功能应使用 `apps/native` 原生统一客户
 
 Docker Compose 默认使用 `DEPLOYMENT_MODE=self_hosted` 并监听容器网络。直接在电脑运行的 `local` 模式默认只监听 `127.0.0.1`；需要局域网访问时必须显式设置 `NEO_ENABLE_LAN=true`，并确认系统防火墙没有把端口暴露到公网。
 
-Neo Ledger 的客户端默认连接 `https://ledger.985251.xyz`，手机端账本保存在该服务的 OCI 数据库；客户端不把服务端账本当作手机本地数据库保存。手机、电脑和网页要共享账号及数据，必须指向同一个服务地址。极空间 NAS 部署有独立账号和数据库，不会因邮箱相同或更新到同一程序版本而自动互通；NAS 与 OCI 的双向同步尚未实现，NAS 部署目前只可作为独立实例/恢复副本使用。任何更新前都必须保留并校验原数据目录的备份，更新后检查账号和账本仍可见；出现空账号库时立即停止写入，先找回原始挂载，不得新注册覆盖。
+Neo Ledger 的目标是以极空间 NAS 数据库作为唯一主库、OCI 保存加密版本化备份。要共享同一份账本，手机、电脑和网页都必须连接同一个 NAS HTTPS 服务地址；OCI 不作为日常记账入口。自动 NAS→OCI 备份及恢复演练尚未完成，当前不可将 OCI 当作已验证灾备。不要改动或重置 NAS 数据目录；任何更新前必须保留并校验原数据目录的备份，更新后检查原账号和账本仍可见。出现空账号库时立即停止写入，先找回原始挂载，不得新注册覆盖。
 
 `cloud` 模式采用失败即关闭的启动门禁，必须同时配置：`NEO_HSTS=true`、`NEO_ALLOWED_HOSTS`、白名单内的 HTTPS `AUTH_PUBLIC_ORIGIN`、`RESEND_API_KEY`、有效的 `MAIL_FROM` 和 `NEO_WEBDAV_ALLOWED_HOSTS`。两个白名单只写逗号分隔的完整主机名，不含协议、端口、路径或通配符。配置不完整时容器拒绝启动，Worker 返回 503，健康接口在 `configurationIssues` 中给出不含密钥的错误码。
 

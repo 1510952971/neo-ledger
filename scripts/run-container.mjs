@@ -56,6 +56,7 @@ const variableNames = [
   "NEO_TRUSTED_AUTH_SECRET",
   "NEO_TRUSTED_PROXY_IPS",
   "NEO_TRUSTED_AUTH_AUDIENCE",
+  "NEO_NAS_BACKUP_TOKEN",
 ];
 for (const name of variableNames) {
   const value = String(process.env[name] || "").trim();

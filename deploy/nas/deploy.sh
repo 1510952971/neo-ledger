@@ -91,7 +91,7 @@ docker compose version >/dev/null
 mkdir -p "$releases" "$project_dir/data" "$project_dir/backup" \
   "$project_dir/config" "$project_dir/secrets" "$release"
 tar -xzf "$archive" -C "$release"
-for persistent in .env data backup config secrets; do
+for persistent in .env .neo-ledger-backup.env data backup config secrets; do
   ln -sfn "$project_dir/$persistent" "$release/$persistent"
 done
 

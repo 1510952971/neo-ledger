@@ -1,0 +1,25 @@
+# Optional one-way disaster-recovery backup sidecar.
+# Keep this separate from compose.yml so the main NAS app runs unchanged until
+# the independent secrets file exists and the route/token are configured.
+services:
+  neo-ledger-backup-agent:
+    build:
+      context: ./backup-agent
+    image: neo-ledger-backup-agent:latest
+    container_name: neo-ledger-backup-agent
+    restart: unless-stopped
+    user: "0:0"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    env_file:
+      - ../../.neo-ledger-backup.env
+    volumes:
+      - ../../data:/source:ro
+      - ../../backup/nas-to-oci:/backup:rw
+    networks:
+      - default

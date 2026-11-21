@@ -31,6 +31,15 @@ troubleshooting action in this repository. Treat them as hard requirements.
 9. Offline sync deduplication must be scoped to the authorized ledger. Never
    acknowledge or discard a queued item because an identifier exists in a
    different user's ledger.
+10. The user's selected topology is NAS-primary and OCI-backup: the NAS is the
+    only business-write database; OCI stores only encrypted, versioned NAS
+    snapshots. Never implement dual-write, automatic account migration, or
+    automatic OCI-to-NAS replacement. A recovery drill must use an isolated
+    candidate first and preserve the current NAS database for rollback.
+11. Any change that can alter a live data path, database, account identity,
+    synchronization target, or restore behavior must be planned and reviewed
+    against data preservation first. If the original source or a verified
+    recovery point cannot be positively identified, stop before changing it.
 
 When a request conflicts with these rules, preserve the data and explain the
 specific blocker before making the risky change.

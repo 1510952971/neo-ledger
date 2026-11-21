@@ -215,6 +215,15 @@ export async function ensureDb() {
       "CREATE TABLE IF NOT EXISTS restore_snapshots(id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,checksum TEXT NOT NULL,total_bytes INTEGER NOT NULL,chunk_count INTEGER NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
     ),
     binding.prepare(
+      "CREATE TABLE IF NOT EXISTS nas_backup_snapshots(id TEXT PRIMARY KEY,checksum TEXT NOT NULL,total_bytes INTEGER NOT NULL,chunk_count INTEGER NOT NULL,created_at TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('staging','committed')))",
+    ),
+    binding.prepare(
+      "CREATE INDEX IF NOT EXISTS nas_backup_snapshots_committed_idx ON nas_backup_snapshots(status,created_at DESC)",
+    ),
+    binding.prepare(
+      "CREATE TABLE IF NOT EXISTS nas_backup_chunks(snapshot_id TEXT NOT NULL,chunk_index INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(snapshot_id,chunk_index))",
+    ),
+    binding.prepare(
       "CREATE TABLE IF NOT EXISTS restore_snapshot_chunks(snapshot_id TEXT NOT NULL,chunk_index INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(snapshot_id,chunk_index))",
     ),
     binding.prepare(
