@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -42,7 +43,8 @@ class MobileApiTransport {
     };
     if (extraHeaders != null) headers.addAll(extraHeaders);
     if (body != null) headers['Content-Type'] = 'application/json';
-    if (includeCookie && session.hasSession) {
+    if (includeCookie && session.hasSession &&
+        _originOf(uri) == session.origin) {
       headers['Cookie'] = session.cookie!;
     }
     final encodedBody = body == null ? null : jsonEncode(body);
@@ -106,13 +108,17 @@ class MobileApiTransport {
     String? body,
   ) async {
     try {
-      final response = await _request(method, uri, headers, body);
+      final response = await _request(method, uri, headers, body).timeout(
+        const Duration(seconds: 20),
+      );
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw ApiException(_errorMessage(response), response.statusCode);
       }
       return response;
     } on ApiException {
       rethrow;
+    } on TimeoutException {
+      throw const ApiException('服务器响应超时，请检查网络后重试。');
     } catch (error) {
       throw ApiException('无法连接 ${session.baseUrl}：$error');
     }
@@ -139,13 +145,22 @@ class MobileApiTransport {
     Uri uri,
     Map<String, String> headers,
     String? body,
-  ) => switch (method) {
-    'POST' => http.post(uri, headers: headers, body: body),
-    'PUT' => http.put(uri, headers: headers, body: body),
-    'PATCH' => http.patch(uri, headers: headers, body: body),
-    'DELETE' => http.delete(uri, headers: headers, body: body),
-    _ => http.get(uri, headers: headers),
-  };
+  ) async {
+    final client = http.Client();
+    final request = http.Request(method, uri)
+      ..headers.addAll(headers)
+      ..followRedirects = false;
+    if (body != null) request.body = body;
+    try {
+      final streamed = await client.send(request);
+      return await http.Response.fromStream(streamed);
+    } finally {
+      client.close();
+    }
+  }
+
+  static String _originOf(Uri uri) =>
+      '${uri.scheme.toLowerCase()}://${uri.host.toLowerCase()}:${uri.hasPort ? uri.port : (uri.scheme == 'https' ? 443 : 80)}';
 
   String _errorMessage(http.Response response) {
     try {

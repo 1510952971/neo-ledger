@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' hide Category;
 import 'package:flutter/material.dart';
@@ -36,7 +37,7 @@ const _brand = Color(0xffa5ff4f);
 const _surface = Color(0xff101116);
 const _surfaceAlt = Color(0xff1b1b23);
 const _muted = Color(0xffa4a8a1);
-const _nativeVersion = '1.5.1';
+const _nativeVersion = '1.5.2';
 const _shortcutChannel = MethodChannel('online.eyeme.neo_ledger/shortcuts');
 const _assetTypes = [
   '房产',
@@ -319,11 +320,13 @@ class LedgerController extends ChangeNotifier {
 
   Future<void> initialize() async {
     _preferences = await SharedPreferences.getInstance();
-    _coreSnapshotStore = MobileCoreSnapshotStore(_preferences!);
-    _offlineQueueStore = MobileOfflineQueueStore(_preferences!);
-    await _loadQueue();
     await api.load();
+    final rememberedAccount = _preferences!.getString(_lastAccountKey());
+    _bindServerStores(accountName: rememberedAccount);
+    await _loadQueue();
     if (!api.hasSession) return;
+    loading = true;
+    notifyListeners();
     await _loadCoreSnapshot();
     _projectQueueIntoTransactions();
     try {
@@ -334,11 +337,19 @@ class LedgerController extends ChangeNotifier {
         notifyListeners();
         return;
       }
+      if (sessionUser.username != rememberedAccount) {
+        await _selectAccountStores(sessionUser.username);
+        await _loadQueue();
+        await _loadCoreSnapshot();
+      }
       user = sessionUser;
       notifyListeners();
       await refresh();
     } catch (_) {
       error = '暂时无法连接服务器，已显示最近一次缓存数据';
+      notifyListeners();
+    } finally {
+      loading = false;
       notifyListeners();
     }
   }
@@ -353,16 +364,22 @@ class LedgerController extends ChangeNotifier {
     error = null;
     notifyListeners();
     try {
-      await api.setBaseUrl(url);
+      await _setEndpoint(url);
       user = await api.login(
         username: username,
         password: password,
         mfaCode: mfaCode,
       );
+      await _selectAccountStores(user!.username);
+      await _loadQueue();
+      queue = List.unmodifiable(queue);
       await refresh();
     } catch (value) {
-      user = null;
-      error = '$value';
+      if (!authenticated) {
+        error = '$value';
+      } else {
+        error = '登录成功，但同步暂未完成：$value';
+      }
     } finally {
       loading = false;
       notifyListeners();
@@ -381,7 +398,7 @@ class LedgerController extends ChangeNotifier {
     error = null;
     notifyListeners();
     try {
-      await api.setBaseUrl(url);
+      await _setEndpoint(url);
       user = await api.register(
         username: username,
         email: email,
@@ -389,6 +406,8 @@ class LedgerController extends ChangeNotifier {
         password: password,
         code: code,
       );
+      await _selectAccountStores(user!.username);
+      await _loadQueue();
       await refresh();
     } catch (value) {
       user = null;
@@ -408,7 +427,7 @@ class LedgerController extends ChangeNotifier {
     error = null;
     notifyListeners();
     try {
-      await api.setBaseUrl(url);
+      await _setEndpoint(url);
       await api.requestEmailCode(email: email, purpose: purpose);
     } catch (value) {
       error = '$value';
@@ -428,7 +447,7 @@ class LedgerController extends ChangeNotifier {
     error = null;
     notifyListeners();
     try {
-      await api.setBaseUrl(url);
+      await _setEndpoint(url);
       await api.resetPassword(
         email: email,
         code: code,
@@ -956,8 +975,53 @@ class LedgerController extends ChangeNotifier {
         !normalized.startsWith('https://')) {
       throw const ApiException('地址必须以 http:// 或 https:// 开头');
     }
-    await api.setBaseUrl(normalized);
+    if (authenticated && normalized != api.baseUrl) {
+      throw const ApiException('请先退出当前账号，再切换服务器，避免跨服务混用数据。');
+    }
+    await _setEndpoint(normalized);
     notifyListeners();
+  }
+
+  Future<void> _setEndpoint(String value) async {
+    final oldBaseUrl = api.baseUrl;
+    await api.setBaseUrl(value);
+    if (oldBaseUrl == api.baseUrl || _preferences == null) return;
+    // Keep each server's pending queue and cache under a distinct local key.
+    // Legacy unscoped data remains on disk untouched and is never auto-sent.
+    await logout();
+    _bindServerStores();
+    queue = const [];
+    cachedAt = null;
+    await _loadQueue();
+  }
+
+  void _bindServerStores({String? accountName}) {
+    final preferences = _preferences;
+    if (preferences == null) return;
+    final endpoint = Uri.parse(api.baseUrl);
+    final origin = '${endpoint.scheme}://${endpoint.authority}';
+    final scope = accountName == null || accountName.isEmpty
+        ? origin
+        : '$origin|${accountName.trim().toLowerCase()}';
+    _coreSnapshotStore = MobileCoreSnapshotStore(preferences, scope: scope);
+    _offlineQueueStore = MobileOfflineQueueStore(preferences, scope: scope);
+  }
+
+  String _lastAccountKey() {
+    final endpoint = Uri.parse(api.baseUrl);
+    final origin = '${endpoint.scheme}://${endpoint.authority}';
+    return 'neo_ledger_last_account_${sha256.convert(utf8.encode(origin)).toString().substring(0, 16)}';
+  }
+
+  Future<void> _selectAccountStores(String accountName) async {
+    final preferences = _preferences;
+    if (preferences == null) return;
+    final endpoint = Uri.parse(api.baseUrl);
+    final origin = '${endpoint.scheme}://${endpoint.authority}';
+    final scope = '$origin|${accountName.trim().toLowerCase()}';
+    _coreSnapshotStore = MobileCoreSnapshotStore(preferences, scope: scope);
+    _offlineQueueStore = MobileOfflineQueueStore(preferences, scope: scope);
+    await preferences.setString(_lastAccountKey(), accountName);
   }
 
   Future<void> updateAvatar(String? dataUrl) async {
@@ -1832,7 +1896,8 @@ class LedgerController extends ChangeNotifier {
 
   Future<void> logout() async {
     await api.logout();
-    await _coreSnapshotStore?.clear();
+    // Keep the account-scoped local snapshot and pending queue for offline
+    // recovery. They are never used for a different account/server.
     user = null;
     demoMode = false;
     ledgers = const [];

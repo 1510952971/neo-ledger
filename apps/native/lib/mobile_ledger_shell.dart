@@ -194,7 +194,7 @@ class _MobileLedgerShellState extends State<MobileLedgerShell>
     if (!controller.authenticated) {
       _lockInitialized = false;
       _locked = false;
-      if (controller.loading || controller.api.hasSession) {
+      if (controller.loading) {
         return const MobileLoadingView();
       }
       return MobileLoginPage(controller: controller);

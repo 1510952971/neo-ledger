@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { NextResponse } from "next/server";
 import { ensureDb, getDbBinding } from "../../../db";
 import { ApiAccessError, accessErrorResponse } from "../../api-security";
@@ -41,6 +42,9 @@ function privateJson(body: unknown, init: ResponseInit = {}) {
 export async function GET(request: Request) {
   try {
     await ensureDb();
+    const runtime = env as unknown as Record<string, unknown>;
+    const serviceOrigin = String(runtime.AUTH_PUBLIC_ORIGIN || new URL(request.url).origin).replace(/\/$/, "");
+    const primaryOrigin = String(runtime.NEO_PRIMARY_ORIGIN || "https://ledger.985251.xyz").replace(/\/$/, "");
     const user = await sessionUserFromRequest(request);
     const db = getDbBinding();
     const linked: { results: Array<{ provider: "wechat" | "alipay" }> } = user
@@ -64,6 +68,8 @@ export async function GET(request: Request) {
     return privateJson({
       authenticated: Boolean(user),
       hasUsers: await hasLocalUsers(),
+      serviceOrigin,
+      primaryOrigin,
       providers: oauthProviderStatus(),
       linkedProviders: linked.results.map((row) => row.provider),
       passwordEnabled: Boolean(password?.passwordEnabled),

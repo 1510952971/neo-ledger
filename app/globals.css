@@ -1790,6 +1790,12 @@ fieldset { padding: 0; border: 0; }
 .recurring-task-notice { background: color-mix(in srgb, #60a56b 12%, transparent); color: #477b50; }
 .recurring-task-error { background: #fff0ed; color: #a33b32; }
 .recurring-task-list article.recurring-task-paused { opacity: .72; }
+
+.auth-instance-notice { margin: 14px 0 0; padding: 11px 12px; border: 1px solid #d8e4d8; border-radius: 8px; background: #eef5ed; color: #365840; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.auth-instance-notice p { margin: 3px 0 0; color: #536c57; }
+.auth-instance-notice.separate { border-color: #edc9a8; background: #fff4e9; color: #754927; }
+.auth-instance-notice.separate p { color: #8a5a31; }
+.auth-instance-notice strong { font-weight: 800; }
 .recurring-task-list article > span { display: grid; width: 27px; height: 27px; place-items: center; border-radius: 9px; background: color-mix(in srgb, var(--theme-accent, #6aaf75) 13%, transparent); color: var(--theme-accent, #579461); font-weight: 700; }
 .recurring-task-list .subscription-info { min-width: 0; }
 .recurring-task-list .subscription-info small { overflow-wrap: anywhere; }

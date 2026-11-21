@@ -16,7 +16,7 @@ import {
   SCHEDULED_OCCURRENCES_TABLE_SQL,
 } from "./transfer-schema.js";
 
-export const DB_SCHEMA_VERSION = "41";
+export const DB_SCHEMA_VERSION = "42";
 const SCHEMA_VERSION = DB_SCHEMA_VERSION;
 let ensuredDbBinding: ReturnType<typeof getDbBinding> | null = null;
 
@@ -307,6 +307,16 @@ export async function ensureDb() {
     await ensureLedgerSyncRevisions(binding);
     ensuredDbBinding = binding;
     return;
+  }
+  if (version?.value === "41") {
+    await runMigrationBatch(binding, [
+      binding.prepare("DROP INDEX IF EXISTS transactions_offline_id_unique"),
+      binding.prepare(
+        "CREATE UNIQUE INDEX IF NOT EXISTS transactions_ledger_offline_id_unique ON transactions(ledger_id,offline_id) WHERE offline_id IS NOT NULL",
+      ),
+      binding.prepare("UPDATE app_meta SET value='42' WHERE key='schema_version'"),
+    ]);
+    return ensureDb();
   }
   if (version?.value === "40") {
     await runIdempotentAlter(

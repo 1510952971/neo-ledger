@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Neo Ledger backup
+
+[Timer]
+OnCalendar=*-*-* 19:30:00 UTC
+RandomizedDelaySec=10m
+Persistent=true
+Unit=neo-ledger-backup.service
+
+[Install]
+WantedBy=timers.target

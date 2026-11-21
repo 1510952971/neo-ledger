@@ -20,7 +20,8 @@ class MobileLocalCacheStore {
   }
 
   bool _isDisposableKey(String key) {
-    if (key == MobileCoreSnapshotStore.storageKey ||
+      if (key == MobileCoreSnapshotStore.storageKey ||
+          key.startsWith('${MobileCoreSnapshotStore.storageKey}_') ||
         key == MobileEntryPreferences.recentCategoriesKey ||
         key == MobileEntryPreferences.recentBillSearchHistoryKey ||
         key == MobileEntryPreferences.recentBillFilterHistoryKey ||
@@ -30,6 +31,10 @@ class MobileLocalCacheStore {
     return key.startsWith(MobileEntryPreferences.accountPrefix);
   }
 
-  bool hasPendingQueue() =>
-      _preferences.containsKey(MobileOfflineQueueStore.storageKey);
+  bool hasPendingQueue() => _preferences.getKeys().any(
+    (key) =>
+        (key == MobileOfflineQueueStore.storageKey ||
+            key.startsWith('${MobileOfflineQueueStore.storageKey}_')) &&
+        (_preferences.getStringList(key)?.isNotEmpty ?? false),
+  );
 }

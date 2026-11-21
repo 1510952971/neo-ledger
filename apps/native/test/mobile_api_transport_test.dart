@@ -12,6 +12,7 @@ Future<MobileApiSessionStore> makeSession() async {
   final values = <String, String>{
     MobileApiSessionStore.baseUrlStorageKey: 'https://ledger.example/',
     MobileApiSessionStore.cookieStorageKey: 'neo_ledger_session=secret',
+    MobileApiSessionStore.cookieOriginStorageKey: 'https://ledger.example:443',
   };
   final session = MobileApiSessionStore(
     read: (key) async => values[key],

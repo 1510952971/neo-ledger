@@ -16,6 +16,8 @@ export type ClientAuthUser = {
 };
 
 type AuthStatus = {
+  serviceOrigin?: string;
+  primaryOrigin?: string;
   providers: { wechat: boolean; alipay: boolean };
   linkedProviders: Array<"wechat" | "alipay">;
   passwordEnabled: boolean;
@@ -65,6 +67,17 @@ export function AuthPanel({
     recoveryCodesRemaining: 0,
     user: user ? { email: user.email ?? null } : null,
   });
+  const serviceIsPrimary = status.serviceOrigin && status.primaryOrigin
+    ? status.serviceOrigin.toLowerCase() === status.primaryOrigin.toLowerCase()
+    : null;
+  const serviceHost = (value?: string) => {
+    if (!value) return "服务地址读取中";
+    try {
+      return new URL(value).host;
+    } catch {
+      return value;
+    }
+  };
 
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
@@ -968,6 +981,16 @@ export function AuthPanel({
     <section className="auth-panel">
       <p className="eyebrow">ACCOUNT ACCESS</p>
       <h1>账户号</h1>
+      <aside className={`auth-instance-notice ${serviceIsPrimary === false ? "separate" : "primary"}`} aria-live="polite">
+        <strong>当前数据服务：{serviceHost(status.serviceOrigin)}</strong>
+        {serviceIsPrimary === false ? (
+          <p>这是独立数据库，不会自动与手机主服务同步。要共用账号和账本，请访问 {serviceHost(status.primaryOrigin)}。</p>
+        ) : serviceIsPrimary === true ? (
+          <p>此服务与手机版默认服务一致，账号和账本共用同一份云端数据。</p>
+        ) : (
+          <p>正在确认服务地址；注册前请确认此地址是你希望保存数据的服务。</p>
+        )}
+      </aside>
       <div className="auth-mode" role="tablist" aria-label="账号操作">
         <button
           type="button"
