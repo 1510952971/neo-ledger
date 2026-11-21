@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -106,13 +107,17 @@ class MobileApiTransport {
     String? body,
   ) async {
     try {
-      final response = await _request(method, uri, headers, body);
+      final response = await _request(method, uri, headers, body).timeout(
+        const Duration(seconds: 20),
+      );
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw ApiException(_errorMessage(response), response.statusCode);
       }
       return response;
     } on ApiException {
       rethrow;
+    } on TimeoutException {
+      throw const ApiException('服务器响应超时，请检查网络后重试。');
     } catch (error) {
       throw ApiException('无法连接 ${session.baseUrl}：$error');
     }

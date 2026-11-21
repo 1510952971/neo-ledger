@@ -13,8 +13,12 @@ for (const warning of deployment.warnings)
   console.warn(`[${warning.code}] ${warning.message}`);
 const mode = deployment.mode ?? "local";
 const bindHost = bindHostForConfig(process.env, mode);
-const wrangler = path.join(root, "node_modules", ".bin", "wrangler");
+// Keep the production local Worker server on a Wrangler version that handles
+// cancelled loopback requests without terminating the entire dev process.
+// Wrangler 4.166.0 includes the upstream ProxyWorker recovery fixes.
+const wrangler = path.join(root, "node_modules", "wrangler-stable", "bin", "wrangler.js");
 const args = [
+  wrangler,
   "dev",
   "--config",
   path.join(root, "dist", "server", "wrangler.json"),
@@ -57,7 +61,7 @@ for (const name of variableNames) {
   if (value) args.push("--var", `${name}:${value}`);
 }
 
-const child = spawn(wrangler, args, { cwd: root, env: process.env, stdio: "inherit" });
+const child = spawn(process.execPath, args, { cwd: root, env: process.env, stdio: "inherit" });
 for (const signal of ["SIGINT", "SIGTERM"])
   process.on(signal, () => child.kill(signal));
 child.on("exit", (code, signal) => {

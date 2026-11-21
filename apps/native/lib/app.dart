@@ -324,6 +324,8 @@ class LedgerController extends ChangeNotifier {
     await _loadQueue();
     await api.load();
     if (!api.hasSession) return;
+    loading = true;
+    notifyListeners();
     await _loadCoreSnapshot();
     _projectQueueIntoTransactions();
     try {
@@ -339,6 +341,9 @@ class LedgerController extends ChangeNotifier {
       await refresh();
     } catch (_) {
       error = '暂时无法连接服务器，已显示最近一次缓存数据';
+      notifyListeners();
+    } finally {
+      loading = false;
       notifyListeners();
     }
   }
@@ -361,8 +366,11 @@ class LedgerController extends ChangeNotifier {
       );
       await refresh();
     } catch (value) {
-      user = null;
-      error = '$value';
+      if (!authenticated) {
+        error = '$value';
+      } else {
+        error = '登录成功，但同步暂未完成：$value';
+      }
     } finally {
       loading = false;
       notifyListeners();
