@@ -1,0 +1,28 @@
+# Mandatory data safety rules
+
+These rules apply to every change, build, deployment, migration, restore, and
+troubleshooting action in this repository. Treat them as hard requirements.
+
+1. User data is more important than availability or convenience. Never delete,
+   replace, reinitialize, or point an instance at a different database unless
+   the user explicitly requests that exact data operation.
+2. Before changing application code or deployment configuration on a live
+   instance, create and verify a restorable backup of its database and required
+   configuration. A healthy response, a running container, or a source archive
+   is not a database backup.
+3. Keep the database path and persistent volume mapping stable across releases.
+   Inspect the effective Compose configuration and actual container mount
+   before rebuilding. Stop if the data mount cannot be positively identified.
+4. After an update, verify health and that the expected account/data are still
+   present before declaring success. If a previously populated instance comes
+   up empty, stop writes and preserve both the old backup and the new state;
+   never register a replacement account as a workaround.
+5. Never claim that devices share data merely because they can log in. Verify
+   that they use the same backend and that a test write on one device is read
+   back on the other. Separate NAS and OCI databases are separate products
+   until an explicit, tested replication flow exists.
+6. Do not place financial databases, exports, credentials, or private keys in
+   Git, source packages, or logs. Minimize access and redact diagnostics.
+
+When a request conflicts with these rules, preserve the data and explain the
+specific blocker before making the risky change.

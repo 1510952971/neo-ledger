@@ -67,8 +67,15 @@ archive="$2"
 releases="$project_dir/.releases"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 release="$releases/$stamp"
+backup="$project_dir/backup/pre-update-$stamp.tar.gz"
+was_running=0
 
-cleanup() { rm -f "$archive"; }
+cleanup() {
+  rm -f "$archive"
+  if [[ "$was_running" == 1 ]]; then
+    docker start neo-ledger-nas >/dev/null 2>&1 || true
+  fi
+}
 trap cleanup EXIT
 
 if [[ ! -f "$project_dir/.env" ]]; then
@@ -91,7 +98,31 @@ done
 compose=(docker compose -p neo-ledger -f "$release/deploy/nas/compose.yml")
 NEO_LEDGER_RELEASE="$stamp" "${compose[@]}" config >/dev/null
 NEO_LEDGER_RELEASE="$stamp" "${compose[@]}" build neo-ledger
+
+# Refuse to rebuild an existing container if it is not using this project's
+# persistent data directory. A newly initialized empty mount must not silently
+# replace the database that held the user's account.
+pre_users="unknown"
+if docker inspect neo-ledger-nas >/dev/null 2>&1; then
+  mount_source="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination \"/app/.wrangler\"}}{{.Source}}{{end}}{{end}}' neo-ledger-nas)"
+  expected_data="$(readlink -f "$project_dir/data")"
+  actual_data="$(readlink -f "$mount_source" 2>/dev/null || true)"
+  if [[ -z "$mount_source" || "$actual_data" != "$expected_data" ]]; then
+    echo "Refusing update: current container data mount '$mount_source' does not resolve to '$expected_data'. Preserve and inspect the original database before changing Compose." >&2
+    exit 1
+  fi
+  pre_users="$(docker exec neo-ledger-nas node -e 'fetch("http://127.0.0.1:3000/api/auth").then(async r=>{const x=await r.json();process.stdout.write(x.hasUsers?"yes":"no")}).catch(()=>process.stdout.write("unknown"))' 2>/dev/null || echo unknown)"
+  docker stop neo-ledger-nas >/dev/null
+  was_running=1
+fi
+
+# Snapshot the stopped database directory so SQLite/WAL state is consistent.
+tar -czf "$backup" -C "$project_dir" data config secrets .env
+tar -tzf "$backup" >/dev/null
+sha256sum "$backup" > "$backup.sha256"
+
 NEO_LEDGER_RELEASE="$stamp" "${compose[@]}" up -d --no-build neo-ledger
+was_running=0
 
 for attempt in $(seq 1 30); do
   state="$(docker inspect -f '{{.State.Health.Status}}' neo-ledger-nas 2>/dev/null || true)"
@@ -109,6 +140,14 @@ done
 
 docker exec neo-ledger-nas node -e \
   'fetch("http://127.0.0.1:3000/api/app-update/health").then(async r => { console.log(await r.text()); if (!r.ok) process.exit(1) }).catch(e => { console.error(e); process.exit(1) })'
+
+post_users="$(docker exec neo-ledger-nas node -e 'fetch("http://127.0.0.1:3000/api/auth").then(async r=>{const x=await r.json();process.stdout.write(x.hasUsers?"yes":"no")}).catch(()=>process.stdout.write("unknown"))')"
+if [[ "$pre_users" == yes && "$post_users" != yes ]]; then
+  docker stop neo-ledger-nas >/dev/null || true
+  echo "DATA SAFETY STOP: the prior database had accounts but the updated service does not. The new container has been stopped. Verified pre-update backup: $backup. Do not register a replacement account or write data; restore the expected mount/database first." >&2
+  exit 1
+fi
+echo "Verified pre-update backup: $backup ($(cat "$backup.sha256" | awk '{print $1}'))"
 
 # Keep recent source releases available for manual rollback; persistent data is
 # outside these directories and is never removed here.

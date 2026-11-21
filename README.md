@@ -84,6 +84,8 @@ Android 手机和平板的完整功能应使用 `apps/native` 原生统一客户
 
 Docker Compose 默认使用 `DEPLOYMENT_MODE=self_hosted` 并监听容器网络。直接在电脑运行的 `local` 模式默认只监听 `127.0.0.1`；需要局域网访问时必须显式设置 `NEO_ENABLE_LAN=true`，并确认系统防火墙没有把端口暴露到公网。
 
+Neo Ledger 的客户端默认连接 `https://ledger.985251.xyz`，手机端账本保存在该服务的 OCI 数据库；客户端不把服务端账本当作手机本地数据库保存。手机、电脑和网页要共享账号及数据，必须指向同一个服务地址。极空间 NAS 部署有独立账号和数据库，不会因邮箱相同或更新到同一程序版本而自动互通；NAS 与 OCI 的双向同步尚未实现，NAS 部署目前只可作为独立实例/恢复副本使用。任何更新前都必须保留并校验原数据目录的备份，更新后检查账号和账本仍可见；出现空账号库时立即停止写入，先找回原始挂载，不得新注册覆盖。
+
 `cloud` 模式采用失败即关闭的启动门禁，必须同时配置：`NEO_HSTS=true`、`NEO_ALLOWED_HOSTS`、白名单内的 HTTPS `AUTH_PUBLIC_ORIGIN`、`RESEND_API_KEY`、有效的 `MAIL_FROM` 和 `NEO_WEBDAV_ALLOWED_HOSTS`。两个白名单只写逗号分隔的完整主机名，不含协议、端口、路径或通配符。配置不完整时容器拒绝启动，Worker 返回 503，健康接口在 `configurationIssues` 中给出不含密钥的错误码。
 
 NAS 安装 Docker 后，在项目目录运行：
