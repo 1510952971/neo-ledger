@@ -5,6 +5,26 @@ await dbmod.ensureDb();
 const B = dbmod.getDbBinding();
 const q = async (sql, ...p) => (await B.prepare(sql).bind(...p).all()).results;
 const fs = await import("node:fs");
+const { createHash } = await import("node:crypto");
+let registrationFixtureId = 0;
+async function registerTestUser({ username, password, displayName }) {
+  const id = ++registrationFixtureId;
+  const email = `${username}@example.test`;
+  const inviteCode = `test-invite-${String(id).padStart(32, "0")}`;
+  const code = "123456";
+  const inviteHash = createHash("sha256").update(inviteCode, "utf8").digest("hex");
+  const codeHash = await authLib.authTokenDigest(`${email}|register|${code}`);
+  await B.prepare("INSERT INTO registration_invites(code_hash,created_by,target_email,expires_at) VALUES(?,?,?,?)")
+    .bind(inviteHash, "test-fixture", email, new Date(Date.now() + 600_000).toISOString())
+    .run();
+  await B.prepare("INSERT INTO email_codes(email,purpose,code_hash,expires_at) VALUES(?,?,?,?)")
+    .bind(email, "register", codeHash, new Date(Date.now() + 600_000).toISOString())
+    .run();
+  return call(auth, "POST", "/api/auth", {
+    headers: { "x-forwarded-for": `198.51.100.${(id % 200) + 1}` },
+    body: { action: "register", username, email, password, displayName, inviteCode, code },
+  });
+}
 
 const restore = await import("../../app/api/data/restore/route.ts");
 const exportApi = await import("../../app/api/data/export/route.ts");
@@ -99,7 +119,7 @@ r = await call(restore, "POST", "/api/data/restore", { body: { hello: "不是备
 check("非法备份被拒", r.status >= 400, `${r.status} ${r.text?.slice(0,120)}`);
 
 describe("注册/登录");
-r = await call(auth, "POST", "/api/auth", { body: { action: "register", username: "pengtest", password: "Secret#12345", displayName: "小彭" } });
+r = await registerTestUser({ username: "pengtest", password: "Secret#12345", displayName: "小彭" });
 check("注册首个账号", r.status === 200 || r.status === 201, `${r.status} ${r.text?.slice(0,150)}`);
 const setCookie = r.headers?.get?.("set-cookie") || "";
 const cookie = setCookie.split(";")[0];
@@ -108,7 +128,7 @@ r = await call(auth, "GET", "/api/auth", { cookie });
 check("GET 会话信息", r.status === 200 && (r.text.includes("pengtest") || r.text.includes("小彭")), r.text?.slice(0,150));
 r = await call(auth, "POST", "/api/auth", { body: { action: "login", username: "pengtest", password: "错的密码" } });
 check("错误密码被拒", r.status === 401 || r.status === 400, `${r.status}`);
-r = await call(auth, "POST", "/api/auth", { body: { action: "register", username: "pengtest", password: "Another#123", displayName: "撞名者" } });
+r = await registerTestUser({ username: "pengtest", password: "Another#123", displayName: "撞名者" });
 check("重复用户名409", r.status === 409, `${r.status} ${r.text?.slice(0,100)}`);
 const crossOriginAuth = await call(auth, "POST", "/api/auth", {
   headers: { origin: "https://evil.example" },
@@ -188,7 +208,7 @@ check("旧local数据已过户给首个账号", r.json?.length >= 1, JSON.string
 const L = r.json?.[0]?.id;
 r = await call(accounts, "GET", `/api/accounts?ledger=${L}`, { cookie });
 check("过户后账户可见", r.status === 200 && r.json?.length >= 2, `${r.status} n=${r.json?.length}`);
-r = await call(auth, "POST", "/api/auth", { body: { action: "register", username: "ledgerboundary", password: "Secret#98765", displayName: "边界用户" } });
+r = await registerTestUser({ username: "ledgerboundary", password: "Secret#98765", displayName: "边界用户" });
 const boundaryCookie = (r.headers?.get?.("set-cookie") || "").split(";")[0];
 check("创建第二个边界测试用户", r.status === 200 && boundaryCookie.includes("="), `${r.status}`);
 const crossUserAccounts = await call(accounts, "GET", `/api/accounts?ledger=${L}`, { cookie: boundaryCookie });
@@ -455,7 +475,7 @@ describe("账号头像");
   r = await call(auth, "GET", "/api/auth", { cookie: cookie2 });
   check("清除头像持久化到当前会话", r.status === 200 && r.json?.user?.avatarUrl === null, r.text?.slice(0,160));
 
-  r = await call(auth, "POST", "/api/auth", { body: { action: "register", username: "avatarother", password: "Secret#54321", displayName: "另一个账号" } });
+  r = await registerTestUser({ username: "avatarother", password: "Secret#54321", displayName: "另一个账号" });
   const otherCookie = (r.headers?.get?.("set-cookie") || "").split(";")[0];
   check("注册响应包含空头像", r.status === 200 && r.json?.user?.avatarUrl === null && otherCookie.includes("="), r.text?.slice(0,160));
   r = await call(auth, "PATCH", "/api/auth", { cookie: otherCookie, body: { avatarUrl: jpegAvatar } });
@@ -470,6 +490,13 @@ describe("账号头像");
     displayName: "微信头像用户",
     avatarUrl: jpegAvatar,
   };
+  let inviteRequired = false;
+  try { await oauthMod.provisionOauthUser(oauthProfile); } catch (error) {
+    inviteRequired = /邀请码/.test(String(error));
+  }
+  check("OAuth 新账号不能绕过邀请码注册", inviteRequired, "expected invite-only provisioning guard");
+  const existingOauthUserId = (await q("SELECT id FROM app_users WHERE username='pengtest'"))[0]?.id;
+  await oauthMod.linkOauthIdentity(existingOauthUserId, oauthProfile);
   const oauthUser = await oauthMod.provisionOauthUser(oauthProfile);
   let oauthRows = await q("SELECT u.avatar_url AS avatarUrl,i.avatar_url AS identityAvatarUrl FROM app_users u JOIN app_identities i ON i.user_id=u.id WHERE u.id=?", oauthUser.id);
   check("OAuth 首次建号导入平台头像", oauthUser.avatarUrl === jpegAvatar && oauthRows[0]?.avatarUrl === jpegAvatar && oauthRows[0]?.identityAvatarUrl === jpegAvatar, JSON.stringify(oauthRows));
@@ -1042,14 +1069,7 @@ describe("proxy 身份判定（回归：登录后不得被自己的账本挡住�
 
 describe("账号注销");
 {
-  let deleteResult = await call(auth, "POST", "/api/auth", {
-    body: {
-      action: "register",
-      username: "delete-me",
-      password: "Delete#12345",
-      displayName: "待注销账号",
-    },
-  });
+  let deleteResult = await registerTestUser({ username: "delete-me", password: "Delete#12345", displayName: "待注销账号" });
   const deleteCookie = (deleteResult.headers?.get?.("set-cookie") || "").split(";")[0];
   check("创建待注销账号", deleteResult.status === 200 && deleteCookie.includes("="), `${deleteResult.status}`);
   const deleteUserId = (await q("SELECT id FROM app_users WHERE username='delete-me'"))[0]?.id;
@@ -1160,10 +1180,7 @@ describe("邮箱验证码");
   r = await call(resetApi, "POST", "/api/auth/reset-password", { body: { email: "pengtest-mail@example.com", code: "123456", newPassword: "Whatever#123" } });
   check("无有效验证码时重置被拒", r.status >= 400, `${r.status} ${r.text?.slice(0,120)}`);
 
-  const resetTargetResult = await call(auth, "POST", "/api/auth", {
-    headers: { "x-forwarded-for": "198.51.100.89" },
-    body: { action: "register", username: "reset-target-user", password: "Reset#12345", displayName: "重置测试账号" },
-  });
+  const resetTargetResult = await registerTestUser({ username: "reset-target-user", password: "Reset#12345", displayName: "重置测试账号" });
   check("创建密码重置测试账号", resetTargetResult.status === 200 && resetTargetResult.headers?.get?.("set-cookie"), String(resetTargetResult.status));
   const resetTargetId = (await q("SELECT id FROM app_users WHERE username='reset-target-user'"))[0]?.id;
   const resetTargetEmail = "reset-target-user@example.com";
