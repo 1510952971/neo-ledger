@@ -36,7 +36,7 @@ const _brand = Color(0xffa5ff4f);
 const _surface = Color(0xff101116);
 const _surfaceAlt = Color(0xff1b1b23);
 const _muted = Color(0xffa4a8a1);
-const _nativeVersion = '1.5.0';
+const _nativeVersion = '1.5.1';
 const _shortcutChannel = MethodChannel('online.eyeme.neo_ledger/shortcuts');
 const _assetTypes = [
   '房产',
@@ -4624,6 +4624,9 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
           apkName: apkName,
           checksumUrl: latest.checksumManifestUrl,
         );
+        if (result['ok'] != true) {
+          throw Exception('${result['message'] ?? '软件服务地址下载失败'}');
+        }
       } catch (serviceError) {
         final githubUrl = latest.githubAssetFor('android');
         if (githubUrl == null || githubUrl == apkUrl) rethrow;
@@ -4638,6 +4641,9 @@ class _NeoShellState extends State<NeoShell> with WidgetsBindingObserver {
           apkName: apkName,
           checksumUrl: latest.githubChecksumManifestUrl,
         );
+        if (result['ok'] != true) {
+          throw Exception('${result['message'] ?? 'GitHub 备用下载失败'}');
+        }
       }
       if (!mounted) return;
       final message = '${result['message'] ?? '更新处理完成'}';

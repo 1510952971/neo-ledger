@@ -797,6 +797,9 @@ Future<void> _checkMobileUpdate(
           apkName: assetName,
           checksumUrl: latest.checksumManifestUrl,
         );
+        if (result['ok'] != true) {
+          throw Exception('${result['message'] ?? '软件服务地址下载失败'}');
+        }
       } catch (_) {
         final fallback = latest.githubAssetFor('android');
         if (fallback == null || fallback == asset) rethrow;
@@ -806,6 +809,9 @@ Future<void> _checkMobileUpdate(
           apkName: assetName,
           checksumUrl: latest.githubChecksumManifestUrl,
         );
+        if (result['ok'] != true) {
+          throw Exception('${result['message'] ?? 'GitHub 备用下载失败'}');
+        }
       }
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

@@ -130,12 +130,15 @@ class _UnifiedWebShellState extends State<UnifiedWebShell> {
       );
       if (install != true || !mounted) return;
       if (platform == 'android' && assetName.toLowerCase().endsWith('.apk')) {
-        await widget.controller.installAndroidUpdate(
+        final result = await widget.controller.installAndroidUpdate(
           version: latest.version,
           apkUrl: asset,
           apkName: assetName,
           checksumUrl: latest.checksumManifestUrl,
         );
+        if (result['ok'] != true) {
+          throw Exception('${result['message'] ?? 'Android 更新下载失败'}');
+        }
         return;
       }
       if (platform == 'windows' &&
