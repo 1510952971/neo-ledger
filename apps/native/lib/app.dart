@@ -392,6 +392,7 @@ class LedgerController extends ChangeNotifier {
     required String email,
     required String displayName,
     required String password,
+    required String inviteCode,
     String? code,
   }) async {
     loading = true;
@@ -404,6 +405,7 @@ class LedgerController extends ChangeNotifier {
         email: email,
         displayName: displayName,
         password: password,
+        inviteCode: inviteCode,
         code: code,
       );
       await _selectAccountStores(user!.username);
@@ -422,13 +424,18 @@ class LedgerController extends ChangeNotifier {
     required String url,
     required String email,
     required String purpose,
+    String? inviteCode,
   }) async {
     loading = true;
     error = null;
     notifyListeners();
     try {
       await _setEndpoint(url);
-      await api.requestEmailCode(email: email, purpose: purpose);
+      await api.requestEmailCode(
+        email: email,
+        purpose: purpose,
+        inviteCode: inviteCode,
+      );
     } catch (value) {
       error = '$value';
     } finally {
@@ -3348,6 +3355,7 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final url = TextEditingController(text: MobileApiSessionStore.defaultBaseUrl);
   final username = TextEditingController();
+  final inviteCode = TextEditingController();
   final email = TextEditingController();
   final displayName = TextEditingController();
   final password = TextEditingController();
@@ -3365,6 +3373,7 @@ class _LoginPageState extends State<LoginPage> {
     _codeTimer?.cancel();
     url.dispose();
     username.dispose();
+    inviteCode.dispose();
     email.dispose();
     displayName.dispose();
     password.dispose();
@@ -3402,6 +3411,10 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _sendCode(String purpose) async {
     if (_codeCooldown > 0 || widget.controller.loading) return;
+    if (purpose == 'register' && inviteCode.text.trim().isEmpty) {
+      setState(() => _validationError = '请先填写有效的邀请码');
+      return;
+    }
     final value = email.text.trim();
     if (!value.contains('@')) {
       setState(() => _validationError = '请输入有效邮箱地址');
@@ -3412,6 +3425,7 @@ class _LoginPageState extends State<LoginPage> {
       url: url.text,
       email: value,
       purpose: purpose,
+      inviteCode: purpose == 'register' ? inviteCode.text.trim() : null,
     );
     if (mounted && widget.controller.error == null) _startCodeCooldown();
   }
@@ -3437,6 +3451,14 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
     if (_registerMode) {
+      if (inviteCode.text.trim().isEmpty) {
+        setState(() => _validationError = '请先填写有效的邀请码');
+        return;
+      }
+      if (!email.text.trim().contains('@')) {
+        setState(() => _validationError = '邀请码注册必须填写邮箱');
+        return;
+      }
       if (password.text != passwordConfirm.text) {
         setState(() => _validationError = '两次输入的密码不一致');
         return;
@@ -3447,6 +3469,7 @@ class _LoginPageState extends State<LoginPage> {
         email: email.text,
         displayName: displayName.text,
         password: password.text,
+        inviteCode: inviteCode.text,
         code: code.text,
       );
       return;
@@ -3551,6 +3574,16 @@ class _LoginPageState extends State<LoginPage> {
                     if (!_resetMode) const SizedBox(height: 14),
                     if (_registerMode && !_resetMode) ...[
                       TextField(
+                        controller: inviteCode,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        decoration: const InputDecoration(
+                          labelText: '一次性邀请码',
+                          helperText: '请向已注册用户获取；有效期 7 天',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
                         controller: displayName,
                         decoration: const InputDecoration(labelText: '显示名称'),
                       ),
@@ -3571,8 +3604,9 @@ class _LoginPageState extends State<LoginPage> {
                         keyboardType: TextInputType.emailAddress,
                         onChanged: (_) => setState(() {}),
                         decoration: InputDecoration(
-                          labelText: _registerMode ? '邮箱（选填）' : '注册邮箱',
+                          labelText: _registerMode ? '邮箱（注册必填）' : '注册邮箱',
                         ),
+                        textInputAction: TextInputAction.next,
                       ),
                       const SizedBox(height: 12),
                     ],
