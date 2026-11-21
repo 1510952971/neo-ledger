@@ -24,7 +24,9 @@ restart_app() {
 }
 trap restart_app EXIT
 
-sudo tar -czf "$PARTIAL" data config secrets .env
+sudo tar -czf "$PARTIAL" \
+  data config secrets .env compose.yml backup.sh \
+  neo-ledger-backup.service neo-ledger-backup.timer
 sudo tar -tzf "$PARTIAL" >/dev/null
 sudo mv "$PARTIAL" "$ARCHIVE"
 sudo sha256sum "$ARCHIVE" | sudo tee "$ARCHIVE.sha256" >/dev/null
