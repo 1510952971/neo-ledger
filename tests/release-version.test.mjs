@@ -1,22 +1,25 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const script = fileURLToPath(new URL("../scripts/verify-release-version.mjs", import.meta.url));
+const packageVersion = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+).version;
 
 test("release version verifier accepts matching package, runtime and tag", () => {
-  const output = execFileSync(process.execPath, [script, "--tag=v1.1.0"], { encoding: "utf8" });
-  assert.match(output, /Release version verified: 1\.1\.0/u);
+  const output = execFileSync(process.execPath, [script, `--tag=v${packageVersion}`], { encoding: "utf8" });
+  assert.ok(output.includes(`Release version verified: ${packageVersion}`));
 });
 
 test("release version verifier binds the independent Android companion to its compatibility manifest", () => {
   const output = execFileSync(process.execPath, [
     script,
-    "--tag=v1.1.0",
+    `--tag=v${packageVersion}`,
     "--compatibility-file=release-compatibility.json",
     "--android-file=android-companion/app/build.gradle.kts",
   ], { encoding: "utf8" });
