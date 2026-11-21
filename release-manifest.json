@@ -14,13 +14,13 @@
     "macos": "when-configured; unsigned-test-allowed"
   },
   "currentRelease": {
-    "tag": "native-v1.5.0",
+    "tag": "native-v1.5.1",
     "windowsInstallerSigned": false,
     "windowsInstallerNote": "当前 Release 的 Windows EXE 未配置代码签名，仅用于测试；生产分发应配置证书。",
-    "macosPreviewTag": "macos-preview-v1.5.0",
+    "macosPreviewTag": null,
     "macosPackageSigned": false,
     "macosPackageNotarized": false,
-    "macosPackageNote": "macOS 预览包未配置 Developer ID 签名/公证，仅用于测试；下一次 native-v* 稳定发布将包含 DMG/ZIP。"
+    "macosPackageNote": "macOS DMG/ZIP 已包含在稳定版 Release 中，但未配置 Developer ID 签名/公证，首次打开时可能需要在系统设置中手动允许。"
   },
   "platforms": {
     "android": {
