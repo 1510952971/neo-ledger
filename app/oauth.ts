@@ -1,11 +1,9 @@
 import { env } from "cloudflare:workers";
 import { ensureDb, getDbBinding } from "../db";
 import {
-  adoptOrProvisionVault,
   avatarDataUrlFromBytes,
   authTokenDigest,
   MAX_AVATAR_BYTES,
-  passwordRecord,
   validateAvatarDataUrl,
   type AvatarMimeType,
 } from "./auth";
@@ -470,47 +468,9 @@ export async function provisionOauthUser(profile: OAuthProfile) {
     };
   }
 
-  const firstAccount = !(await db
-    .prepare("SELECT 1 found FROM app_users WHERE disabled=0 LIMIT 1")
-    .first());
-  const id = crypto.randomUUID();
-  const suffix = (await authTokenDigest(`${profile.provider}:${profile.subject}`)).slice(0, 12);
-  const username = `${profile.provider}.${suffix}.${crypto.randomUUID().slice(0, 4)}`;
-  const password = await passwordRecord(crypto.randomUUID() + crypto.randomUUID());
-  await db.batch([
-    db.prepare(
-      `INSERT INTO app_users(id,username,display_name,avatar_url,password_hash,password_salt,password_iterations,password_enabled)
-       VALUES(?,?,?,?,?,?,?,0)`,
-    ).bind(
-      id,
-      username,
-      profile.displayName,
-      platformAvatarUrl,
-      password.hash,
-      password.salt,
-      password.iterations,
-    ),
-    db.prepare(
-      `INSERT INTO app_identities(provider,subject,user_id,display_name,avatar_url)
-       VALUES(?,?,?,?,?)`,
-    ).bind(
-      profile.provider,
-      profile.subject,
-      id,
-      profile.displayName,
-      platformAvatarUrl,
-    ),
-  ]);
-  await adoptOrProvisionVault(id, profile.displayName, firstAccount);
-  return {
-    id,
-    username,
-    displayName: profile.displayName,
-    email: null,
-    avatarUrl: platformAvatarUrl,
-    created: true,
-    firstAccount,
-  };
+  throw new Error(
+    "请先使用有效邀请码完成邮箱注册，再登录并绑定第三方账号",
+  );
 }
 
 export async function linkOauthIdentity(userId: string, profile: OAuthProfile) {

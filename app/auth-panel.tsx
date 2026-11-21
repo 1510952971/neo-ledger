@@ -56,6 +56,9 @@ export function AuthPanel({
   const [sessionList, setSessionList] = useState<Array<{ id: string; displayName: string; userAgent: string | null; lastUsedAt: string; current: boolean }>>([]);
   const [passkeys, setPasskeys] = useState<Array<{ id: string; label: string; deviceType: string; backedUp: boolean; createdAt: string; lastUsedAt: string | null }>>([]);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [generatedInvite, setGeneratedInvite] = useState("");
+  const [generatedInviteExpiry, setGeneratedInviteExpiry] = useState("");
+  const [inviteTargetEmail, setInviteTargetEmail] = useState("");
   const deleteFormRef = useRef<HTMLFormElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const avatarUrl = user?.avatarUrl ?? null;
@@ -121,7 +124,11 @@ export function AuthPanel({
   }, [deleteOpen]);
 
   // 三个场景共用一套发码逻辑：注册验证、绑定邮箱、找回密码。
-  async function requestCode(purpose: "register" | "bind" | "reset", email: string) {
+  async function requestCode(
+    purpose: "register" | "bind" | "reset",
+    email: string,
+    inviteCode?: string,
+  ) {
     if (!email) {
       setError("请先填写邮箱地址");
       return;
@@ -133,7 +140,7 @@ export function AuthPanel({
       const { response, data } = await fetchClientJson<{ error?: string }>("/api/auth/email-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, purpose }),
+        body: JSON.stringify({ email, purpose, ...(purpose === "register" ? { inviteCode } : {}) }),
       });
       if (!response.ok) throw new Error(data?.error || "验证码发送失败");
       setCodeCooldown(60);
@@ -168,7 +175,10 @@ export function AuthPanel({
               const email = String(
                 new FormData(form ?? undefined).get("email") ?? "",
               ).trim();
-              void requestCode(purpose, email);
+              const inviteCode = String(
+                new FormData(form ?? undefined).get("inviteCode") ?? "",
+              ).trim();
+              void requestCode(purpose, email, inviteCode);
             }}
           >
             {codeCooldown > 0
@@ -286,6 +296,32 @@ export function AuthPanel({
       setNotice(status.user?.email ? "邮箱已更新" : "邮箱绑定成功，现在可以用邮箱登录");
     } catch (bindError) {
       setError(bindError instanceof Error ? bindError.message : "绑定邮箱失败");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function createRegistrationInvite() {
+    setPending(true);
+    setError("");
+    setNotice("");
+    setGeneratedInvite("");
+    try {
+      const { response, data } = await fetchClientJson<{
+        error?: string;
+        code?: string;
+        expiresAt?: string;
+      }>("/api/auth/invites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: inviteTargetEmail }),
+      });
+      if (!response.ok || !data?.code)
+        throw new Error(data?.error || "生成邀请码失败");
+      setGeneratedInvite(data.code);
+      setGeneratedInviteExpiry(data.expiresAt ?? "");
+    } catch (inviteError) {
+      setError(inviteError instanceof Error ? inviteError.message : "生成邀请码失败");
     } finally {
       setPending(false);
     }
@@ -909,6 +945,31 @@ export function AuthPanel({
                 {sessionList.length > 0 && <ul>{sessionList.map((item) => <li key={item.id}>{item.current ? "当前设备" : item.displayName} · 最近使用 {new Date(item.lastUsedAt).toLocaleString("zh-CN")}</li>)}</ul>}
               </div>
             </section>
+            <section className="auth-security-section" aria-labelledby="registration-invite-title">
+              <p className="eyebrow" id="registration-invite-title">INVITE REGISTRATION</p>
+              <h3>邀请注册</h3>
+              <p>邀请码绑定受邀邮箱，7 天内有效且只能使用一次。只有通过邀请码校验后，系统才会向该邮箱发送注册验证码。</p>
+              <label>
+                <span>受邀人的邮箱</span>
+                <input
+                  type="email"
+                  autoComplete="off"
+                  value={inviteTargetEmail}
+                  onChange={(event) => setInviteTargetEmail(event.target.value.trim())}
+                  placeholder="invitee@example.com"
+                />
+              </label>
+              <button type="button" onClick={() => void createRegistrationInvite()} disabled={pending || !inviteTargetEmail.includes("@")}>生成一次性邀请码</button>
+              {generatedInvite && (
+                <div className="mfa-setup" role="status">
+                  <strong>请立即复制并保存；离开此页面后无法再次查看</strong>
+                  <code>{generatedInvite}</code>
+                  <p>有效期至 {new Date(generatedInviteExpiry).toLocaleString("zh-CN")}</p>
+                  <button type="button" onClick={() => void navigator.clipboard.writeText(generatedInvite).then(() => setNotice("邀请码已复制"), () => setError("复制失败，请手动复制邀请码"))}>复制邀请码</button>
+                  <button type="button" onClick={() => setGeneratedInvite("")}>我已保存</button>
+                </div>
+              )}
+            </section>
             <div className="auth-divider"><span>第三方账号</span></div>
             {oauthButtons(true)}
           </>
@@ -1019,6 +1080,23 @@ export function AuthPanel({
       </div>
       <form onSubmit={submit} className="auth-form" id="auth-main-form">
         {mode === "register" && (
+          <>
+            <label>
+              <span>邀请码（一次性，7 天内有效）</span>
+              <input
+                name="inviteCode"
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                minLength={32}
+                maxLength={128}
+                required
+                placeholder="请向邀请人获取邀请码"
+              />
+            </label>
+          </>
+        )}
+        {mode === "register" && (
           <label>
             <span>显示名称</span>
             <input
@@ -1061,12 +1139,13 @@ export function AuthPanel({
         {mode === "register" && (
           <>
             <label>
-              <span>邮箱（选填，可用于登录和找回密码）</span>
+              <span>邮箱（注册必填，用于验证、登录和找回密码）</span>
               <input
                 name="email"
                 type="email"
                 autoComplete="email"
                 maxLength={254}
+                required
                 placeholder="name@example.com"
                 value={registerEmail}
                 onChange={(event) => setRegisterEmail(event.target.value.trim())}

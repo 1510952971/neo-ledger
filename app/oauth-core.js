@@ -9,6 +9,7 @@ const SAFE_OAUTH_ERRORS = new Set([
   "这个第三方账号已经绑定到其他账户",
   "当前账户已经绑定过同类账号",
   "第三方登录尚未配置",
+  "请先使用有效邀请码完成邮箱注册，再登录并绑定第三方账号",
 ]);
 
 export function safeOauthErrorMessage(provider, error) {
