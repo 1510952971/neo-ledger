@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models.dart';
@@ -7,14 +8,19 @@ import '../../models.dart';
 /// Persists pending entries using the existing key so app upgrades keep the
 /// user's locally queued transactions intact.
 class MobileOfflineQueueStore {
-  const MobileOfflineQueueStore(this._preferences);
+  const MobileOfflineQueueStore(this._preferences, {this.scope});
 
   static const storageKey = 'neo_ledger_offline_queue_v1';
 
   final SharedPreferences _preferences;
+  final String? scope;
+
+  String get _storageKey => scope == null
+      ? storageKey
+      : '${storageKey}_${sha256.convert(utf8.encode(scope!)).toString().substring(0, 16)}';
 
   Future<List<OfflineEntry>> read() async {
-    final raw = _preferences.getStringList(storageKey) ?? const <String>[];
+    final raw = _preferences.getStringList(_storageKey) ?? const <String>[];
     return raw
         .map(_decodeEntry)
         .whereType<OfflineEntry>()
@@ -23,7 +29,7 @@ class MobileOfflineQueueStore {
 
   Future<void> write(List<OfflineEntry> entries) async {
     await _preferences.setStringList(
-      storageKey,
+      _storageKey,
       entries.map((entry) => jsonEncode(entry.toJson())).toList(),
     );
   }

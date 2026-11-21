@@ -43,7 +43,8 @@ class MobileApiTransport {
     };
     if (extraHeaders != null) headers.addAll(extraHeaders);
     if (body != null) headers['Content-Type'] = 'application/json';
-    if (includeCookie && session.hasSession) {
+    if (includeCookie && session.hasSession &&
+        _originOf(uri) == session.origin) {
       headers['Cookie'] = session.cookie!;
     }
     final encodedBody = body == null ? null : jsonEncode(body);
@@ -144,13 +145,22 @@ class MobileApiTransport {
     Uri uri,
     Map<String, String> headers,
     String? body,
-  ) => switch (method) {
-    'POST' => http.post(uri, headers: headers, body: body),
-    'PUT' => http.put(uri, headers: headers, body: body),
-    'PATCH' => http.patch(uri, headers: headers, body: body),
-    'DELETE' => http.delete(uri, headers: headers, body: body),
-    _ => http.get(uri, headers: headers),
-  };
+  ) async {
+    final client = http.Client();
+    final request = http.Request(method, uri)
+      ..headers.addAll(headers)
+      ..followRedirects = false;
+    if (body != null) request.body = body;
+    try {
+      final streamed = await client.send(request);
+      return await http.Response.fromStream(streamed);
+    } finally {
+      client.close();
+    }
+  }
+
+  static String _originOf(Uri uri) =>
+      '${uri.scheme.toLowerCase()}://${uri.host.toLowerCase()}:${uri.hasPort ? uri.port : (uri.scheme == 'https' ? 443 : 80)}';
 
   String _errorMessage(http.Response response) {
     try {

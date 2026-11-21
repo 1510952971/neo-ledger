@@ -29,8 +29,10 @@ void main() {
       await store.load();
 
       expect(store.baseUrl, MobileApiSessionStore.defaultBaseUrl);
-      expect(store.hasSession, isTrue);
-      expect(store.cookie, 'neo_ledger_session=saved-session');
+      // Legacy cookies are deliberately discarded because their origin was
+      // not recorded, so they cannot be safely scoped to the new endpoint.
+      expect(store.hasSession, isFalse);
+      expect(store.cookie, isNull);
       expect(store.autoLogSecret, 'auto-log-secret');
       expect(
         values[MobileApiSessionStore.baseUrlStorageKey],

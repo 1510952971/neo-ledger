@@ -23,6 +23,14 @@ troubleshooting action in this repository. Treat them as hard requirements.
    until an explicit, tested replication flow exists.
 6. Do not place financial databases, exports, credentials, or private keys in
    Git, source packages, or logs. Minimize access and redact diagnostics.
+7. Native session cookies must be bound to the exact HTTPS origin that issued
+   them; never forward credentials across redirects or endpoint changes.
+8. Keep offline queues and cached account data isolated by server and account.
+   Legacy unscoped mobile data must remain recoverable and must never be
+   silently uploaded to a newly selected server or account.
+9. Offline sync deduplication must be scoped to the authorized ledger. Never
+   acknowledge or discard a queued item because an identifier exists in a
+   different user's ledger.
 
 When a request conflicts with these rules, preserve the data and explain the
 specific blocker before making the risky change.

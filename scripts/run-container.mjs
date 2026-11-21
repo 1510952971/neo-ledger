@@ -40,6 +40,7 @@ const variableNames = [
   "OLLAMA_URL",
   "OLLAMA_MODEL",
   "AUTH_PUBLIC_ORIGIN",
+  "NEO_PRIMARY_ORIGIN",
   "WECHAT_APP_ID",
   "WECHAT_APP_SECRET",
   "ALIPAY_APP_ID",

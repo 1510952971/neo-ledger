@@ -38,8 +38,8 @@ export async function POST(request: Request) {
       if (!offlineId || !accountId) continue;
       await claimAndRequireLedger(request, ledgerId);
       const exists = await db
-        .prepare("SELECT id FROM transactions WHERE offline_id=?")
-        .bind(offlineId)
+        .prepare("SELECT id FROM transactions WHERE offline_id=? AND ledger_id=?")
+        .bind(offlineId, ledgerId)
         .first();
       if (exists) {
         synced.push(offlineId);
