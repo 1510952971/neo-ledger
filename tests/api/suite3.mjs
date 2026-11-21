@@ -495,15 +495,17 @@ describe("账号头像");
     inviteRequired = /邀请码/.test(String(error));
   }
   check("OAuth 新账号不能绕过邀请码注册", inviteRequired, "expected invite-only provisioning guard");
-  const existingOauthUserId = (await q("SELECT id FROM app_users WHERE username='pengtest'"))[0]?.id;
+  const oauthFixture = await registerTestUser({ username: "oauthavatar", password: "Oauth#12345", displayName: "OAuth头像用户" });
+  check("为 OAuth 绑定先注册邀请账号", oauthFixture.status === 200, `${oauthFixture.status}`);
+  const existingOauthUserId = (await q("SELECT id FROM app_users WHERE username='oauthavatar'"))[0]?.id;
   await oauthMod.linkOauthIdentity(existingOauthUserId, oauthProfile);
   const oauthUser = await oauthMod.provisionOauthUser(oauthProfile);
   let oauthRows = await q("SELECT u.avatar_url AS avatarUrl,i.avatar_url AS identityAvatarUrl FROM app_users u JOIN app_identities i ON i.user_id=u.id WHERE u.id=?", oauthUser.id);
-  check("OAuth 首次建号导入平台头像", oauthUser.avatarUrl === jpegAvatar && oauthRows[0]?.avatarUrl === jpegAvatar && oauthRows[0]?.identityAvatarUrl === jpegAvatar, JSON.stringify(oauthRows));
+  check("邀请注册后绑定 OAuth 不覆盖用户头像", oauthUser.created === false && oauthRows[0]?.avatarUrl === null && oauthRows[0]?.identityAvatarUrl === jpegAvatar, JSON.stringify(oauthRows));
 
   await oauthMod.provisionOauthUser({ ...oauthProfile, avatarUrl: jpegAvatar2 });
   oauthRows = await q("SELECT u.avatar_url AS avatarUrl,i.avatar_url AS identityAvatarUrl FROM app_users u JOIN app_identities i ON i.user_id=u.id WHERE u.id=?", oauthUser.id);
-  check("未自定义时 OAuth 登录同步平台头像", oauthRows[0]?.avatarUrl === jpegAvatar2 && oauthRows[0]?.identityAvatarUrl === jpegAvatar2, JSON.stringify(oauthRows));
+  check("OAuth 登录更新平台头像快照", oauthRows[0]?.avatarUrl === null && oauthRows[0]?.identityAvatarUrl === jpegAvatar2, JSON.stringify(oauthRows));
 
   const oauthSession = await oauthAuth.createSession(oauthUser.id, new Request("http://localhost:3000/api/auth"));
   const oauthCookie = oauthSession.cookie.split(";")[0];
@@ -520,9 +522,9 @@ describe("账号头像");
   r = await call(auth, "DELETE", "/api/auth?action=delete-account", {
     cookie: oauthCookie,
     headers: { "x-forwarded-for": "127.0.0.3" },
-    body: { confirmation: "删除账号" },
+    body: { confirmation: "删除账号", currentPassword: "Oauth#12345" },
   });
-  check("无本地密码的 OAuth 账号也可注销", r.status === 200, `${r.status} ${r.text?.slice(0,120)}`);
+  check("已绑定 OAuth 的邀请账号可注销", r.status === 200, `${r.status} ${r.text?.slice(0,120)}`);
   const oauthDeleted = await q("SELECT disabled FROM app_users WHERE id=?", oauthUser.id);
   check("OAuth 注销后账号被停用", oauthDeleted[0]?.disabled === 1, JSON.stringify(oauthDeleted));
 }
