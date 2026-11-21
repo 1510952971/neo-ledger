@@ -1,24 +1,21 @@
-# Neo Ledger 甲骨文云 + 极空间迁移方案
+# Neo Ledger 极空间主数据 + OCI 加密备份方案
 
-本方案按《多软件云端部署与同步备份通用模板》执行。目标地址暂定为 `https://ledger.985251.xyz`；在 DNS、HTTPS 和健康检查全部通过前，不切换客户端的生产入口。
+**最新架构决定（2026-11-21）：极空间 NAS 为唯一主数据库，OCI 仅作加密备份和恢复端。**本文件中 2026-11-19 和 2026-11-21 前段记录中的“OCI 主库、NAS 备份端”均为历史状态，已被该决定取代。详见 [NAS_PRIMARY_OCI_BACKUP_PLAN.md](./NAS_PRIMARY_OCI_BACKUP_PLAN.md)。
+
+当前 NAS 独立 HTTPS 入口、OCI 密文接收器及恢复演练尚未完成。完成这些步骤前不切换客户端默认服务，也不宣称 OCI 灾备已就绪。
 
 ## 目标架构
 
 ```text
-电脑 / Android / Web
-          │ HTTPS
+手机 / 电脑 / Web
+          │ HTTPS（统一 NAS 主站）
           ▼
-ledger.985251.xyz
-          │ Cloudflare → OCI Caddy
-          ▼
-OCI /opt/apps/neo-ledger/neo-ledger
-          │ 主数据库（唯一写入端）
-          ├── /opt/apps/neo-ledger/data
-          └── /opt/apps/neo-ledger/backup
-
-极空间 NAS
-          │ 独立 Neo Ledger 容器或备份任务
-          └── data / backup（备用端，不与 OCI 双主写入）
+ledger-nas.985251.xyz → Cloudflare Tunnel → 极空间 Neo Ledger
+                                             │ 唯一主数据库
+                                             └── /SATA-1-4T/Docker/neo-ledger/data
+                                                        │ 加密版本快照
+                                                        ▼
+                              ledger.985251.xyz/api/nas-backup → OCI 密文备份库
 ```
 
 ## 执行原则
@@ -27,7 +24,7 @@ OCI /opt/apps/neo-ledger/neo-ledger
 - 不删除旧 AWS 服务，至少保留到新 OCI/NAS 验收完成。
 - Neo Ledger 只使用自己的目录、容器、数据卷和备份目录。
 - Caddy/Cloudflare 只作为共享入口层，不共享应用数据。
-- 甲骨文端作为唯一主写入端；NAS 作为备份和恢复端。
+- 极空间 NAS 是唯一主写入端；OCI 只接收、保存和恢复 NAS 加密快照。
 - 每次更新前先备份，更新后检查健康、登录、写入、读取和恢复。
 
 ## 验收门槛
@@ -36,12 +33,12 @@ OCI /opt/apps/neo-ledger/neo-ledger
 - [x] Caddy 成功签发证书，`/api/health` 返回 `status=ok`。
 - [x] OCI Neo Ledger 数据位于独立的 `/opt/apps/neo-ledger/data` 目录。
 - [x] 电脑端、Android 端、网页版的默认生产地址已切到 `https://ledger.985251.xyz`。
-- [ ] 使用同一个 OCI 生产服务和账号完成真实跨设备登录/记账验收（常规使用不需要 WebDAV）。
+- [ ] 使用统一 NAS HTTPS 服务与原 NAS 账号完成真实跨设备读写往返验收。
 - [x] NAS Neo Ledger 独立容器已部署并运行。
 - [x] NAS 隔离演练账本内新增账户、写入 ¥0.01 测试流水，并在账单页读回流水与账户余额。
 - [x] NAS 备份恢复往返完成：恢复前导出 JSON，在用户明确确认全量覆盖后执行恢复；恢复后账本与验收流水可读。
 - [x] 极空间远程访问入口可打开 NAS Neo Ledger 应用；无需电脑与 NAS 同一局域网。
-- [ ] 真实账号跨设备同步验收；WebDAV 仅用于额外的加密快照/合并，不是日常多端同步的前置条件。
+- [ ] NAS 主库每日加密备份至 OCI 并通过隔离恢复演练。
 - [x] NAS 文件上传更新流程已完成首次实机验证；重复打包命令已加入 `deploy/nas/package-upload.sh`。
 - [x] 更新服务同时提供软件服务地址和 GitHub 备用地址；`native-v1.5.0` 已发布。
 - [x] OCI 部署连续运行超过 24 小时且健康；是否停用旧 AWS 仍待 NAS 同步与恢复验收后决定。
@@ -83,10 +80,11 @@ OCI /opt/apps/neo-ledger/neo-ledger
 
 ## 不可违反的数据安全与跨端规则
 
-- 手机默认 API 地址是 `https://ledger.985251.xyz`；账号认证与账本请求都落在该 OCI 服务。电脑端只有打开同一服务并登录同一账号，才能和手机读写同一份数据。
-- 极空间 Docker 容器是另一套独立服务，使用 NAS 自己的 SQLite/D1 状态目录。NAS 注册的用户、NAS 账本不会因为 OCI 上使用同一邮箱而自动出现；OCI 和 NAS 两边也不会自动互相复制。
-- “NAS 端账号可登录手机”必须以客户端实际 API 地址和两端读写往返验收为准。只看到登录成功、服务健康、同名邮箱或更新成功，均不构成数据互通证明。
-- 在跨端复制协议完成并通过冲突、重复、删除、离线和恢复验收前，产品说明和更新报告必须明确说明 NAS/OCI 数据隔离，不得暗示双向同步已完成。
+- 手机和电脑的目标服务地址是 `https://ledger-nas.985251.xyz`；账号认证和记账请求必须落到 NAS 主站。该主机名只有在 Cloudflare Tunnel 新路由与健康检查通过后才能使用。
+- `nas.985251.xyz` 已供 SafeVault 使用，禁止覆盖；`ledger.985251.xyz` 保持 OCI 备份/恢复服务，不作为日常记账主站。
+- NAS→OCI 是加密单向备份，不是双向复制。NAS 注册的账号仍保存在 NAS 数据库；OCI 上的账号库不会自动变成主库，也不应为备份创建同名用户。
+- 数据互通的验收必须确认手机与电脑实际服务主机名相同，并完成一端写入、另一端读回。只看到登录成功、服务健康或同名邮箱不构成证明。
+- 完成加密自动备份、OCI 密文接收器和隔离恢复演练之前，不能宣称灾备或 NAS/OCI 恢复链路已完成。
 - 任何生产更新前，先验证原数据库挂载路径并生成可恢复备份；更新后核对账号和账本。如果原来有账号但更新后没有，立刻停止该实例的写入，不得重新注册或初始化覆盖，先定位并恢复原数据目录。
 
 ## 2026-11-21 数据安全补丁上线记录
@@ -95,4 +93,11 @@ OCI /opt/apps/neo-ledger/neo-ledger
 - 更新 OCI 前生成 `/opt/apps/neo-ledger/backup/neo-ledger-20261121T125101Z.tar.gz`，SHA-256 校验及归档读取均通过；归档包含 D1 状态、`.env`、Compose 配置、备份脚本和 systemd 定时器配置。
 - OCI 使用合入 `main` 的源码构建并切换到新镜像。公网 `/api/health` 返回 `status=ok`，数据库、schema 和配置检查均为 `ok`，schema 版本为 42；`/api/auth` 的 `hasUsers=true`。原数据库挂载仍为 `/opt/apps/neo-ledger/data`；旧源码及旧镜像仍保留作回滚材料。
 - OCI 每日自动备份 timer 已启用，计划 UTC 19:30（上海时间约次日 03:30），带随机延迟和错过调度后的补跑。备份写入 `/opt/apps/neo-ledger/backup`，保留最近 30 天；这是同一实例上的本地副本，不等于异地灾备。
-- 本补丁没有建立 NAS ↔ OCI 数据复制，也未做两个独立用户端的真实流水往返验收。实际多端共用数据仍要求所有设备连到同一 OCI 服务和同一账号。
+
+## 2026-11-21 NAS 主数据架构决定
+
+- 用户明确指定 NAS 为主数据，OCI 为 NAS 故障时的加密备份与恢复端。该目标取代本文早期的 OCI 主站计划。
+- 目前 Cloudflare Tunnel 仅公开 `nas.985251.xyz → 192.168.5.134:18088`（SafeVault）；DNS `ledger.985251.xyz` 指向 OCI。尚未创建 Neo Ledger NAS 专用入口，也未改客户端默认地址。
+- 需先新增独立 `ledger-nas.985251.xyz → 192.168.5.134:3001` 路由（NAS 主机端口 3001 映射容器 3000）并验证指向 Neo Ledger，再逐步将客户端请求统一到 NAS。
+- NAS→OCI 加密快照、OCI 密文接收 API 和隔离恢复候选生成已进入仓库工作区；尚未部署到真实 OCI/NAS，也没有成功上传快照或完成隔离恢复。因此 OCI 仍不能作为已验证的 NAS 数据恢复点。
+- 这不是双向同步。实际多端共用数据仍要求所有设备连接同一个 NAS HTTPS 服务和同一个 NAS 账号。

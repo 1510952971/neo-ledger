@@ -297,11 +297,13 @@ neoledger://entry?amount=7.90&type=支出&title=午餐&category=餐饮&source=�
 
 在线设备列表只用于确认连接状态，真正的数据传输仍需“生成同步包 → 通过局域网发送 → 获取并合并”。
 
-## 9. WebDAV / 坚果云多端同步
+## 9. 多端使用与灾备边界
 
-日常跨设备使用不需要配置 WebDAV：电脑、手机和平板统一访问 `https://ledger.985251.xyz` 并登录同一账号，即共享 OCI 服务端的同一份账本。原生客户端默认使用该服务地址；旧版保存的开发地址或旧 AWS 地址会迁移到当前默认地址。WebDAV 是可选的加密快照/独立账本合并通道，适合把 NAS 等独立实例的数据合并进来。
+Neo Ledger 的目标数据架构是“NAS 主数据、OCI 加密备份”。手机、电脑和平板必须连接同一个 NAS HTTPS 主站并登录 NAS 原账号；只有同一个服务地址才会读写同一份账本。OCI 现有地址 `https://ledger.985251.xyz` 暂时仍是独立服务，NAS 账号和数据不会因为相同邮箱或登录成功而自动出现在 OCI。
 
-NAS Docker 是独立实例，使用自己的数据库。直接打开 NAS 远程访问地址会进入 NAS 这份数据；它不会自动镜像 OCI 主库。若要日常跨设备同步，请使用统一 OCI 地址；若要把 NAS 作为备用恢复端，使用数据中心的全量 JSON 备份/恢复或 WebDAV 加密合并。
+NAS 独立 HTTPS 主入口、原生客户端默认地址切换、NAS→OCI 自动加密备份和隔离恢复演练尚未全部完成。完成前，不要把 OCI 当作已验证的 NAS 备份，也不要更改 NAS 数据卷。阶段进度见仓库 `docs/NAS_PRIMARY_OCI_BACKUP_PLAN.md`。
+
+WebDAV 是可选的加密快照/独立账本合并功能，不是本方案的自动灾备通道。不要用“仅上传”或“仅下载并覆盖”替代数据库备份；恢复或覆盖前先导出并验证当前数据。
 
 ### 9.1 坚果云配置
 
@@ -409,7 +411,7 @@ docker compose logs --tail=200 neo-ledger
 
 ### 10.6 HTTPS 和外网访问
 
-推荐为 NAS 配置独立子域名，例如 `nas-ledger.985251.xyz`，通过 NAS 反向代理转发到容器 `3000` 端口，并申请有效 HTTPS 证书。
+NAS 主站计划使用独立 HTTPS 子域名 `ledger-nas.985251.xyz`，通过 Cloudflare Tunnel 转发到极空间 Neo Ledger 容器。现有 `nas.985251.xyz` 用于 SafeVault，`ledger.985251.xyz` 用于 OCI，均须保持原路由。NAS 主入口验证、应用健康和原账号验收通过前，不要切换手机默认地址。
 
 安全要求：
 
