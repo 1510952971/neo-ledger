@@ -37,10 +37,10 @@ Tunnel 会隐藏 NAS 的私网 IP、不需要路由器端口映射，并把流�
 | --- | --- | --- |
 | NAS 源站被直接扫描/暴露 | 只用 Cloudflare Tunnel 的出站连接；不要创建 NAS 公网 A/AAAA 记录，不做路由器端口转发；保留 `192.168.5.134` 私网地址。Tunnel 提供公开 hostname 时，Cloudflare 可在边缘应用 WAF/DDoS 能力。 | 计划；尚未为 Neo Ledger 创建新路由 |
 | 登录密码猜测、撞库 | 应用当前按 IP 对登录限制 12 次/15 分钟、注册限制 5 次/15 分钟；再在 Cloudflare 为登录/API 配置适配 API 的速率限制和监控。先检查安全事件并调阈值；不要对原生客户端 API 盲目套浏览器 JavaScript Challenge。 | 应用限流已有；Cloudflare 规则未配置 |
-| 未授权注册、邮件滥发 | 已注册用户登录账号面板后可针对一个目标邮箱生成一次性邀请码；码有效 7 天、单次使用、每用户每日最多 5 个。服务端先验证邀请与邮箱绑定，再允许发送注册邮件验证码；注册时在一个数据库批次中消费邀请并创建账号。错误/过期/已用码不发邮件。登录和找回密码不需要邀请。空数据库首账号只能由管理员配置的 24 小时 bootstrap 邀请创建。 | 实现在邀请制分支，CI/部署尚未完成 |
+| 未授权注册、邮件滥发 | 已注册用户登录账号面板后可针对一个目标邮箱生成一次性邀请码；码有效 7 天、单次使用、每用户每日最多 5 个。服务端先验证邀请与邮箱绑定，再允许发送注册邮件验证码；注册时在一个数据库批次中消费邀请并创建账号。错误/过期/已用码不发邮件。登录和找回密码不需要邀请。空数据库首账号只能由管理员配置的 24 小时 bootstrap 邀请创建。 | 已合并并部署 OCI；NAS 尚未更新 |
 | 会话被盗/弱口令 | 使用唯一强密码；为主账号启用 Passkey 或 TOTP 二次验证，离线保存恢复码；不要共享管理员密码。 | 需在原 NAS 账号验收时配置/确认 |
 | WAF 误伤同步/手机 API | 对登录、数据 API、Passkey、邮件验证码和更新下载路径做移动端与 Web 实测；Cloudflare Access 如拦截 API 则不启用全站 Access。任何规则先观察日志、再逐步阻断。 | 尚未验证 |
-| OCI 源站被绕过 | 原生客户端只使用 HTTPS 域名；Cloudflare 的 OCI 源站地址不写入客户端。备份端点只收随机 bearer token 认证的 AES-GCM 密文；对 token 失效、请求大小和摘要做拒绝处理。 | 新端点代码在 PR #32；尚未部署 |
+| OCI 源站被绕过 | 原生客户端只使用 HTTPS 域名；Cloudflare 的 OCI 源站地址不写入客户端。备份端点只收随机 bearer token 认证的 AES-GCM 密文；对 token 失效、请求大小和摘要做拒绝处理。 | OCI 接收器已部署；未授权请求被拒绝 |
 
 **上线次序**：先部署邀请码功能并确认主账号可生成邀请；启用主账号 MFA；检查 Cloudflare 账户当前可用的 WAF/速率规则并验证 API 兼容性；配置边缘防护；然后才新增 Tunnel hostname。新 hostname 验证 TLS、健康检查、Web/手机 API 和登录后，再考虑切换客户端。Cloudflare 文档说明 Tunnel 建立的是出站连接，无需公网 IP 或打开入站端口；速率限制可针对登录端点抑制暴力尝试，但规则命中/计数存在延迟，不能替代应用级限流。[Cloudflare Tunnel 文档](https://developers.cloudflare.com/tunnel/)、[Cloudflare WAF 速率限制文档](https://developers.cloudflare.com/waf/rate-limiting-rules/)。
 
@@ -80,13 +80,22 @@ Tunnel 会隐藏 NAS 的私网 IP、不需要路由器端口映射，并把流�
 | F. 恢复演练 | 下载 OCI 快照到隔离目录并解密校验；在隔离 NAS 数据目录/端口恢复 | 账号、账本、表关系和样本流水读回；不触碰主数据 |
 | G. 客户端统一入口 | 原生客户端默认地址切到 NAS；电脑网页使用相同 HTTPS 地址 | 手机写入、电脑读取，反向读写同一记录；旧缓存仍按 origin 隔离 |
 
-## 当前现场状态（2026-11-21）
+## 当前现场状态（2026-11-23 复核）
+
+- 用户设定的是“NAS 唯一主数据、OCI 异地备份与恢复”。这里的“双向”仅指 NAS→OCI 备份和经确认后的 OCI→NAS 灾难恢复；不是两套数据库同时接受写入的实时双主复制。并行写入会造成不可安全自动合并的账本分叉。
+- 邀请制已合并到主分支 `68bd51a`，并已部署到 OCI。OCI 已有账户状态未被替换。OCI 主站仍与 NAS 使用独立数据库。
+- OCI `/api/nas-backup?status=1` 已用当前备份 Token 验证返回 HTTP 200，结果为 `latest: null`。此前 401 的根因是通用会话代理先于 Bearer Token 路由拦截；修复已合并并部署。当前 OCI 容器健康，备份接收器尚未收到任何 NAS 快照。
+- NAS `neo-ledger-nas` 仍运行旧源码，持久化目录 `/SATA-1-4T/Docker/neo-ledger/data`、主机端口 `3001 → 容器 3000` 保持不变。NAS 邀请制尚未部署；本机与 NAS 私网地址当前不可直连。
+- NAS 最新源码 ZIP、独立 sidecar Compose 配置和私有环境文件已在本机准备，尚未上传到 NAS。NAS sidecar 尚未启动，所以 NAS→OCI 自动备份和 OCI→NAS 恢复演练都未完成。
+- Cloudflare 当前 `nas.985251.xyz` 仍用于 SafeVault，`ledger.985251.xyz` 仍用于 OCI。新增 `ledger-nas.985251.xyz → http://192.168.5.134:3001` 会将 NAS 登录页和 API 公开到互联网；正在等待用户对该具体入口及登录限流规则的确认。未确认前不改 DNS/Tunnel，也不切换客户端主站。
+- 手机/桌面默认生产地址仍为 OCI。切至 NAS 前需先有可用 HTTPS 主机名、NAS 原账号登录和备份恢复演练；切换时不得清除旧服务缓存或自动搬动用户数据。
+
+## 历史现场状态（2026-11-21）
 
 - 已证实 Cloudflare Tunnel `zspace-nas-985251` 健康，现有唯一路由是 `nas.985251.xyz → http://192.168.5.134:18088`，该主机名目前显示 SafeVault。
 - Cloudflare DNS 中 `ledger.985251.xyz` 仍指向 OCI `164.152.107.32`；必须保留。
 - NAS Neo Ledger Docker 项目之前实测使用 `3001:3000`，持久数据目录为 `/SATA-1-4T/Docker/neo-ledger/data`。Cloudflare Tunnel 回源应使用 NAS 主机端口 `192.168.5.134:3001`；添加新路由前仍需健康探测确认。
-- 仓库的 NAS 应用已部署，但还没有 OCI 密文备份接收器、自动加密上传及从 OCI 恢复演练。因此现在不能宣称 NAS 主库已具备 OCI 灾备。
-- 仓库工作区已加入 OCI 密文接收 API、NAS 只读 SQLite 加密 sidecar、状态查询与独立恢复候选生成；它们还没有部署到真实 OCI/NAS，也未做线上数据备份或恢复演练，不能当作现有恢复点。
+- 仓库当时加入了 OCI 密文接收 API、NAS 只读 SQLite 加密 sidecar、状态查询与独立恢复候选生成；这些组件的当前部署状态以 2026-11-23 复核记录为准。
 - 只有阶段 A–F 全部验收后，才能把原生客户端默认服务切到 NAS。期间 OCI 地址和 NAS 数据目录都保持不动。
 
 ## 永久安全规则

@@ -4,8 +4,8 @@
 services:
   neo-ledger-backup-agent:
     build:
-      context: ./backup-agent
-    image: neo-ledger-backup-agent:latest
+      context: ${NEO_LEDGER_SOURCE_DIR:?set NEO_LEDGER_SOURCE_DIR}/deploy/nas/backup-agent
+    image: neo-ledger-backup-agent:${NEO_LEDGER_RELEASE:-latest}
     container_name: neo-ledger-backup-agent
     restart: unless-stopped
     user: "0:0"
@@ -17,9 +17,9 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=256m
     env_file:
-      - ../../.neo-ledger-backup.env
+      - ${NEO_NAS_PROJECT_DIR:?set NEO_NAS_PROJECT_DIR}/.neo-ledger-backup.env
     volumes:
-      - ../../data:/source:ro
-      - ../../backup/nas-to-oci:/backup:rw
+      - ${NEO_NAS_PROJECT_DIR:?set NEO_NAS_PROJECT_DIR}/data:/source:ro
+      - ${NEO_NAS_PROJECT_DIR:?set NEO_NAS_PROJECT_DIR}/backup/nas-to-oci:/backup:rw
     networks:
       - default
