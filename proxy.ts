@@ -59,6 +59,7 @@ function limitFor(pathname: string, method: string) {
 function bodyLimitFor(pathname: string, method: string) {
   if (method !== "POST" && method !== "PUT" && method !== "PATCH") return null;
   if (pathname === "/api/data/restore") return 50 * 1024 * 1024;
+  if (pathname === "/api/nas-backup") return 50 * 1024 * 1024;
   if (pathname === "/api/bill-import") return 15 * 1024 * 1024;
   if (
     pathname === "/api/external/quick-sync" ||
@@ -161,6 +162,7 @@ export async function proxy(request: NextRequest) {
     pathname === "/api/health" ||
     pathname === "/api/native-update" ||
     pathname.startsWith("/api/native-update/") ||
+    pathname === "/api/nas-backup" ||
     pathname.startsWith("/api/v1/webhook/") ||
     pathname === "/api/v1/transactions" ||
     pathname.startsWith("/api/external/");
