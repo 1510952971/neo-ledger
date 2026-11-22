@@ -28,6 +28,11 @@ import { verifyTotp } from "../../totp";
 import { consumeRecoveryCode, remainingRecoveryCodes } from "../../mfa-recovery";
 import { recordAuditEvent, requestIdFromRequest } from "../../audit-log";
 import { MAX_AUTH_BODY_BYTES, readJsonWithLimit } from "../../request-limits";
+import {
+  ensureBootstrapRegistrationInvite,
+  normalizeRegistrationInvite,
+  registrationInviteHash,
+} from "../../registration-invite";
 
 export const dynamic = "force-dynamic";
 
@@ -104,6 +109,7 @@ export async function POST(request: Request) {
       displayName?: string;
       password?: string;
       mfaCode?: string;
+      inviteCode?: string;
     }>(request, MAX_AUTH_BODY_BYTES);
     const action = body.action === "register" ? "register" : "login";
     await enforceAuthRateLimit(request, action);
@@ -117,36 +123,70 @@ export async function POST(request: Request) {
     let mfaRecoveryUsed = false;
 
     if (action === "register") {
+      await ensureBootstrapRegistrationInvite();
+      const inviteCode = normalizeRegistrationInvite(body.inviteCode);
+      if (!inviteCode)
+        throw new ApiAccessError(
+          "邀请码无效，请先联系已注册用户获取邀请码。",
+          403,
+        );
+      const inviteHash = registrationInviteHash(inviteCode);
+      const invitation = await db
+        .prepare("SELECT target_email AS targetEmail,used_at AS usedAt FROM registration_invites WHERE code_hash=? AND julianday(expires_at)>julianday('now')")
+        .bind(inviteHash)
+        .first<{ targetEmail: string; usedAt: string | null }>();
+      if (!invitation)
+        throw new ApiAccessError("邀请码无效或已过期", 403);
+      if (invitation.usedAt)
+        throw new ApiAccessError("这个邀请码已经使用，请联系邀请人获取新的邀请码", 409);
       const value = validateRegistrationInput(body);
-      // 邮箱仍可留空（本地自用场景），但只要填了就必须先通过验证码验证，
-      // 否则填错邮箱的人以后既收不到重置邮件、也占用了别人的邮箱。
-      if (value.email)
-        await consumeEmailCode({
-          email: value.email,
-          purpose: "register",
-          code: String((body as { code?: string }).code ?? ""),
-        });
+      if (!value.email)
+        throw new ApiAccessError("邀请码注册必须填写并验证邮箱", 400);
+      if (value.email !== invitation.targetEmail)
+        throw new ApiAccessError("这个邀请码只适用于受邀邮箱", 403);
+      await consumeEmailCode({
+        email: value.email,
+        purpose: "register",
+        code: String((body as { code?: string }).code ?? ""),
+      });
       const firstAccount = !(await hasLocalUsers());
       const password = await passwordRecord(value.password);
       const id = crypto.randomUUID();
       try {
-        await db
-          .prepare(
-            `INSERT INTO app_users(id,username,email,display_name,password_hash,password_salt,password_iterations,email_verified)
-             VALUES(?,?,?,?,?,?,?,?)`,
-          )
-          .bind(
-            id,
-            value.username,
-            value.email,
-            value.displayName,
-            password.hash,
-            password.salt,
-            password.iterations,
-            value.email ? 1 : 0,
-          )
-          .run();
+        const results = await db.batch([
+          db
+            .prepare(
+              "UPDATE registration_invites SET used_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),used_by=? WHERE code_hash=? AND used_at IS NULL AND julianday(expires_at)>julianday('now')",
+            )
+            .bind(id, inviteHash),
+          db
+            .prepare(
+              `INSERT INTO app_users(id,username,email,display_name,password_hash,password_salt,password_iterations,email_verified)
+               SELECT ?,?,?,?,?,?,?,1 WHERE EXISTS (
+                 SELECT 1 FROM registration_invites WHERE code_hash=? AND used_by=? AND used_at IS NOT NULL
+               )`,
+            )
+            .bind(
+              id,
+              value.username,
+              value.email,
+              value.displayName,
+              password.hash,
+              password.salt,
+              password.iterations,
+              inviteHash,
+              id,
+            ),
+        ]);
+        if (
+          Number(results[0]?.meta?.changes ?? 0) !== 1 ||
+          Number(results[1]?.meta?.changes ?? 0) !== 1
+        )
+          throw new ApiAccessError("邀请码已使用或过期，请联系邀请人获取新的邀请码", 409);
       } catch (error) {
+        if (/registration_invites\.code_hash|UNIQUE constraint failed: registration_invites\.code_hash/i.test(String(error)))
+          throw new ApiAccessError("这个邀请码已经使用，请联系邀请人获取新的邀请码", 409);
+        if (error instanceof ApiAccessError) throw error;
         const message = error instanceof Error ? error.message : "";
         if (/app_users\.email|email/i.test(message))
           throw new ApiAccessError("这个邮箱已经绑定到其他账号", 409);

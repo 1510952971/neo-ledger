@@ -132,6 +132,7 @@ class NeoLedgerApi {
     required String email,
     required String displayName,
     required String password,
+    required String inviteCode,
     String? code,
   }) async {
     final response = await _transport.send(
@@ -141,6 +142,7 @@ class NeoLedgerApi {
         'action': 'register',
         'username': username.trim(),
         'email': email.trim(),
+        'inviteCode': inviteCode.trim(),
         'displayName': displayName.trim(),
         'password': password,
         if (code != null && code.trim().isNotEmpty) 'code': code.trim(),
@@ -159,10 +161,13 @@ class NeoLedgerApi {
   Future<void> requestEmailCode({
     required String email,
     required String purpose,
+    String? inviteCode,
   }) async {
     await postJson('/api/auth/email-code', {
       'email': email.trim(),
       'purpose': purpose,
+      if (purpose == 'register' && inviteCode != null)
+        'inviteCode': inviteCode.trim(),
     });
   }
 

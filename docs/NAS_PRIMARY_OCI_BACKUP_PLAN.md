@@ -37,12 +37,12 @@ Tunnel 会隐藏 NAS 的私网 IP、不需要路由器端口映射，并把流�
 | --- | --- | --- |
 | NAS 源站被直接扫描/暴露 | 只用 Cloudflare Tunnel 的出站连接；不要创建 NAS 公网 A/AAAA 记录，不做路由器端口转发；保留 `192.168.5.134` 私网地址。Tunnel 提供公开 hostname 时，Cloudflare 可在边缘应用 WAF/DDoS 能力。 | 计划；尚未为 Neo Ledger 创建新路由 |
 | 登录密码猜测、撞库 | 应用当前按 IP 对登录限制 12 次/15 分钟、注册限制 5 次/15 分钟；再在 Cloudflare 为登录/API 配置适配 API 的速率限制和监控。先检查安全事件并调阈值；不要对原生客户端 API 盲目套浏览器 JavaScript Challenge。 | 应用限流已有；Cloudflare 规则未配置 |
-| 未授权注册、邮件滥发 | 当前注册仍开放，注册次数限制按 IP。公开路由前必须决定是否限制成“首次无账号时允许创建，已有主账号后关闭公开注册”，并确保忘记密码流程仍可用；同时核对验证码发送限流和邮件供应商额度。 | 未解决，是公网启用阻塞项 |
+| 未授权注册、邮件滥发 | 已注册用户登录账号面板后可针对一个目标邮箱生成一次性邀请码；码有效 7 天、单次使用、每用户每日最多 5 个。服务端先验证邀请与邮箱绑定，再允许发送注册邮件验证码；注册时在一个数据库批次中消费邀请并创建账号。错误/过期/已用码不发邮件。登录和找回密码不需要邀请。空数据库首账号只能由管理员配置的 24 小时 bootstrap 邀请创建。 | 实现在邀请制分支，CI/部署尚未完成 |
 | 会话被盗/弱口令 | 使用唯一强密码；为主账号启用 Passkey 或 TOTP 二次验证，离线保存恢复码；不要共享管理员密码。 | 需在原 NAS 账号验收时配置/确认 |
 | WAF 误伤同步/手机 API | 对登录、数据 API、Passkey、邮件验证码和更新下载路径做移动端与 Web 实测；Cloudflare Access 如拦截 API 则不启用全站 Access。任何规则先观察日志、再逐步阻断。 | 尚未验证 |
 | OCI 源站被绕过 | 原生客户端只使用 HTTPS 域名；Cloudflare 的 OCI 源站地址不写入客户端。备份端点只收随机 bearer token 认证的 AES-GCM 密文；对 token 失效、请求大小和摘要做拒绝处理。 | 新端点代码在 PR #32；尚未部署 |
 
-**上线次序**：先确认账号注册策略和主账号 MFA；检查 Cloudflare 账户当前可用的 WAF/速率规则；配置并验证边缘防护；然后才新增 Tunnel hostname。新 hostname 验证 TLS、健康检查、Web/手机 API 和登录后，再考虑切换客户端。Cloudflare 文档说明 Tunnel 建立的是出站连接，无需公网 IP 或打开入站端口；速率限制可针对登录端点抑制暴力尝试，但规则命中/计数存在延迟，不能替代应用级限流。[Cloudflare Tunnel 文档](https://developers.cloudflare.com/tunnel/)、[Cloudflare WAF 速率限制文档](https://developers.cloudflare.com/waf/rate-limiting-rules/)。
+**上线次序**：先部署邀请码功能并确认主账号可生成邀请；启用主账号 MFA；检查 Cloudflare 账户当前可用的 WAF/速率规则并验证 API 兼容性；配置边缘防护；然后才新增 Tunnel hostname。新 hostname 验证 TLS、健康检查、Web/手机 API 和登录后，再考虑切换客户端。Cloudflare 文档说明 Tunnel 建立的是出站连接，无需公网 IP 或打开入站端口；速率限制可针对登录端点抑制暴力尝试，但规则命中/计数存在延迟，不能替代应用级限流。[Cloudflare Tunnel 文档](https://developers.cloudflare.com/tunnel/)、[Cloudflare WAF 速率限制文档](https://developers.cloudflare.com/waf/rate-limiting-rules/)。
 
 ## 备份协议
 

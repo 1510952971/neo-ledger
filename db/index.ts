@@ -224,6 +224,12 @@ export async function ensureDb() {
       "CREATE TABLE IF NOT EXISTS nas_backup_chunks(snapshot_id TEXT NOT NULL,chunk_index INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(snapshot_id,chunk_index))",
     ),
     binding.prepare(
+      "CREATE TABLE IF NOT EXISTS registration_invites(code_hash TEXT PRIMARY KEY,created_by TEXT NOT NULL,target_email TEXT NOT NULL COLLATE NOCASE,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,expires_at TEXT NOT NULL,used_at TEXT,used_by TEXT)",
+    ),
+    binding.prepare(
+      "CREATE INDEX IF NOT EXISTS registration_invites_created_idx ON registration_invites(created_by,created_at DESC)",
+    ),
+    binding.prepare(
       "CREATE TABLE IF NOT EXISTS restore_snapshot_chunks(snapshot_id TEXT NOT NULL,chunk_index INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(snapshot_id,chunk_index))",
     ),
     binding.prepare(

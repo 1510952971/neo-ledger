@@ -11,6 +11,11 @@ import { normalizeCodePurpose } from "../../../email-code-core.js";
 import { issueEmailCode, type CodePurpose } from "../../../email-code";
 import { mailerStatus } from "../../../mailer";
 import { MAX_AUTH_BODY_BYTES, readJsonWithLimit } from "../../../request-limits";
+import {
+  ensureBootstrapRegistrationInvite,
+  normalizeRegistrationInvite,
+  registrationInviteHash,
+} from "../../../registration-invite";
 
 export const dynamic = "force-dynamic";
 
@@ -37,10 +42,29 @@ export async function POST(request: Request) {
     const body = await readJsonWithLimit<{
       email?: string;
       purpose?: string;
+      inviteCode?: string;
     }>(request, MAX_AUTH_BODY_BYTES);
     const purpose = normalizeCodePurpose(body.purpose) as CodePurpose | null;
     if (!purpose) throw new ApiAccessError("验证码用途无效", 400);
+    let invitedEmail: string | null = null;
+    if (purpose === "register") {
+      await ensureBootstrapRegistrationInvite();
+      const inviteCode = normalizeRegistrationInvite(body.inviteCode);
+      if (!inviteCode)
+        throw new ApiAccessError("邀请码无效，未发送邮件", 403);
+      const invitation = await getDbBinding()
+        .prepare("SELECT target_email AS targetEmail,used_at AS usedAt FROM registration_invites WHERE code_hash=? AND julianday(expires_at)>julianday('now')")
+        .bind(registrationInviteHash(inviteCode))
+        .first<{ targetEmail: string; usedAt: string | null }>();
+      if (!invitation)
+        throw new ApiAccessError("邀请码无效或已过期，未发送邮件", 403);
+      if (invitation.usedAt)
+        throw new ApiAccessError("这个邀请码已使用，未发送邮件", 409);
+      invitedEmail = invitation.targetEmail;
+    }
     const email = validateEmail(body.email);
+    if (purpose === "register" && email !== invitedEmail)
+      throw new ApiAccessError("邀请码无效或不适用于此邮箱，未发送邮件", 403);
     if (!email) throw new ApiAccessError("请输入邮箱地址", 400);
     if (!mailerStatus().configured)
       throw new ApiAccessError("邮件服务未配置，暂时无法发送验证码", 503);
