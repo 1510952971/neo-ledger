@@ -40,6 +40,14 @@ troubleshooting action in this repository. Treat them as hard requirements.
     synchronization target, or restore behavior must be planned and reviewed
     against data preservation first. If the original source or a verified
     recovery point cannot be positively identified, stop before changing it.
+12. Measure available storage and the applicable free-tier quota before adding
+    persistent services, backups, or replicas. Do not provision paid capacity
+    or let retention grow without a fixed cap; this deployment keeps at most
+    three NAS-local and three OCI recovery points.
+13. Before cleanup, inventory and classify each candidate. Never remove an
+    unfinished task, test artifact whose outcome is not known, current data,
+    the latest known-good rollback, or the only verified recovery copy. Clean
+    only confirmed obsolete material, and verify the remaining recovery path.
 
 When a request conflicts with these rules, preserve the data and explain the
 specific blocker before making the risky change.
