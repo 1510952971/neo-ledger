@@ -75,7 +75,7 @@ Tunnel 会隐藏 NAS 的私网 IP、不需要路由器端口映射，并把流�
 | A. 安全入口 | 明确注册策略、主账号 MFA、检查 Cloudflare WAF/速率限制能力并验证 API 兼容性 | 安全设置有记录、手机/Web 登录与 API 无误伤 |
 | B. 隧道入口 | 新增独立 `ledger-nas.985251.xyz → http://192.168.5.134:3001`，不改 SafeVault 或 OCI 当前入口 | HTTPS、应用健康和账号登录正常 |
 | C. NAS 主站 | 更新 NAS `AUTH_PUBLIC_ORIGIN`、`NEO_ALLOWED_HOSTS`、`NEO_PRIMARY_ORIGIN`，保持原数据卷 | NAS 原账号和所有账本仍在；应用版本健康 |
-| D. OCI 密文接收器 | 添加 token 校验、暂存/提交、SHA-256、14 份保留与 no-store 下载 | 错 token、超限、坏摘要、部分上传均失败关闭 |
+| D. OCI 密文接收器 | 添加 token 校验、暂存/提交、SHA-256、最近 3 份保留与 no-store 下载 | 错 token、超限、坏摘要、部分上传均失败关闭 |
 | E. 自动备份 | NAS sidecar 启动后立即备份，此后每 24 小时上传；备份状态脱敏显示 | 连续至少 3 次成功，OCI 最新摘要与 NAS 发送摘要一致 |
 | F. 恢复演练 | 下载 OCI 快照到隔离目录并解密校验；在隔离 NAS 数据目录/端口恢复 | 账号、账本、表关系和样本流水读回；不触碰主数据 |
 | G. 客户端统一入口 | 原生客户端默认地址切到 NAS；电脑网页使用相同 HTTPS 地址 | 手机写入、电脑读取，反向读写同一记录；旧缓存仍按 origin 隔离 |
@@ -86,9 +86,9 @@ Tunnel 会隐藏 NAS 的私网 IP、不需要路由器端口映射，并把流�
 - 邀请制已合并到主分支 `68bd51a`，并已部署到 OCI。OCI 已有账户状态未被替换。OCI 主站仍与 NAS 使用独立数据库。
 - OCI `/api/nas-backup?status=1` 已用当前备份 Token 验证返回 HTTP 200，结果为 `latest: null`。此前 401 的根因是通用会话代理先于 Bearer Token 路由拦截；修复已合并并部署。当前 OCI 容器健康，备份接收器尚未收到任何 NAS 快照。
 - NAS `neo-ledger-nas` 仍运行旧源码，持久化目录 `/SATA-1-4T/Docker/neo-ledger/data`、主机端口 `3001 → 容器 3000` 保持不变。NAS 邀请制尚未部署；本机与 NAS 私网地址当前不可直连。
-- NAS 项目根目录 `/SATA-1-4T/Docker/neo-ledger` 已能看到独立 sidecar Compose 文件、NAS 加密备份环境文件和版本源码 ZIP；这些文件仅被上传，未解压、未启动 sidecar，也未改动现有主容器或 `data`。本机另已准备不覆盖现有源码/Compose 的最小 sidecar 源码归档及相对路径 Compose 文件，供安全解压和独立部署。
+- NAS 项目根目录 `/SATA-1-4T/Docker/neo-ledger` 中，版本源码 ZIP 已解压到 `nas-source-ed76f5a4ed5e/neo-ledger-nas-ed76f5a4ed5e/`；独立 sidecar Compose 配置已放入 `backup-agent-stack/`。这是独立项目目录，Compose 的数据挂载只读 `../data`、只写 `../backup/nas-to-oci`，不会覆盖主项目 `docker-compose.yml`。当前文件管理器可见该配置文件，尚未在 Docker Compose 中导入/启动 sidecar；主容器与 `data` 均未改动。
 - NAS 数据目录最近盘点发现 `/data/state/v3/d1/miniflare-D1DatabaseObject` 同时包含约 852 KB 的业务数据库、约 3.9 MB 的 WAL，以及 `metadata.sqlite`（约 4 KB）和其 WAL/SHM 辅助文件。备份筛选已调整为按 `app_users` 与 `ledgers` 表识别唯一业务数据库，忽略 D1 元数据数据库；若候选为零或多于一个则拒绝备份。此筛选逻辑尚未在 NAS sidecar 实机运行验证。
-- NAS sidecar 尚未启动，OCI `latest` 仍为空；因此 NAS→OCI 自动备份及 OCI→NAS 隔离恢复演练均未完成。当前也没有任何平台已切换到 NAS，不能称为跨设备数据互通完成。
+- NAS sidecar 尚未启动，OCI `latest` 仍为空；因此 NAS→OCI 自动备份及 OCI→NAS 隔离恢复演练均未完成。当前也没有任何平台已切换到 NAS，不能称为跨设备数据互通完成。必须先在独立 Compose 项目中核对导入文件、相对路径解析及只读/可写挂载，再启动；如果 NAS 管理界面不能清楚呈现这些配置，停止并改用受控文件上传/终端流程，不要对现有 `neo-ledger` 项目执行重建。
 - Cloudflare `zspace-nas-985251` Tunnel 当前健康，仅有 1 条已发布路由：`nas.985251.xyz → http://192.168.5.134:18088`（SafeVault）。`985251.xyz` 为 Free 计划，目前速率限制规则 0/1；Free 规则不能按 Host 限定，先不增加可能连带影响现有服务的区域规则。新增 `ledger-nas.985251.xyz → http://192.168.5.134:3001` 会将 NAS 登录页和 API 公开到互联网。公开前使用应用自带的登录/注册限流、邀请码邮箱绑定、强唯一密码与 MFA；若后续要增加边缘规则，先确认可精确限定目标或验证不会误伤现有入口。未获得用户对该具体公网入口的行动确认前不改 Tunnel，也不切换客户端主站。
 - 手机/桌面默认生产地址仍为 OCI。切至 NAS 前需先有可用 HTTPS 主机名、NAS 原账号登录和备份恢复演练；切换时不得清除旧服务缓存或自动搬动用户数据。
 
