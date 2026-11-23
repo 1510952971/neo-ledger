@@ -23,7 +23,7 @@ import path from "node:path";
 
 const MAGIC = Buffer.from("NLBAK001", "ascii");
 const MAX_BYTES = 50 * 1024 * 1024;
-const MAX_LOCAL_SNAPSHOTS = 35;
+const MAX_LOCAL_SNAPSHOTS = 3;
 const SUPPORTED_SCHEMA_VERSION = 42;
 const backupRoot = "/backup";
 const sourceRoot = "/source";

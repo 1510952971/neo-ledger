@@ -26,9 +26,9 @@
      up -d --build neo-ledger-backup-agent
    ```
 
-   它只读挂载现有 `data`，没有 Docker socket；NAS 主应用仍按原数据卷运行。首次上传会立即运行，此后默认每天一次；失败会留在日志里并在下一周期重试。NAS 本地最多留 35 个加密快照，OCI 接收端最多留 14 个成功密文快照。
+   它只读挂载现有 `data`，没有 Docker socket；NAS 主应用仍按原数据卷运行。首次上传会立即运行，此后默认每天一次；失败会留在日志里并在下一周期重试。NAS 本地和 OCI 接收端各保留最近 3 个成功密文快照。
 4. 查看 sidecar 日志中的 `OCI NAS backup succeeded`。用同一 Compose 配置执行 `run --rm neo-ledger-backup-agent prepare-restore`，按恢复口令从 OCI 下载最新密文到隔离目录。它只生成 `backup/restore-candidate-*`，不会替换 NAS 数据。核验 manifest 的账号/账本数量、SQLite 完整性和最新上传摘要，再进行隔离实例恢复演练。
-5. 不能仅凭“容器正在运行”宣布备份可用。还需连续成功上传、验证 OCI 摘要、隔离解密与数据库打开成功；定期重复恢复演练。
+5. NAS 是唯一写入端，OCI 只接收恢复用副本。与 SafeVault 的客户端加密记录复制不同，Neo Ledger 使用服务端 SQLite 事务库；所有设备必须读写同一 NAS 数据库，禁止让 NAS/OCI 同时接受账本写入。当前恢复链路只保留最近 3 个 NAS 本地加密快照和 3 个 OCI 加密恢复点，避免无边界占用磁盘。不能仅凭“容器正在运行”宣布备份可用；还需验证 OCI 摘要并完成隔离解密、SQLite 完整性和隔离恢复演练。
 
 OCI 最近一次已提交快照状态可通过带 Token 的 `GET https://ledger.985251.xyz/api/nas-backup?status=1` 查询；它只返回快照 ID、时间、字节数和摘要，不包含业务数据。复制某次 sidecar 成功日志里的 `snapshot` ID 到 `NEO_BACKUP_SNAPSHOT_ID`，可以选择保留期内的历史恢复点；留空则默认取最新。
 

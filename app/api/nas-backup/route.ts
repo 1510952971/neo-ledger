@@ -4,7 +4,9 @@ import { configValue } from "../../runtime-env";
 
 const MAX_BACKUP_BYTES = 50 * 1024 * 1024;
 const CHUNK_BYTES = 128 * 1024;
-const REMOTE_RETENTION = 14;
+// Keep only a small disaster-recovery window. OCI root storage is limited and
+// every snapshot duplicates the encrypted SQLite archive in the app database.
+const REMOTE_RETENTION = 3;
 const MAGIC = new TextEncoder().encode("NLBAK001");
 
 function responseError(message: string, status: number) {
