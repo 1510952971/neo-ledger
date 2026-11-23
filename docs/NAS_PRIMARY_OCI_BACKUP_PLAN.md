@@ -47,7 +47,7 @@ Tunnel 会隐藏 NAS 的私网 IP、不需要路由器端口映射，并把流�
 ## 备份协议
 
 1. NAS 备份 sidecar 以只读方式挂载 NAS 的 `/app/.wrangler` 数据目录；没有 Docker socket、应用凭据或记账 API 写权限。
-2. sidecar 使用 SQLite Online Backup API 生成一致性快照，运行 `integrity_check`，检查数据库文件数、schema 和账号数量。多数据库、路径不明、完整性异常、无账号或超出大小限制时失败关闭，不上传。
+2. sidecar 递归检查 SQLite 文件，只选择同时包含 Neo Ledger `app_users` 与 `ledgers` 表的数据库；必须且只能找到一个。`metadata.sqlite` 等运行时元数据库不会被当作账本库。随后使用 SQLite Online Backup API 生成一致性快照，运行 `integrity_check`，检查 schema 和账号数量。零个或多个账本库、路径不明、完整性异常、无账号或超出大小限制时失败关闭，不上传。
 3. 只打包数据库快照与非敏感 manifest，不打包 NAS `.env`、Resend 密钥、Token、SSH 密钥或无关配置。
 4. sidecar 用独立恢复口令通过 scrypt 派生密钥，以 AES-256-GCM 加密；OCI 只收到密文。恢复口令不能只保存在 NAS 或 OCI，必须另存在用户控制的密码管理器/离线位置。
 5. 上传使用独立的随机 bearer token；OCI 只接受配置好的 NAS 备份路径，校验 token、大小、摘要和加密封套版本。Token 不用于登录或记账，撤销时可单独更换。
@@ -87,6 +87,7 @@ Tunnel 会隐藏 NAS 的私网 IP、不需要路由器端口映射，并把流�
 - OCI `/api/nas-backup?status=1` 已用当前备份 Token 验证返回 HTTP 200，结果为 `latest: null`。此前 401 的根因是通用会话代理先于 Bearer Token 路由拦截；修复已合并并部署。当前 OCI 容器健康，备份接收器尚未收到任何 NAS 快照。
 - NAS `neo-ledger-nas` 仍运行旧源码，持久化目录 `/SATA-1-4T/Docker/neo-ledger/data`、主机端口 `3001 → 容器 3000` 保持不变。NAS 邀请制尚未部署；本机与 NAS 私网地址当前不可直连。
 - NAS 项目根目录 `/SATA-1-4T/Docker/neo-ledger` 已能看到独立 sidecar Compose 文件、NAS 加密备份环境文件和版本源码 ZIP；这些文件仅被上传，未解压、未启动 sidecar，也未改动现有主容器或 `data`。本机另已准备不覆盖现有源码/Compose 的最小 sidecar 源码归档及相对路径 Compose 文件，供安全解压和独立部署。
+- NAS 数据目录最近盘点发现 `/data/state/v3/d1/miniflare-D1DatabaseObject` 同时包含约 852 KB 的业务数据库、约 3.9 MB 的 WAL，以及 `metadata.sqlite`（约 4 KB）和其 WAL/SHM 辅助文件。备份筛选已调整为按 `app_users` 与 `ledgers` 表识别唯一业务数据库，忽略 D1 元数据数据库；若候选为零或多于一个则拒绝备份。此筛选逻辑尚未在 NAS sidecar 实机运行验证。
 - NAS sidecar 尚未启动，OCI `latest` 仍为空；因此 NAS→OCI 自动备份及 OCI→NAS 隔离恢复演练均未完成。当前也没有任何平台已切换到 NAS，不能称为跨设备数据互通完成。
 - Cloudflare `zspace-nas-985251` Tunnel 当前健康，仅有 1 条已发布路由：`nas.985251.xyz → http://192.168.5.134:18088`（SafeVault）。`985251.xyz` 为 Free 计划，目前速率限制规则 0/1；Free 规则不能按 Host 限定，先不增加可能连带影响现有服务的区域规则。新增 `ledger-nas.985251.xyz → http://192.168.5.134:3001` 会将 NAS 登录页和 API 公开到互联网。公开前使用应用自带的登录/注册限流、邀请码邮箱绑定、强唯一密码与 MFA；若后续要增加边缘规则，先确认可精确限定目标或验证不会误伤现有入口。未获得用户对该具体公网入口的行动确认前不改 Tunnel，也不切换客户端主站。
 - 手机/桌面默认生产地址仍为 OCI。切至 NAS 前需先有可用 HTTPS 主机名、NAS 原账号登录和备份恢复演练；切换时不得清除旧服务缓存或自动搬动用户数据。

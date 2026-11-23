@@ -60,6 +60,17 @@ function sqliteQuery(database, query) {
   }).trim();
 }
 
+function isLedgerDatabase(database) {
+  try {
+    return sqliteQuery(
+      database,
+      "SELECT CASE WHEN EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_users') AND EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='ledgers') THEN 1 ELSE 0 END;",
+    ) === "1";
+  } catch {
+    return false;
+  }
+}
+
 function encryptArchive(archive, passphrase) {
   const salt = randomBytes(16);
   const iv = randomBytes(12);
@@ -93,10 +104,10 @@ function decryptArchive(envelope, passphrase) {
 }
 
 function createSnapshot() {
-  const databases = listDatabases(sourceRoot);
-  if (databases.length !== 1)
-    throw new Error(`D1 状态目录中应恰好有一个 SQLite 数据库，当前找到 ${databases.length} 个；拒绝猜测目标`);
-  const source = databases[0];
+  const candidates = listDatabases(sourceRoot).filter(isLedgerDatabase);
+  if (candidates.length !== 1)
+    throw new Error(`NAS 数据目录中应恰好有一个包含 Neo Ledger 账号和账本表的 SQLite 数据库，当前找到 ${candidates.length} 个；拒绝猜测目标`);
+  const source = candidates[0];
   const relativeDatabasePath = path.relative(sourceRoot, source);
   if (relativeDatabasePath.startsWith("..") || path.isAbsolute(relativeDatabasePath))
     throw new Error("数据库路径超出 NAS 持久数据目录");
